@@ -34,6 +34,8 @@ deploy/backup/backups/
 # 临时与编辑器
 # ============================================================
 tests/.pw/
+# vite 改配置时生成的临时文件
+vite.config.js.timestamp-*.mjs
 .DS_Store
 Thumbs.db
 .idea/
