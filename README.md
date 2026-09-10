@@ -2,6 +2,9 @@
 
 面向年轻人的热门游戏讨论社区，主打 **游戏攻略 / 游戏吐槽 / 讨论教学**。毕业设计项目，采用前后端分离架构。
 
+- 仓库地址：https://github.com/Yumu108/YUMU-Game-Community
+- 默认分支：`master`
+
 ## 技术栈
 
 | 层     | 技术                                                       |
@@ -32,6 +35,13 @@
 ├── YUMU社区知识库.md     # 社区规则官方说明（上传扣子作助手知识库）
 ├── 智能助手接入说明.md   # 助手技术接入（扣子 Coze + SSE 代理）
 └── yumu游戏社区助手-修订版.md # 助手 Prompt（整份粘贴到扣子 Bot）
+```
+
+## 获取代码
+
+```bash
+git clone https://github.com/Yumu108/YUMU-Game-Community.git
+cd YUMU-Game-Community
 ```
 
 ## 环境要求
