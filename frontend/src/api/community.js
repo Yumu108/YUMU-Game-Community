@@ -1106,3 +1106,31 @@ export async function listAdminGames() {
 
 // v1.2 起：精选管理功能已下线（setDailyPick / removeDailyPick / listAdminPicks 已删除）。
 // 每日精选改为系统按综合评分自动选；人工加精走 post.is_essence（已有「加精」能力）。
+
+// ---- 审计日志：后台（仅 ADMIN，027 新增） ----
+// GET /admin/audit-logs?action=&targetType=&operator=&from=&to=&current=&size=
+// 注意：后端只接受"纯日期(yyyy-MM-dd)"或"日期 时间"，日期区间用 el-date-picker 的 value-format 直接产出字符串。
+export async function listAuditLogs({ current = 1, size = 20, action, targetType, operator, from, to } = {}) {
+  // 空字符串会让后端 QueryWrapper 认为是「有筛选」，这里统一转成 undefined 不传参
+  const params = { current, size }
+  if (action) params.action = action
+  if (targetType) params.targetType = targetType
+  if (operator) params.operator = operator
+  if (from) params.from = from
+  if (to) params.to = to
+  const res = await request.get('/admin/audit-logs', { params })
+  const page = res.data || {}
+  return {
+    records: page.records || [],
+    total: page.total || 0,
+    pages: page.pages || 0,
+    current: page.current || current,
+    size: page.size || size
+  }
+}
+
+// GET /admin/audit-logs/actions 动作码字典（后端下发，保证与写库动作码一致）
+export async function listAuditActions() {
+  const res = await request.get('/admin/audit-logs/actions')
+  return res.data || []
+}

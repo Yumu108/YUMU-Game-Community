@@ -1,6 +1,7 @@
 package com.yumu.community.security;
 
 import org.jsoup.Jsoup;
+import org.jsoup.nodes.Attribute;
 import org.jsoup.nodes.Document;
 import org.jsoup.nodes.Element;
 import org.jsoup.nodes.Entities;
@@ -17,8 +18,9 @@ import org.springframework.stereotype.Component;
  *    即使如此，用户仍可能粘一段含 <script>/<img onerror>/<iframe> 的 HTML 进来，
  *    若前端某处未来切到 dangerouslySetInnerHTML 或模板拼接就会形成存储型 XSS。
  *  - 这里用 Jsoup 把所有 HTML 解析后按白名单清洗，输出"安全 HTML"；任何不在白名单内的标签 / 属性 / URL 协议都被剔除。
- *  - 同时对 [[...](/u/..)] 这种论坛内链语法不做破坏：Jsoup 默认会把 <a> 的链接清洗为绝对 URL，
- *    我们扩展 Safelist 仅允许以 /api/、/user/、/post/ 开头的站内相对路径，其它外链 / javascript: 全部剥掉。
+ *  - 同时对 [[...](/u/..)] 这种论坛内链语法不做破坏：Jsoup 协议白名单无法表达"相对路径"，
+ *    故覆写 Safelist#isSafeAttribute 把 <a href> 交给 {@link #sanitizeHref(String)} 统一判定
+ *    （站内相对路径 + http(s)/mailto 放行；外链之外的 javascript:/data:/vbscript:/file: 全部剥掉）。
  *
  * 用法：
  *   - 入库前 {@code HtmlSanitizer.sanitize(userInput)}，确保落库的就是安全字符串；
@@ -28,23 +30,36 @@ import org.springframework.stereotype.Component;
 public class HtmlSanitizer {
 
     /** 仅允许的 HTML 标签与属性（白名单）。 */
-    private static final Safelist SAFELIST;
+    private static final Safelist SAFELIST = new Safelist() {
+        {
+            // 等价于 Safelist.basic() 的标签/属性集合，但**不使用它的 addProtocols**（见下方覆写说明）
+            addTags("a", "b", "blockquote", "br", "cite", "code", "dd", "div", "dl", "dt", "em", "i",
+                    "li", "ol", "p", "pre", "q", "small", "span", "strike", "strong", "sub", "sup", "u", "ul");
+            addAttributes("a", "href", "title", "target", "rel");
+            addAttributes("code", "class");   // 给 <pre><code class="language-xxx"> 留口子
+            addAttributes("pre", "class");
+            addAttributes("span", "class");   // 允许前端高亮 <span class="mention">
+            addAttributes("blockquote", "cite");
+            addProtocols("blockquote", "cite", "http", "https");
+        }
 
-    static {
-        // 起点：基础白名单（去掉了 style、class 等容易藏 XSS 的属性）
-        Safelist base = Safelist.basic()
-                .removeTags("img", "input", "button", "form", "iframe", "object", "embed", "video", "audio", "source", "track", "textarea", "select", "option");
-        // 允许 <a> 的 href + rel + target（前端已统一加 rel="noopener noreferrer"）
-        base.addAttributes("a", "href", "title", "target", "rel");
-        base.addAttributes("code", "class");   // 给 <pre><code class="language-xxx"> 留口子
-        base.addAttributes("pre", "class");
-        base.addAttributes("blockquote", "cite");
-        base.addAttributes("span", "class");   // 允许前端高亮 <span class="mention">
-
-        // 仅允许站内相对路径与本服务的 API 路径；外链 / javascript: / data: 一律剥掉
-        base.addProtocols("a", "href", "/");   // 站内以 / 开头（/user/123、/post/45、/api/files/x.jpg）
-        SAFELIST = base;
-    }
+        /**
+         * 🚨 为什么必须覆写而不是用 addProtocols：
+         * Jsoup 的协议校验是「属性值必须以 {@code <protocol>:} 开头」，因此
+         * {@code addProtocols("a","href","/")} 会拼成 {@code "/:"}，**永远匹配不上**相对路径
+         * {@code /user/123} —— 结果是站内链接被整条剥掉（只剩 {@code <a>文本</a>}，href 消失）。
+         * 这里把 {@code <a href>} 的判定统一交给 {@link #sanitizeHref(String)}：
+         * 站内相对路径（非 // 开头、不含反斜杠）+ http(s)/mailto 白名单，
+         * javascript: / data: / vbscript: / file: 一律拒绝 —— 与其它调用方共用同一套 URL 策略。
+         */
+        @Override
+        public boolean isSafeAttribute(String tagName, Element el, Attribute attr) {
+            if ("a".equals(tagName) && "href".equals(attr.getKey())) {
+                return sanitizeHref(attr.getValue()) != null;
+            }
+            return super.isSafeAttribute(tagName, el, attr);
+        }
+    };
 
     /** 净化 HTML 字符串。返回安全 HTML；输入为 null 返回 ""。 */
     public String sanitize(String html) {

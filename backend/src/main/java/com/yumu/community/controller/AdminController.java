@@ -1,5 +1,6 @@
 package com.yumu.community.controller;
 
+import com.yumu.community.common.AuditActions;
 import com.yumu.community.common.BusinessException;
 import com.yumu.community.common.PageResult;
 import com.yumu.community.common.Result;
@@ -11,6 +12,7 @@ import com.yumu.community.entity.Reply;
 import com.yumu.community.mapper.PostMapper;
 import com.yumu.community.mapper.ReplyMapper;
 import com.yumu.community.security.CustomUserDetails;
+import com.yumu.community.service.AuditLogService;
 import com.yumu.community.service.ModeratorBoardService;
 import com.yumu.community.service.PostService;
 import com.yumu.community.service.ReplyService;
@@ -45,11 +47,17 @@ public class AdminController {
     private final PostMapper postMapper;
     private final ReplyMapper replyMapper;
     private final ReplyService replyService;
+    /** 只读旁路：记录管理动作留痕，写失败不阻断业务。 */
+    private final AuditLogService auditLogService;
 
     @PostMapping("/posts/{id}/pin")
     @PreAuthorize("hasRole('ADMIN')")
     public Result<Map<String, Object>> togglePin(@PathVariable Long id) {
-        return Result.success(postService.setPin(id));
+        Map<String, Object> res = postService.setPin(id);
+        boolean on = Integer.valueOf(1).equals(res.get("isTop"));
+        auditLogService.record(on ? AuditActions.POST_PIN : AuditActions.POST_UNPIN,
+                AuditActions.TARGET_POST, id, (on ? "置顶帖子 #" : "取消置顶帖子 #") + id);
+        return Result.success(res);
     }
 
     @PostMapping("/posts/{id}/essence")
@@ -58,7 +66,11 @@ public class AdminController {
             @AuthenticationPrincipal CustomUserDetails details) {
         // 加精：ADMIN 全权；版主仅可对其负责的游戏加精（按游戏级授权校验）
         assertCanModeratePost(id, details);
-        return Result.success(postService.setEssence(id));
+        Map<String, Object> res = postService.setEssence(id);
+        boolean on = Integer.valueOf(1).equals(res.get("isEssence"));
+        auditLogService.record(on ? AuditActions.POST_ESSENCE : AuditActions.POST_UNESSENCE,
+                AuditActions.TARGET_POST, id, (on ? "加精帖子 #" : "取消加精帖子 #") + id);
+        return Result.success(res);
     }
 
     @PostMapping("/posts/{id}/hide")
@@ -66,7 +78,9 @@ public class AdminController {
             @PathVariable Long id,
             @AuthenticationPrincipal CustomUserDetails details) {
         assertCanModeratePost(id, details);
-        return Result.success(postService.setHidden(id, true));
+        Map<String, Object> res = postService.setHidden(id, true);
+        auditLogService.record(AuditActions.POST_HIDE, AuditActions.TARGET_POST, id, "隐藏帖子 #" + id);
+        return Result.success(res);
     }
 
     @PostMapping("/posts/{id}/restore")
@@ -74,7 +88,9 @@ public class AdminController {
             @PathVariable Long id,
             @AuthenticationPrincipal CustomUserDetails details) {
         assertCanModeratePost(id, details);
-        return Result.success(postService.setHidden(id, false));
+        Map<String, Object> res = postService.setHidden(id, false);
+        auditLogService.record(AuditActions.POST_RESTORE, AuditActions.TARGET_POST, id, "恢复帖子 #" + id);
+        return Result.success(res);
     }
 
     @PostMapping("/posts/{id}/approve")
@@ -84,13 +100,17 @@ public class AdminController {
         if (!postService.canReviewPost(id, details.getUserId())) {
             throw new BusinessException(403, "无权审核该帖子（可能因为你就是发帖人，或需更高级别审核）");
         }
-        return Result.success(postService.setPostStatus(id, 0));
+        Map<String, Object> res = postService.setPostStatus(id, 0);
+        auditLogService.record(AuditActions.POST_APPROVE, AuditActions.TARGET_POST, id, "审核通过帖子 #" + id);
+        return Result.success(res);
     }
 
     @PostMapping("/posts/{id}/pending")
     @PreAuthorize("hasRole('ADMIN')")
     public Result<Map<String, Object>> pending(@PathVariable Long id) {
-        return Result.success(postService.setPostStatus(id, 2));
+        Map<String, Object> res = postService.setPostStatus(id, 2);
+        auditLogService.record(AuditActions.POST_PENDING, AuditActions.TARGET_POST, id, "将帖子 #" + id + " 转回待审核");
+        return Result.success(res);
     }
 
     /** 驳回帖子：status=1 隐藏 + 写入驳回理由 + 通知发帖人。仅当层级允许时可通过（canReviewPost）。 */
@@ -102,7 +122,10 @@ public class AdminController {
         if (!postService.canReviewPost(id, details.getUserId())) {
             throw new BusinessException(403, "无权驳回该帖子（可能因为你就是发帖人，或需更高级别审核）");
         }
-        return Result.success(postService.rejectPost(id, req.getReason(), details.getUserId()));
+        Map<String, Object> res = postService.rejectPost(id, req.getReason(), details.getUserId());
+        auditLogService.record(AuditActions.POST_REJECT, AuditActions.TARGET_POST, id,
+                "驳回帖子 #" + id + "，理由：" + req.getReason());
+        return Result.success(res);
     }
 
     /** 单帖子审核权限预览：当前用户能否 review 这个帖子（前端"批准/驳回"按钮的使能依据）。 */
@@ -173,6 +196,10 @@ public class AdminController {
             throw new BusinessException(403, "无权限处理该举报");
         }
         reportService.handle(id, req.getStatus(), req.getHandleNote(), details.getUserId());
+        auditLogService.record(AuditActions.REPORT_HANDLE, AuditActions.TARGET_REPORT, id,
+                "处理举报 #" + id + "，结果 status=" + req.getStatus()
+                        + (req.getHandleNote() == null || req.getHandleNote().isBlank()
+                            ? "" : "，说明：" + req.getHandleNote()));
         return Result.success();
     }
 
@@ -190,7 +217,9 @@ public class AdminController {
             @PathVariable Long id,
             @AuthenticationPrincipal CustomUserDetails details) {
         assertCanModerateReply(id, details);
-        return Result.success(replyService.setHidden(id, true));
+        Map<String, Object> res = replyService.setHidden(id, true);
+        auditLogService.record(AuditActions.REPLY_HIDE, AuditActions.TARGET_REPLY, id, "隐藏回复 #" + id);
+        return Result.success(res);
     }
 
     @PostMapping("/replies/{id}/restore")
@@ -198,7 +227,9 @@ public class AdminController {
             @PathVariable Long id,
             @AuthenticationPrincipal CustomUserDetails details) {
         assertCanModerateReply(id, details);
-        return Result.success(replyService.setHidden(id, false));
+        Map<String, Object> res = replyService.setHidden(id, false);
+        auditLogService.record(AuditActions.REPLY_RESTORE, AuditActions.TARGET_REPLY, id, "恢复回复 #" + id);
+        return Result.success(res);
     }
 
     private void assertCanModerateReply(Long replyId, CustomUserDetails details) {

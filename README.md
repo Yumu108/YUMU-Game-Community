@@ -163,6 +163,9 @@ npm run dev
 
 # 或指定口令
 ./deploy/tools/init-admin.sh '你的强口令'
+
+# 服务器上（容器部署、没装 JDK 与 mysql 客户端）用容器模式
+./deploy/tools/init-admin.sh --docker
 ```
 
 - **管理员**：`admin`，口令由上面的脚本设置（不写入仓库）
@@ -172,16 +175,36 @@ npm run dev
 ## 回归测试
 
 ```bash
+# 单元测试（后端）—— 不需要任何外部服务，CI 也在跑
+cd backend && mvn -o package          # 28/28（HtmlSanitizer / ImageMagicByteValidator / AuditActions / JwtUtil）
+
 # 接口层（需后端 8080 在跑；中文负载请用 node fetch，别用 curl）
 cd tests && node api-e2e-test.mjs
+cd tests && node audit-log-verify.mjs            # 审计日志（28 项）
 
 # UI 层（需 dev server 5173 + 后端 8080 同时运行）
 cd tests/.pw && node verify-drawer.js            # 移动端导航抽屉（33 项）
 cd tests/.pw && node verify-desktop.js           # 桌面端无回归（9 项）
 cd tests/.pw && node verify-mobile-renew.js layout   # 390px 详情页适配（10 项）
+cd tests/.pw && node verify-audit-tab.js          # 管理后台审计日志 Tab（14 项）
+```
+
+## 部署上线
+
+> 面向生产环境的完整操作流程（服务器 / 域名 / HTTPS / 密钥 / 初始化 / 监控备份 / 回滚）见
+> **`上线部署操作手册.md`**。三条命令先记住：
+
+```bash
+cd /opt/yumu && set -a && . ./.env && set +a   # 载入生产环境变量
+
+./deploy/tools/gen-secrets.sh --write          # 1) 生成生产密钥（写入 .env）
+./deploy/tools/init-db.sh                      # 2) 初始化全新数据库（⚠️ 仅全新库）
+./deploy/tools/init-admin.sh --docker          # 3) 创建管理员（容器模式免装 JDK）
+CHECK_URL=http://127.0.0.1/api/actuator/health ./deploy/tools/preflight-check.sh --live   # 4) 上线前自检
+docker compose up -d --build                   # 5) 启动
 ```
 
 ## 文档导航
 
-> 项目按七阶段推进（当前第六阶段「功能增强与体验优化」进行中；第七阶段的「上线前必做」11 项已基本落地，剩域名/证书/对象存储等部署环境相关项）。各文档定位：
-> `项目进度总结.md` 阶段进度｜`项目开发日志.md` 逐日流水｜`项目功能与运行逻辑说明.md` 功能契约（**改动前先读 §9 前端基础设施**）｜`玩家视角功能优化清单.md` 产品需求（P0/P1/P2）｜`上线前必做清单.md` Go/No-Go 与安全/部署/合规清单｜`docs/近期开发总结.md` 近期阶段性汇总（合集，最新为 9-10 两节）｜`YUMU社区知识库.md` + `yumu游戏社区助手-修订版.md` + `智能助手接入说明.md` 社区智能助手三件套。
+> 项目按七阶段推进（第一至五阶段完成；第六阶段「功能增强与体验优化」进行中；**第七阶段「部署上线」的代码侧准备已全部收口 —— D1~D9 加固落地、审计日志/单测/CI/部署脚本齐备，剩余项均依赖部署环境，需按 `上线部署操作手册.md` 执行**）。各文档定位：
+> `项目进度总结.md` 阶段进度｜`项目开发日志.md` 逐日流水｜`项目功能与运行逻辑说明.md` 功能契约（**改动前先读 §9 前端基础设施**）｜`玩家视角功能优化清单.md` 产品需求（P0/P1/P2）｜`上线前必做清单.md` Go/No-Go 评估与 D1~D9 加固明细｜**`上线部署操作手册.md` 部署执行步骤（服务器/域名/HTTPS/密钥/初始化/监控备份/回滚）**｜`docs/近期开发总结.md` 近期阶段性汇总（合集，最新为 9-10 六节）｜`deploy/nginx/README.md` + `deploy/monitor/README.md` + `deploy/backup/备份与恢复演练.md` 部署运维细节｜`YUMU社区知识库.md` + `yumu游戏社区助手-修订版.md` + `智能助手接入说明.md` 社区智能助手三件套。

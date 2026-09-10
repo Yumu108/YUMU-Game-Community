@@ -1,5 +1,6 @@
 package com.yumu.community.controller;
 
+import com.yumu.community.common.AuditActions;
 import com.yumu.community.common.PageResult;
 import com.yumu.community.common.Result;
 import com.yumu.community.dto.ResetPasswordRequest;
@@ -8,6 +9,7 @@ import com.yumu.community.dto.UpdateUserRolesRequest;
 import com.yumu.community.dto.UpdateUserProfileRequest;
 import com.yumu.community.security.CustomUserDetails;
 import com.yumu.community.service.AdminUserService;
+import com.yumu.community.service.AuditLogService;
 import com.yumu.community.service.ModeratorBoardService;
 import com.yumu.community.vo.AdminUserDetailVO;
 import com.yumu.community.vo.AdminUserVO;
@@ -34,6 +36,8 @@ public class AdminUserController {
 
     private final AdminUserService adminUserService;
     private final ModeratorBoardService moderatorBoardService;
+    /** 只读旁路：管理动作留痕，写失败不阻断业务。 */
+    private final AuditLogService auditLogService;
 
     @GetMapping
     public Result<PageResult<AdminUserVO>> list(
@@ -54,6 +58,8 @@ public class AdminUserController {
             @PathVariable Long id,
             @Valid @RequestBody UpdateUserRolesRequest req) {
         adminUserService.updateUserRoles(id, req.getRoles());
+        auditLogService.record(AuditActions.USER_ROLE_UPDATE, AuditActions.TARGET_USER, id,
+                "将用户 #" + id + " 的角色改为 " + req.getRoles());
         return Result.success();
     }
 
@@ -67,6 +73,8 @@ public class AdminUserController {
             @PathVariable Long id,
             @RequestBody SetModeratorBoardsRequest req) {
         moderatorBoardService.setModeratorBoards(id, req.getItems());
+        auditLogService.record(AuditActions.MODERATOR_ASSIGN, AuditActions.TARGET_USER, id,
+                "调整用户 #" + id + " 的版主授权为 " + req.getItems());
         return Result.success();
     }
 
@@ -76,6 +84,10 @@ public class AdminUserController {
             @RequestParam int status,
             @AuthenticationPrincipal CustomUserDetails details) {
         adminUserService.setUserStatus(details.getUserId(), id, status);
+        boolean banned = status != 0;
+        auditLogService.record(banned ? AuditActions.USER_BAN : AuditActions.USER_UNBAN,
+                AuditActions.TARGET_USER, id,
+                (banned ? "封禁用户 #" : "解封用户 #") + id);
         return Result.success();
     }
 
@@ -92,6 +104,9 @@ public class AdminUserController {
             @PathVariable Long id,
             @RequestBody ResetPasswordRequest req) {
         String pwd = adminUserService.resetPassword(id, req);
+        // 🚨 审计只记"重置了谁"，绝不记录新口令明文
+        auditLogService.record(AuditActions.USER_PASSWORD_RESET, AuditActions.TARGET_USER, id,
+                "重置用户 #" + id + " 的登录密码");
         return Result.success(Map.of("password", pwd));
     }
 
@@ -100,6 +115,7 @@ public class AdminUserController {
             @PathVariable Long id,
             @AuthenticationPrincipal CustomUserDetails details) {
         adminUserService.deleteUser(details.getUserId(), id);
+        auditLogService.record(AuditActions.USER_DELETE, AuditActions.TARGET_USER, id, "删除用户 #" + id);
         return Result.success();
     }
 }

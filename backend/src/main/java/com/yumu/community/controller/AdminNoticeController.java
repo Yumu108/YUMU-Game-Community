@@ -1,9 +1,11 @@
 package com.yumu.community.controller;
 
+import com.yumu.community.common.AuditActions;
 import com.yumu.community.common.PageResult;
 import com.yumu.community.common.Result;
 import com.yumu.community.dto.AnnouncementRequest;
 import com.yumu.community.security.CustomUserDetails;
+import com.yumu.community.service.AuditLogService;
 import com.yumu.community.service.NoticeService;
 import com.yumu.community.vo.AnnouncementVO;
 import jakarta.validation.Valid;
@@ -33,6 +35,8 @@ import java.util.Map;
 public class AdminNoticeController {
 
     private final NoticeService noticeService;
+    /** 只读旁路：管理动作留痕，写失败不阻断业务。 */
+    private final AuditLogService auditLogService;
 
     @GetMapping
     public Result<PageResult<AnnouncementVO>> list(
@@ -51,18 +55,24 @@ public class AdminNoticeController {
             @Valid @RequestBody AnnouncementRequest req,
             @AuthenticationPrincipal CustomUserDetails details) {
         Long id = noticeService.create(req, details.getUserId());
+        auditLogService.record(AuditActions.ANNOUNCEMENT_CREATE, AuditActions.TARGET_ANNOUNCEMENT, id,
+                "发布公告「" + req.getTitle() + "」");
         return Result.success(Map.of("id", id));
     }
 
     @PutMapping("/{id}")
     public Result<Void> update(@PathVariable Long id, @Valid @RequestBody AnnouncementRequest req) {
         noticeService.update(id, req);
+        auditLogService.record(AuditActions.ANNOUNCEMENT_UPDATE, AuditActions.TARGET_ANNOUNCEMENT, id,
+                "修改公告 #" + id + "「" + req.getTitle() + "」");
         return Result.success();
     }
 
     @DeleteMapping("/{id}")
     public Result<Void> delete(@PathVariable Long id) {
         noticeService.delete(id);
+        auditLogService.record(AuditActions.ANNOUNCEMENT_DELETE, AuditActions.TARGET_ANNOUNCEMENT, id,
+                "删除公告 #" + id);
         return Result.success();
     }
 
@@ -81,6 +91,8 @@ public class AdminNoticeController {
             isTop = Boolean.parseBoolean(String.valueOf(body.get("isTop")));
         }
         noticeService.setTop(id, isTop);
+        auditLogService.record(AuditActions.ANNOUNCEMENT_PIN, AuditActions.TARGET_ANNOUNCEMENT, id,
+                (isTop ? "置顶公告 #" : "取消置顶公告 #") + id);
         return Result.success();
     }
 }

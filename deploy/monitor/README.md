@@ -81,13 +81,23 @@ crontab -e
 
 ```cron
 # YUMU 服务探活：每 5 分钟一次
-*/5 * * * * cd /opt/yumu/deploy/monitor && ALERT_WEBHOOK_URL='你的webhook' ./health-check.sh >> /var/log/yumu-health-cron.log 2>&1
+# ⚠️ 先 source .env 取 DB_PASSWORD / ALERT_WEBHOOK_URL；再显式指定 CHECK_URL / CHECK_PORT（见下方说明）
+*/5 * * * * cd /opt/yumu && set -a && . ./.env && set +a && CHECK_URL='http://127.0.0.1/api/actuator/health' CHECK_PORT=80 ./deploy/monitor/health-check.sh >> /var/log/yumu-health-cron.log 2>&1
 
 # MySQL 每日备份：每天凌晨 3 点（失败会自动告警，见下）
-0 3 * * * cd /opt/yumu/deploy/backup && ALERT_WEBHOOK_URL='你的webhook' ./db-backup.sh >> /var/log/yumu-backup-cron.log 2>&1
+0 3 * * * cd /opt/yumu && set -a && . ./.env && set +a && ./deploy/backup/db-backup.sh >> /var/log/yumu-backup-cron.log 2>&1
 ```
 
-> crontab 环境变量不会继承 `.env`，所以 webhook 直接写在命令行里（或 `set -a; source /opt/yumu/.env; set +a; ...`）。
+> ⚠️ **为什么要 `source .env`？** crontab 不继承你的 shell 环境，`db-backup.sh` 拿不到 `DB_PASSWORD`
+> 会退回内建默认值 `123456` → 备份必然失败并告警；`notify.sh` 也拿不到 `ALERT_WEBHOOK_URL` → 告警发不出去
+> （降级为写本地日志）。所以 cron 里必须先把 `.env` 载进来。
+
+> ⚠️ **`CHECK_URL` / `CHECK_PORT` 为什么要显式写？**
+> 脚本默认探的是 `http://127.0.0.1:8080/api/actuator/health`（本机直接跑 jar 的场景）。
+> 但 **compose 部署时 backend 的 8080 没有映射到宿主机**（只在内网 `backend:8080`，这是刻意的安全设计），
+> 宿主机上 8080 根本连不通 → 探活会**永远失败**，连续 3 次后开始无脑告警。
+> 因此容器部署一律改成从 **Nginx 入口**探：`CHECK_URL=http://127.0.0.1/api/actuator/health`、`CHECK_PORT=80`。
+> 顺带这还多验证了一层「Nginx 反代是否正常」，比只探后端更有意义。
 
 ---
 

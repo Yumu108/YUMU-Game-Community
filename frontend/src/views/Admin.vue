@@ -24,6 +24,7 @@
           <el-tab-pane v-if="userStore.isAdmin" label="用户管理" name="users" />
           <el-tab-pane v-if="userStore.isAdmin" label="游戏管理" name="games" />
           <el-tab-pane v-if="userStore.isAdmin" label="公告管理" name="announcements" />
+          <el-tab-pane v-if="userStore.isAdmin" label="审计日志" name="audit" />
         </el-tabs>
 
         <!-- ================= 举报队列 ================= -->
@@ -540,6 +541,93 @@
             </template>
           </el-dialog>
         </div>
+
+        <!-- ================= 审计日志（仅 ADMIN，027） ================= -->
+        <div v-else-if="activeTab === 'audit' && userStore.isAdmin" class="a-section audit-section">
+          <div class="a-section-head">
+            <div class="a-section-title">📜 操作审计日志</div>
+            <div class="a-section-desc">
+              记录管理员与版主的封禁 / 删除 / 审核 / 置顶加精等管理动作。日志只追加不可修改，
+              操作人昵称按「操作当时」快照留存，用于事后追溯与合规审计。
+            </div>
+          </div>
+
+          <div class="a-filters">
+            <el-select
+              v-model="auditFilter.action"
+              placeholder="全部动作"
+              clearable
+              size="small"
+              style="width: 170px"
+              @change="loadAudit(1)"
+            >
+              <el-option v-for="a in auditActionOptions" :key="a.code" :label="a.label" :value="a.code" />
+            </el-select>
+            <el-select
+              v-model="auditFilter.targetType"
+              placeholder="全部对象"
+              clearable
+              size="small"
+              style="width: 130px"
+              @change="loadAudit(1)"
+            >
+              <el-option v-for="t in AUDIT_TARGET_OPTIONS" :key="t.value" :label="t.label" :value="t.value" />
+            </el-select>
+            <el-input
+              v-model="auditFilter.operator"
+              placeholder="操作人昵称 / ID"
+              clearable
+              size="small"
+              style="width: 170px"
+              @keyup.enter="loadAudit(1)"
+              @clear="loadAudit(1)"
+            />
+            <el-date-picker
+              v-model="auditFilter.range"
+              type="datetimerange"
+              size="small"
+              range-separator="至"
+              start-placeholder="开始时间"
+              end-placeholder="结束时间"
+              value-format="YYYY-MM-DD HH:mm:ss"
+              style="width: 350px"
+              @change="loadAudit(1)"
+            />
+            <el-button size="small" type="primary" @click="loadAudit(1)">查询</el-button>
+            <el-button size="small" plain @click="resetAuditFilter">重置</el-button>
+            <el-button size="small" plain @click="loadAudit(auditList.current)">刷新</el-button>
+          </div>
+
+          <div v-if="auditLoading" class="a-loading"><el-skeleton :rows="5" animated /></div>
+          <div v-else-if="!auditList.records.length" class="a-empty">暂无审计记录</div>
+          <div v-else class="a-list">
+            <div v-for="log in auditList.records" :key="log.id" class="a-item audit-item">
+              <div class="a-item-main">
+                <div class="a-item-top">
+                  <el-tag size="small" :type="auditTagType(log.action)" effect="plain">{{ log.actionLabel }}</el-tag>
+                  <span class="a-id num">
+                    {{ log.operatorName || '未知操作人' }}<template v-if="log.operatorId"> #{{ log.operatorId }}</template>
+                  </span>
+                  <span class="a-time num">{{ log.createdAt }}</span>
+                </div>
+                <div class="a-meta audit-detail">{{ log.detail || '—' }}</div>
+                <div class="a-meta audit-sub num">
+                  <span v-if="log.targetType">对象：{{ log.targetType }}<template v-if="log.targetId"> #{{ log.targetId }}</template></span>
+                  <span v-if="log.ip">来源 IP：{{ log.ip }}</span>
+                </div>
+              </div>
+            </div>
+          </div>
+          <el-pagination
+            v-if="auditList.total > auditList.size"
+            class="a-page"
+            layout="prev, pager, next"
+            :total="auditList.total"
+            :page-size="auditList.size"
+            :current-page="auditList.current"
+            @current-change="(pg) => loadAudit(pg)"
+          />
+        </div>
       </template>
     </div>
   </AppLayout>
@@ -582,7 +670,9 @@ import {
   createGame,
   updateGame,
   deleteGame,
-  toggleGameStatus as apiToggleGameStatus
+  toggleGameStatus as apiToggleGameStatus,
+  listAuditLogs,
+  listAuditActions
 } from '@/api/community'
 
 const userStore = useUserStore()
@@ -1132,12 +1222,74 @@ async function removeGame(row) {
 }
 
 // ---------------- 切换 tab ----------------
+// ---------------- 审计日志（仅 ADMIN · 027） ----------------
+const AUDIT_TARGET_OPTIONS = [
+  { value: 'POST', label: '帖子' },
+  { value: 'REPLY', label: '回复' },
+  { value: 'USER', label: '用户' },
+  { value: 'REPORT', label: '举报' },
+  { value: 'ANNOUNCEMENT', label: '公告' },
+  { value: 'GAME', label: '游戏' }
+]
+const auditLoading = ref(false)
+const auditList = ref({ records: [], total: 0, pages: 0, current: 1, size: 20 })
+const auditActionOptions = ref([])
+const auditFilter = reactive({ action: '', targetType: '', operator: '', range: [] })
+
+/** 动作码配色：删除/封禁/驳回/隐藏＝危险；通过/恢复/新建/解封＝成功；置顶加精＝警示；其余中性。 */
+function auditTagType(action) {
+  if (!action) return 'info'
+  if (/(DELETE|BAN|REJECT|HIDE)$/.test(action)) return 'danger'
+  if (/(APPROVE|RESTORE|CREATE|UNBAN)$/.test(action)) return 'success'
+  if (/(PIN|ESSENCE)/.test(action)) return 'warning'
+  return 'info'
+}
+
+/** 动作码字典由后端下发（与写库的动作码同源），避免前端维护一份会漂移的映射表。 */
+async function loadAuditActions() {
+  try {
+    auditActionOptions.value = await listAuditActions()
+  } catch (e) {
+    auditActionOptions.value = []
+  }
+}
+
+async function loadAudit(current = 1) {
+  if (!userStore.isAdmin) return
+  auditLoading.value = true
+  try {
+    const [from, to] = auditFilter.range || []
+    auditList.value = await listAuditLogs({
+      current,
+      size: 20,
+      action: auditFilter.action || undefined,
+      targetType: auditFilter.targetType || undefined,
+      operator: auditFilter.operator ? auditFilter.operator.trim() : undefined,
+      from: from || undefined,
+      to: to || undefined
+    })
+  } catch (e) {
+    // 静默：错误提示已由 request 层统一处理
+  } finally {
+    auditLoading.value = false
+  }
+}
+
+function resetAuditFilter() {
+  auditFilter.action = ''
+  auditFilter.targetType = ''
+  auditFilter.operator = ''
+  auditFilter.range = []
+  loadAudit(1)
+}
+
 function onTabChange() {
   if (activeTab.value === 'reports') loadReports(reportTab.value)
   else if (activeTab.value === 'posts') loadPosts(1)
   else if (activeTab.value === 'users') loadUsers(1)
   else if (activeTab.value === 'games') loadGames()
   else if (activeTab.value === 'announcements') loadAnnouncements(1)
+  else if (activeTab.value === 'audit') loadAudit(1)
 }
 
 onMounted(async () => {
@@ -1151,6 +1303,8 @@ onMounted(async () => {
       const games = await listAdminGames()
       gameListForFilter.value = games
     } catch (e) { /* 静默失败：下拉为空不影响主功能 */ }
+    // 审计日志筛选下拉的动作码字典（后端下发）
+    loadAuditActions()
   }
 })
 </script>
@@ -1291,6 +1445,20 @@ onMounted(async () => {
 .a-id { color: var(--t3); font-size: 12px; }
 .a-time { margin-left: auto; color: var(--t3); font-size: 12px; }
 .a-meta { font-size: 12.5px; color: var(--t3); }
+/* 审计日志（027）：主描述行用次文本色保证可读，元信息行弱化 */
+.audit-detail {
+  margin-top: 4px;
+  font-size: 13px;
+  color: var(--t2);
+  word-break: break-word;
+}
+.audit-sub {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  margin-top: 4px;
+  font-size: 12px;
+}
 .a-reason {
   font-size: 13.5px;
   color: var(--t2);

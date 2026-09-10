@@ -346,3 +346,24 @@ CREATE TABLE `announcement` (
   KEY `idx_status_top_created` (`status`, `is_top` DESC, `created_at` DESC, `id` DESC),
   CONSTRAINT `fk_ann_user` FOREIGN KEY (`created_by`) REFERENCES `user` (`id`) ON DELETE SET NULL ON UPDATE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='系统公告表';
+
+-- ============ 管理员操作审计日志表（合规向 · 027） ============
+-- 只追加不改写；operator_name 存昵称快照（防改名后不可追溯）；
+-- operator_id 故意不加外键，保证用户被删除后审计记录仍保留。
+CREATE TABLE `admin_audit_log` (
+  `id`            BIGINT       NOT NULL AUTO_INCREMENT,
+  `operator_id`   BIGINT       DEFAULT NULL COMMENT '操作人 user.id（无外键，保证用户删除后审计仍在）',
+  `operator_name` VARCHAR(50)  DEFAULT NULL COMMENT '操作人昵称快照',
+  `action`        VARCHAR(40)  NOT NULL COMMENT '动作码，如 POST_HIDE / USER_BAN / REPORT_HANDLE',
+  `target_type`   VARCHAR(20)  DEFAULT NULL COMMENT 'POST/REPLY/USER/REPORT/ANNOUNCEMENT/GAME',
+  `target_id`     BIGINT       DEFAULT NULL COMMENT '对象 ID',
+  `detail`        VARCHAR(500) DEFAULT NULL COMMENT '人类可读描述',
+  `ip`            VARCHAR(45)  DEFAULT NULL COMMENT '操作来源 IP',
+  `created_at`    DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at`    DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  `deleted`       TINYINT      NOT NULL DEFAULT 0,
+  PRIMARY KEY (`id`),
+  KEY `idx_created` (`created_at` DESC, `id` DESC),
+  KEY `idx_operator` (`operator_id`, `created_at` DESC),
+  KEY `idx_action` (`action`, `created_at` DESC)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='管理员/版主操作审计日志';
