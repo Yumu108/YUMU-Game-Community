@@ -1,0 +1,28 @@
+:root {
+  /* ===== 背景层级（深色沉浸） ===== */
+  --bg: #0e0f13;          /* 页面底色 */
+  --bg-1: #121419;        /* 侧栏 / 顶栏 */
+  --bg-2: #16181f;        /* 卡片 */
+  --bg-3: #1d2029;        /* 悬浮 / 抬升 */
+  --border: #262a36;      /* 描边 */
+
+  /* ===== 品牌色 ===== */
+  --brand: #7c5cff;       /* YUMU 紫（主色） */
+  --brand-soft: rgba(124, 92, 255, 0.16);
+  --brand-2: #19e3c2;     /* 电竞青 */
+  --accent: #ffb020;      /* 活力橙（CTA） */
+  --accent-soft: rgba(255, 176, 32, 0.16);
+
+  /* ===== 文本 ===== */
+  --t1: #e8eaf0;          /* 主文本 */
+  --t2: #a9aec0;          /* 次文本 */
+  --t3: #6b7080;          /* 弱文本 */
+
+  /* ===== 圆角 / 阴影 ===== */
+  --radius: 14px;
+  --radius-sm: 9px;
+  --shadow: 0 6px 24px rgba(0, 0, 0, 0.35);
+
+  /* ===== 数字字体（用于帖子数/统计，带 monospace 兜底） ===== */
+  --font-num: 'Orbitron', 'DIN Alternate', 'Bahnschrift', ui-monospace, monospace;
+}

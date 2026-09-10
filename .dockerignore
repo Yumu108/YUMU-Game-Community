@@ -1,0 +1,12 @@
+# B2：构建镜像时排除无关文件（前端镜像上下文是仓库根目录）
+.git
+.workbuddy
+node_modules
+**/node_modules
+**/dist
+backend/target
+backend/*.log
+deploy/backup/backups
+uploads
+*.md
+!README.md

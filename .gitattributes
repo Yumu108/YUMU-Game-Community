@@ -1,0 +1,22 @@
+# 统一行尾：避免 Windows 检出/提交时把 LF 改成 CRLF。
+# 最关键的是 *.sh —— CRLF 的 shell 脚本在 Linux 上会直接
+# `bad interpreter: /bin/bash^M` 执行失败（deploy/monitor/*.sh、deploy/backup/*.sh）。
+* text=auto eol=lf
+
+*.sh  text eol=lf
+*.sql text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.conf text eol=lf
+
+# 二进制不做任何转换
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.svg text eol=lf
+*.jar binary
+*.woff binary
+*.woff2 binary
+*.ttf binary

@@ -1,0 +1,86 @@
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+}
+
+body {
+  background: var(--bg);
+  color: var(--t1);
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC',
+    'Microsoft YaHei', sans-serif;
+  -webkit-font-smoothing: antialiased;
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+/* 自定义滚动条（深色） */
+::-webkit-scrollbar {
+  width: 9px;
+  height: 9px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: #2b2f3c;
+  border-radius: 999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #3a3f50;
+}
+
+/* 通用：主色文字 / 链接 */
+.link {
+  color: var(--brand);
+  cursor: pointer;
+}
+.link:hover {
+  text-decoration: underline;
+}
+
+/* 区块标题小标签 */
+.section-title {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--t2);
+  letter-spacing: 1px;
+  margin: 0 0 10px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+.section-title::before {
+  content: '';
+  width: 3px;
+  height: 13px;
+  border-radius: 2px;
+  background: var(--brand);
+}
+
+/* 数字强调 */
+.num {
+  font-family: var(--font-num);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ============================================================
+   骨架屏暗色适配（修复：el-skeleton 默认浅灰白 #f2f2f2，
+   在本项目的暗色沉浸主题下会闪出刺眼白块）
+   只覆盖 Element Plus 的两个骨架颜色变量，动画轨迹保持官方实现
+   ============================================================ */
+.el-skeleton {
+  --el-skeleton-color: #1d2029;      /* 与 --bg-3 一致的静态底色 */
+  --el-skeleton-to-color: #2b2f3d;   /* 流光扫过的提亮色，微微可感知即可 */
+}

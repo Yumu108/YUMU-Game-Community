@@ -1,0 +1,115 @@
+server:
+  port: 8080
+  servlet:
+    context-path: /api
+    encoding:
+      charset: UTF-8
+      force: true                # 强制所有请求 / 响应使用 UTF-8（避免 Tomcat 默认 ISO-8859-1 把 URL 参数切成 GBK 字节）
+  tomcat:
+    uri-encoding: UTF-8          # URL 参数按 UTF-8 解码
+    max-http-form-post-size: 10MB
+    max-swallow-size: 10MB
+
+spring:
+  application:
+    name: yumu-community
+  datasource:
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    # B4 补漏（9-09 随 B5 修复）：此前 url/账密是硬编码 localhost，容器里 DB_HOST=mysql 根本不生效，
+    # 会导致 backend 容器连不上数据库。默认值保持本地开发原值，不影响本机直跑。
+    url: jdbc:mysql://${DB_HOST:localhost}:${DB_PORT:3306}/${DB_NAME:yumu_community}?useUnicode=true&characterEncoding=UTF-8&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true&useSSL=false
+    username: ${DB_USERNAME:root}
+    password: ${DB_PASSWORD:123456}
+  mybatis-plus:
+    mapper-locations: classpath*:/mapper/**/*.xml
+    type-aliases-package: com.yumu.community.entity
+    configuration:
+      map-underscore-to-camel-case: true
+    global-config:
+      db-config:
+        id-type: auto
+        logic-delete-field: deleted
+        logic-not-delete-value: 0
+        logic-delete-value: 1
+  data:
+    # 第6阶段（8.17）：Redis 已接入，采用「优雅降级」——
+    # Redis 可用时作为热点缓存；不可用时 CacheService 自动回退进程内缓存，应用照常启动与运行。
+    # 本机 Docker 未起 -> Redis 不可用 -> 自动 local 模式；Docker 起 redis 后无需改代码即切换。
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      password: ${REDIS_PASSWORD:}
+      database: 0
+      timeout: 2000ms
+      lettuce:
+        shutdown-timeout: 100ms
+        pool:
+          enabled: false
+  servlet:
+    multipart:
+      max-file-size: 10MB
+      max-request-size: 10MB
+
+jwt:
+  # B4：生产环境务必通过 JWT_SECRET 环境变量注入强随机密钥（>= 32 字节），绝不使用默认值上公网
+  secret: ${JWT_SECRET:yumu-community-secret-key-change-me-please}
+  # A3：access token 短期化（默认 2h → 配合退出黑名单，让"退出即失效"贴合用户感知）。
+  # 上线后再加 refresh token 机制延长有效会话，本期不做。
+  expiration: ${JWT_EXPIRATION_MS:7200000}
+
+yumu:
+  cors:
+    allowed-origins: ${CORS_ALLOWED_ORIGINS:http://localhost:5173}
+  upload:
+    dir: ${UPLOAD_DIR:./uploads}
+    url-prefix: /api/files
+  security:
+    rate-limit:
+      # A2 总开关：false 时所有限频直接放行（仅本地调试用，生产务必保持 true）
+      enabled: ${RATE_LIMIT_ENABLED:true}
+      # 智能助手：单个 IP 每分钟提问次数（/ai/chat 是 permitAll，超限=白烧扣子 token）
+      ai-per-minute: ${AI_RATE_PER_MINUTE:20}
+
+# 社区智能助手（扣子 Coze）—— 密钥走环境变量，不进仓库（顺带完成 B4 密钥外置）
+coze:
+  base-url: ${COZE_BASE_URL:https://api.coze.cn/v3/chat}
+  api-token: ${COZE_API_TOKEN:}
+  bot-id: ${COZE_BOT_ID:}
+  mock: ${COZE_MOCK:true}      # 未配置真实 token 时启用本地模拟，便于无 token 也能演示
+  enabled: ${COZE_ENABLED:true}
+
+# ============================================================
+# B5：基础日志 / 监控 / 告警
+# ------------------------------------------------------------
+# 日志：落盘目录由 logback-spring.xml 读取 LOG_DIR（默认 ./logs），
+#       按天切分 + 单文件 100MB 封顶，保留 30 天；ERROR 单独出 error.log。
+# 探活：只开 /api/actuator/health（SecurityConfig 放行），配合 deploy/monitor/health-check.sh 定时探活。
+# 安全：绝不开 env / heapdump / beans / configprops —— 那些端点会把 JWT_SECRET、数据库密码明文吐出来（与 B4 密钥外置直接冲突）。
+# ============================================================
+logging:
+  level:
+    root: INFO
+    com.yumu.community: INFO
+    com.yumu.community.security: INFO      # 限频 / 风控命中日志要能看到
+    org.springframework.security: WARN
+  file:
+    path: ${LOG_DIR:./logs}
+
+management:
+  # 生产如需把监控端点隔离到内网端口：追加环境变量 MANAGEMENT_PORT=8081（不设则与业务同端口 8080）
+  endpoints:
+    web:
+      base-path: /actuator
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      show-details: never                  # 不对外部返回 DB / Redis 连接细节
+  health:
+    redis:
+      enabled: false                       # Redis 是「优雅降级」组件，不可用不应把整体健康打成 DOWN
+    db:
+      enabled: true
+    diskspace:
+      enabled: true
+      threshold: 512MB                     # 磁盘不足提前告警（配合日志轮转防撑爆）

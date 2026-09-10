@@ -1,0 +1,85 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  B5：集中日志配置
+  ============================================================
+  · 日志目录：环境变量 LOG_DIR（默认 ./logs），docker-compose 挂载到宿主机 ./logs
+  · app.log    —— 全量日志，按天切分 + 单文件 100MB 封顶，保留 30 天
+  · error.log  —— 仅 ERROR 级，单独出一份，保留 30 天，告警排查时直接看这个
+  · 控制台      —— 保留输出（docker logs / 本地开发仍可见）
+  · 异步写盘    —— AsyncAppender 包裹，避免日志 IO 拖慢接口响应
+-->
+<configuration>
+
+    <springProperty name="LOG_DIR" source="logging.file.path" defaultValue="./logs"/>
+    <springProperty name="APP_NAME" source="spring.application.name" defaultValue="yumu-community"/>
+
+    <property name="LOG_PATTERN"
+              value="%d{yyyy-MM-dd HH:mm:ss.SSS} %-5level [%thread] %logger{40} - %msg%n"/>
+
+    <!-- 控制台：本地开发 + docker logs -->
+    <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
+        <encoder>
+            <pattern>${LOG_PATTERN}</pattern>
+            <charset>UTF-8</charset>
+        </encoder>
+    </appender>
+
+    <!-- 全量日志：按天 + 大小滚动 -->
+    <appender name="APP_FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
+        <file>${LOG_DIR}/${APP_NAME}.log</file>
+        <rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">
+            <fileNamePattern>${LOG_DIR}/${APP_NAME}.%d{yyyy-MM-dd}.%i.log</fileNamePattern>
+            <maxFileSize>100MB</maxFileSize>
+            <maxHistory>30</maxHistory>
+            <totalSizeCap>3GB</totalSizeCap>
+        </rollingPolicy>
+        <encoder>
+            <pattern>${LOG_PATTERN}</pattern>
+            <charset>UTF-8</charset>
+        </encoder>
+    </appender>
+
+    <!-- ERROR 单独一份：告警排查 / 日常巡检只看这个文件 -->
+    <appender name="ERROR_FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
+        <file>${LOG_DIR}/${APP_NAME}-error.log</file>
+        <filter class="ch.qos.logback.classic.filter.LevelFilter">
+            <level>ERROR</level>
+            <onMatch>ACCEPT</onMatch>
+            <onMismatch>DENY</onMismatch>
+        </filter>
+        <rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">
+            <fileNamePattern>${LOG_DIR}/${APP_NAME}-error.%d{yyyy-MM-dd}.%i.log</fileNamePattern>
+            <maxFileSize>50MB</maxFileSize>
+            <maxHistory>30</maxHistory>
+            <totalSizeCap>1GB</totalSizeCap>
+        </rollingPolicy>
+        <encoder>
+            <pattern>${LOG_PATTERN}</pattern>
+            <charset>UTF-8</charset>
+        </encoder>
+    </appender>
+
+    <!-- 异步包装：接口线程不阻塞在磁盘 IO 上 -->
+    <appender name="ASYNC_APP" class="ch.qos.logback.classic.AsyncAppender">
+        <queueSize>2048</queueSize>
+        <discardingThreshold>0</discardingThreshold>
+        <appender-ref ref="APP_FILE"/>
+    </appender>
+    <appender name="ASYNC_ERROR" class="ch.qos.logback.classic.AsyncAppender">
+        <queueSize>1024</queueSize>
+        <discardingThreshold>0</discardingThreshold>
+        <appender-ref ref="ERROR_FILE"/>
+    </appender>
+
+    <root level="INFO">
+        <appender-ref ref="CONSOLE"/>
+        <appender-ref ref="ASYNC_APP"/>
+        <appender-ref ref="ASYNC_ERROR"/>
+    </root>
+
+    <!-- 第三方噪声降噪 -->
+    <logger name="org.springframework.web" level="WARN"/>
+    <logger name="com.zaxxer.hikari" level="WARN"/>
+    <logger name="io.lettuce" level="WARN"/>
+
+</configuration>

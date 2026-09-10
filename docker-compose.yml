@@ -1,0 +1,116 @@
+# B2：YUMU 游戏社区一键编排 —— mysql / redis / backend / nginx(含前端构建)
+# 用法：
+#   本地开发（只用 mysql/redis）：docker compose up -d mysql redis
+#   生产一键部署：cp .env.example .env && 填好密钥 && docker compose up -d --build
+# 密钥全部来自 .env（B4），生产环境禁止把真实密码写进本文件。
+
+# B5：容器日志轮转 —— docker 默认 json-file 无上限，长跑会把磁盘撑爆。
+# 统一限制：单文件 10m、保留 3 份（单服务最多 30m）。下面每个服务通过锚点引用。
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+services:
+  mysql:
+    image: mysql:8.0
+    container_name: yumu-mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-123456}
+      MYSQL_DATABASE: yumu_community
+      TZ: Asia/Shanghai
+    ports:
+      # 本机已装 MySQL 占用 3306，容器映射到宿主机 3307 供本地调试；
+      # ⚠️ 生产服务器请删除此映射（数据库不应对公网暴露），后端走内网 mysql:3306。
+      - "3307:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+    command: --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci
+    logging: *default-logging
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-p${MYSQL_ROOT_PASSWORD:-123456}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7
+    container_name: yumu-redis
+    # 生产如需密码：command 加 --requirepass，并给 backend 传 REDIS_PASSWORD
+    ports:
+      # ⚠️ 生产服务器建议删除此映射，backend 走内网 redis:6379
+      - "6379:6379"
+    logging: *default-logging
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: yumu-backend
+    environment:
+      DB_HOST: mysql
+      DB_PORT: 3306
+      DB_NAME: yumu_community
+      DB_USERNAME: ${DB_USERNAME:-root}
+      DB_PASSWORD: ${DB_PASSWORD:-123456}
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+      JWT_SECRET: ${JWT_SECRET:-yumu-community-secret-key-change-me-please}
+      JWT_EXPIRATION_MS: ${JWT_EXPIRATION_MS:-7200000}
+      CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-http://localhost:5173}
+      UPLOAD_DIR: /data/uploads
+      # B5：日志落盘到挂载卷（application.yml 的 logging.file.path 读的就是它）
+      LOG_DIR: /app/logs
+      COZE_API_TOKEN: ${COZE_API_TOKEN:-}
+      COZE_BOT_ID: ${COZE_BOT_ID:-}
+      COZE_MOCK: ${COZE_MOCK:-true}
+      TZ: Asia/Shanghai
+    volumes:
+      # A4/B2：上传文件持久化到命名卷，重启/换机不丢（换机迁移时同步该卷）
+      - uploads_data:/data/uploads
+      # B5：应用日志持久化到宿主机 ./logs，方便 grep 排查 + 不随容器销毁丢失
+      - ./logs:/app/logs
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    logging: *default-logging
+    healthcheck:
+      # B5：改打 Actuator 健康端点（此前打的是业务接口 /api/system/cache-mode）
+      # show-details=never，对外只返回 {"status":"UP"}，不泄露 DB/Redis 细节
+      test: ["CMD-SHELL", "curl -sf http://localhost:8080/api/actuator/health | grep -q '\"UP\"' || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
+
+  nginx:
+    build:
+      context: .
+      dockerfile: deploy/nginx/Dockerfile
+    container_name: yumu-nginx
+    ports:
+      - "80:80"
+      # HTTPS 签发后取消注释，并追加证书挂载（见 deploy/nginx/README.md）：
+      # - "443:443"
+      # - /etc/letsencrypt:/etc/letsencrypt:ro
+      # - /var/www/certbot:/var/www/certbot
+    volumes:
+      # certbot webroot 验证目录（HTTP 版也挂上，方便直接签发）
+      - certbot_web:/var/www/certbot
+    depends_on:
+      - backend
+    logging: *default-logging
+
+volumes:
+  mysql_data:
+  uploads_data:
+  certbot_web:
