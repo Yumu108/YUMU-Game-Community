@@ -17,14 +17,17 @@ import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 import java.util.concurrent.CompletableFuture;
 
 /**
- * 社区智能助手入口：前端以 fetch 流式 POST 到本端点，后端代理扣子并以 SSE 把增量回复推回。
- * 无需登录（游客也可用）；userId 由前端传入，未传则生成匿名 ID 维持多轮。
+ * 社区智能助手入口：前端以 fetch 流式 POST 到本端点，后端代理大模型并以 SSE 把增量回复推回。
+ * 无需登录（游客也可用）；userId 由前端传入，未传则生成匿名 ID 用于日志与多轮归属。
  *
- * 成本控制（B5 后续补充）：本端点 permitAll 且每次调用都会消耗扣子 token，
+ * 成本控制：本端点 permitAll 且每次调用都会消耗大模型 token，
  * 因此必须限频 + 限制单条输入长度，否则任何人写个脚本就能刷爆账单。
  * 限频在返回 SseEmitter 之前同步执行（此时仍在请求线程内，能拿到 IP）；
  * 超限抛 BusinessException → 全局处理器返回 HTTP 200 + code=429 的 JSON，
  * 前端需识别非 SSE 响应并展示 message（见 AiAssistant.vue）。
+ *
+ * 注意（可选优化）：下面用 commonPool 跑阻塞的流式调用，高并发下会占满公共线程池；
+ * 若后续并发量上来，应换成专用线程池（或虚拟线程，JDK21 可用 Executors.newVirtualThreadPerTaskExecutor()）。
  */
 @RestController
 @RequestMapping("/ai")

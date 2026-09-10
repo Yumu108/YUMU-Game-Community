@@ -68,9 +68,11 @@ services:
       UPLOAD_DIR: /data/uploads
       # B5：日志落盘到挂载卷（application.yml 的 logging.file.path 读的就是它）
       LOG_DIR: /app/logs
-      COZE_API_TOKEN: ${COZE_API_TOKEN:-}
-      COZE_BOT_ID: ${COZE_BOT_ID:-}
-      COZE_MOCK: ${COZE_MOCK:-true}
+      # 社区智能助手（OpenAI 兼容大模型，默认 DeepSeek；未配 key 时自动走本地 mock 演示）
+      LLM_API_KEY: ${LLM_API_KEY:-}
+      LLM_BASE_URL: ${LLM_BASE_URL:-https://api.deepseek.com/v1}
+      LLM_MODEL: ${LLM_MODEL:-deepseek-chat}
+      LLM_MOCK: ${LLM_MOCK:-true}
       TZ: Asia/Shanghai
     volumes:
       # A4/B2：上传文件持久化到命名卷，重启/换机不丢（换机迁移时同步该卷）

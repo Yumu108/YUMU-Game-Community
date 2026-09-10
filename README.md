@@ -14,6 +14,7 @@
 | 持久化   | MyBatis-Plus + MySQL 8                                |
 | 缓存/消息 | Redis 7（Spring Data Redis，优雅降级）+ WebSocket 实时通知        |
 | 安全    | JWT（2h 短期 + 退出黑名单 + 滑动续期）· Jsoup 富文本净化 · Redis 滑动窗口限频 · 敏感词/站外联系方式风控 · 上传 magic bytes 校验 |
+| AI 助手 | DeepSeek（OpenAI 兼容 `/chat/completions`，可换 SiliconFlow / 本地 Ollama）· 社区知识库拼入 system prompt · SSE 流式 · 多轮记忆自持 · 无 key 自动 mock |
 | 测试    | Node 22 `.mjs` 接口回归（tests/）+ playwright-core UI 回归（tests/.pw/） |
 | 部署    | Nginx 反向代理 + Spring Boot + MySQL + Redis（docker-compose 四服务） |
 
@@ -36,9 +37,9 @@
 ├── 项目开发日志.md      # 逐日开发流水（Day 1 起）
 ├── 玩家视角功能优化清单.md  # P0/P1/P2 产品需求清单
 ├── 上线前必做清单.md     # Go/No-Go 评估 + 安全/部署/合规状态跟踪
-├── YUMU社区知识库.md     # 社区规则官方说明（上传扣子作助手知识库）
-├── 智能助手接入说明.md   # 助手技术接入（扣子 Coze + SSE 代理）
-└── yumu游戏社区助手-修订版.md # 助手 Prompt（整份粘贴到扣子 Bot）
+├── YUMU社区知识库.md     # 社区规则官方说明（助手知识库来源；改后需同步 resources/ai/ 副本）
+├── 智能助手接入说明.md   # 助手技术接入（DeepSeek 直连 + SSE 代理）
+└── yumu游戏社区助手-修订版.md # 助手人设 Prompt（改后需同步 resources/ai/ 副本）
 ```
 
 ## 获取代码
