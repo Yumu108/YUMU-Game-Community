@@ -21,6 +21,10 @@ backend/uploads/
 logs/
 .monitor-state/
 deploy/backup/backups/
+# 数据库导出（含 user 表 email / 密码哈希）——绝不入库
+db-backup/
+*.sql.gz
+*.dump
 
 # ============================================================
 # 密钥与环境（B4：生产密钥绝不入库）
