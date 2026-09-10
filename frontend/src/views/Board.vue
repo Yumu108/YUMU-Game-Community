@@ -39,11 +39,11 @@
       />
 
       <el-pagination
-        v-if="total > pageSize"
+        v-if="total > PAGE_SIZE"
         class="pager"
         layout="prev, pager, next"
         :current-page="current"
-        :page-size="pageSize"
+        :page-size="PAGE_SIZE"
         :total="total"
         @current-change="onPage"
       />

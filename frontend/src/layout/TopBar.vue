@@ -211,6 +211,11 @@ function goMine() {
   if (userStore.userInfo?.id) router.push(`/user/${userStore.userInfo.id}`)
   else ElMessage.warning('请先登录')
 }
+// 顶栏 💎 积分 chip → 个人中心（积分 & 签到区块在 My.vue）。
+// 注意：不要与 goMine 混用——goMine 跳的是公开个人主页 /user/:id，没有积分面板。
+function goMy() {
+  router.push('/my')
+}
 // C2 举报闭环：我的举报状态页
 function goMyReports() {
   router.push('/my-reports')

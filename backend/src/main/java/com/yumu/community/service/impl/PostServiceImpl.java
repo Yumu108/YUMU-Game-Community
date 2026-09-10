@@ -130,6 +130,7 @@ public class PostServiceImpl implements PostService {
                 // 「全部」：不分页，一次性返回所有该游戏可见帖（置顶优先 + 时间倒序）
                 qw.orderByDesc("is_top");
                 qw.orderByDesc("created_at");
+                qw.orderByDesc("id");
                 List<PostVO> allVos = toVOList(postMapper.selectList(qw), userId);
                 int an = allVos.size();
                 return PageResult.of(an, 1, 1, Math.max(1, an), allVos);
@@ -137,12 +138,13 @@ public class PostServiceImpl implements PostService {
                 // 「热门」：综合 = 浏览 + 点赞*2 + 评论*3 + 收藏（收藏用子查询统计）
                 qw.last("ORDER BY (view_count + like_count * 2 + reply_count * 3 + "
                         + "(SELECT COUNT(*) FROM favorite f WHERE f.post_id = post.id AND f.deleted = 0)) "
-                        + "DESC, created_at DESC");
+                        + "DESC, created_at DESC, id DESC");
                 break;
             case "essence":
                 // 「精华」：不分页，返回所有被标为精华的帖子
                 qw.eq("is_essence", 1);
                 qw.orderByDesc("created_at");
+                qw.orderByDesc("id");
                 List<PostVO> essenceVos = toVOList(postMapper.selectList(qw), userId);
                 int en = essenceVos.size();
                 return PageResult.of(en, 1, 1, Math.max(1, en), essenceVos);
@@ -150,27 +152,28 @@ public class PostServiceImpl implements PostService {
                 // 「最多回复」：评论数倒序
                 qw.orderByDesc("reply_count");
                 qw.orderByDesc("created_at");
+                qw.orderByDesc("id");
                 break;
             case "favorite":
                 // 「最多收藏」：收藏数倒序（用子查询统计，post 表未冗余 favorite_count）
                 qw.last("ORDER BY (SELECT COUNT(*) FROM favorite f WHERE f.post_id = post.id AND f.deleted = 0) "
-                        + "DESC, created_at DESC");
+                        + "DESC, created_at DESC, id DESC");
                 break;
             case "latest":
             default:
                 // 「最新」：置顶优先 + 时间倒序
                 qw.orderByDesc("is_top");
                 qw.orderByDesc("created_at");
+                qw.orderByDesc("id");
         }
         Page<Post> res = postMapper.selectPage(page, qw);
         List<PostVO> vos = toVOList(res.getRecords(), userId);
-        // 「最新/热门/最多回复/最多收藏」数量不超过一页：截断 total 隐藏分页
-        long total = res.getTotal();
-        long pageSize = res.getSize();
-        if ("hot".equals(s) || "reply".equals(s) || "favorite".equals(s) || "latest".equals(s)) {
-            total = Math.min(total, pageSize);
-        }
-        return PageResult.of(total, res.getPages(), res.getCurrent(), res.getSize(), vos);
+        // 分页：透传真实 total（2026-09-10 放开）。
+        // 历史坑：这里曾把 hot/reply/favorite/latest 的 total 截断到 pageSize 以「隐藏分页」，
+        //   叠加前端把 `PAGE_SIZE` 误写成 `pageSize`（未定义），导致首页/板块页分页条从不出现，
+        //   且 189 条帖只能靠「全部」tab 一次性看全。现统一改为真实分页。
+        // 「全部 / 精华」仍是一次性返回全部、不分页（见上面 case 分支）。
+        return PageResult.of(res.getTotal(), res.getPages(), res.getCurrent(), res.getSize(), vos);
     }
 
     @Override
@@ -186,6 +189,7 @@ public class PostServiceImpl implements PostService {
         // 置顶优先 + 时间倒序，与个人主页直观一致
         qw.orderByDesc("is_top");
         qw.orderByDesc("created_at");
+        qw.orderByDesc("id");
         Page<Post> res = postMapper.selectPage(page, qw);
         List<PostVO> vos = toVOList(res.getRecords(), viewerId);
         return PageResult.of(res.getTotal(), res.getPages(), res.getCurrent(), res.getSize(), vos);
@@ -199,6 +203,7 @@ public class PostServiceImpl implements PostService {
         qw.eq("status", 0);
         qw.orderByDesc("is_top");
         qw.orderByDesc("created_at");
+        qw.orderByDesc("id");
         Page<Post> res = postMapper.selectPage(page, qw);
         List<PostVO> vos = toVOList(res.getRecords(), viewerId);
         return PageResult.of(res.getTotal(), res.getPages(), res.getCurrent(), res.getSize(), vos);
@@ -232,6 +237,7 @@ public class PostServiceImpl implements PostService {
             }
         });
         qw.orderByDesc("created_at");
+        qw.orderByDesc("id");
         Page<Post> res = postMapper.selectPage(page, qw);
         return PageResult.of(res.getTotal(), res.getPages(), res.getCurrent(), res.getSize(),
                 toVOList(res.getRecords(), userId));
@@ -266,12 +272,13 @@ public class PostServiceImpl implements PostService {
                 // 「热门」：综合 = 浏览 + 点赞*2 + 评论*3 + 收藏
                 qw.last("ORDER BY (view_count + like_count * 2 + reply_count * 3 + "
                         + "(SELECT COUNT(*) FROM favorite f WHERE f.post_id = post.id AND f.deleted = 0)) "
-                        + "DESC, created_at DESC");
+                        + "DESC, created_at DESC, id DESC");
                 break;
             case "essence":
                 // 「精华」：仅被标为精华的帖子，不分页
                 qw.eq("is_essence", 1);
                 qw.orderByDesc("created_at");
+                qw.orderByDesc("id");
                 List<PostVO> essenceVos = toVOList(postMapper.selectList(qw), userId);
                 int en = essenceVos.size();
                 return PageResult.of(en, 1, 1, Math.max(1, en), essenceVos);
@@ -282,7 +289,7 @@ public class PostServiceImpl implements PostService {
             case "favorite":
                 // 「最多收藏」
                 qw.last("ORDER BY (SELECT COUNT(*) FROM favorite f WHERE f.post_id = post.id AND f.deleted = 0) "
-                        + "DESC, created_at DESC");
+                        + "DESC, created_at DESC, id DESC");
                 break;
             case "latest":
             default:
@@ -292,12 +299,8 @@ public class PostServiceImpl implements PostService {
         Page<Post> page = new Page<>(clampCurrent(current), clampSize(size));
         Page<Post> res = postMapper.selectPage(page, qw);
         List<PostVO> vos = toVOList(res.getRecords(), userId);
-        long total = res.getTotal();
-        long pageSize = res.getSize();
-        if ("hot".equals(s) || "reply".equals(s) || "favorite".equals(s) || "latest".equals(s)) {
-            total = Math.min(total, pageSize);
-        }
-        return PageResult.of(total, res.getPages(), res.getCurrent(), res.getSize(), vos);
+        // 分页：与 pagePosts 一致，透传真实 total（不再截断，见 pagePosts 处的历史说明）
+        return PageResult.of(res.getTotal(), res.getPages(), res.getCurrent(), res.getSize(), vos);
     }
 
     @Override
