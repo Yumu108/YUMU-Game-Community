@@ -69,7 +69,6 @@
 <script setup>
 import { ref, computed, nextTick, onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
-import { ElMessage } from 'element-plus'
 import { uploadImage, search } from '@/api/community'
 import { mentionMarkdown, decorationHtmlFor } from '@/utils/richtext'
 

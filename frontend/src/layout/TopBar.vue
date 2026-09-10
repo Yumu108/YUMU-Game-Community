@@ -136,7 +136,6 @@
 <script setup>
 import { computed, ref, onMounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ElMessage, ElNotification } from 'element-plus'
 import { Bell, ChatDotRound, Search, Grid, CaretBottom, Close } from '@element-plus/icons-vue'
 import { useUserStore, useGameStore } from '@/store'
 import { wsManager } from '@/utils/websocket'

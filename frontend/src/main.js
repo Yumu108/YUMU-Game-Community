@@ -1,7 +1,9 @@
 import { createApp } from 'vue'
 import { createPinia } from 'pinia'
-import ElementPlus from 'element-plus'
-import 'element-plus/dist/index.css'
+// 9-10：Element Plus 改为**按需引入**（unplugin-vue-components + unplugin-auto-import，
+// 配置见 vite.config.js）——不再 `app.use(ElementPlus)` 全量注册、不再引入
+// `element-plus/dist/index.css` 全量样式；模板里的 <el-xxx>、代码里的
+// ElMessage/ElMessageBox/ElNotification、v-loading 指令均由插件按需注入（含各自 CSS）。
 // 图标按需注册（原先是 `import * as ElementPlusIconsVue` 全量注册 293 个图标，
 // `import *` 无法被 tree-shake，全部打进主包，是首屏体积的大头之一）。
 // 全项目实际只用到下面 13 个。新增图标时必须在此登记，否则模板里会出现空白图标。
@@ -44,7 +46,6 @@ for (const [key, component] of Object.entries(icons)) {
 
 app.use(createPinia())
 app.use(router)
-app.use(ElementPlus)
 app.mount('#app')
 
 // token 滑动续签的后台巡检（临期自动续签 + 跨标签页同步）

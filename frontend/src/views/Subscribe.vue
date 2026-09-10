@@ -87,7 +87,6 @@
 
 <script setup>
 import { ref, reactive, onMounted, watch } from 'vue'
-import { ElMessage } from 'element-plus'
 import AppLayout from '@/layout/AppLayout.vue'
 import BackButton from '@/components/BackButton.vue'
 import PostCard from '@/components/PostCard.vue'

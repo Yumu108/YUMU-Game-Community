@@ -174,7 +174,6 @@
 <script setup>
 import { ref, computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ElMessage } from 'element-plus'
 import AppLayout from '@/layout/AppLayout.vue'
 import BackButton from '@/components/BackButton.vue'
 import BoardTag from '@/components/BoardTag.vue'

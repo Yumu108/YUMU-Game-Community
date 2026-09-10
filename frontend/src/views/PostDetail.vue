@@ -245,7 +245,6 @@
 <script setup>
 import { ref, computed, onMounted, watch, nextTick } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ElMessage, ElMessageBox } from 'element-plus'
 import AppLayout from '@/layout/AppLayout.vue'
 import BackButton from '@/components/BackButton.vue'
 import StatusBadge from '@/components/StatusBadge.vue'

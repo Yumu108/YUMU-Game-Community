@@ -9,7 +9,7 @@
 
 | 层     | 技术                                                       |
 | ----- | -------------------------------------------------------- |
-| 前端    | Vue 3 + Vite + Element Plus + Pinia + Vue Router + Axios（路由懒加载） |
+| 前端    | Vue 3 + Vite + Element Plus + Pinia + Vue Router + Axios（路由懒加载 + Element 按需引入） |
 | 后端    | Java 21 + Spring Boot 3.3.x + Spring Security + JWT      |
 | 持久化   | MyBatis-Plus + MySQL 8                                |
 | 缓存/消息 | Redis 7（Spring Data Redis，优雅降级）+ WebSocket 实时通知        |
@@ -142,6 +142,10 @@ npm run dev
 | 重启后端报 jar `Unable to rename` | 8080 被旧 java 进程占用锁住 jar；先停掉旧进程再 `mvn package` |
 | 探测 `127.0.0.1:5173` 连不上 / 返回 502 | Vite 默认监听 `[::1]`（IPv6），且本机代理会把 `127.0.0.1` 打成 502。**一律用 `localhost` 探测** |
 | 页面缺图标 / 控制台报 `Failed to resolve component` | `main.js` 里 Element 图标是**显式注册的 13 个**（为 tree-shake 精简过）。新增图标用完必须去 `main.js` 补注册；**注意属性式用法 `:prefix-icon="Xxx"` 用正则扫标签扫不出来**，改完要真跑一遍 UI 看控制台 |
+| 改 Element 样式不生效（被官方样式盖掉） | 已按需引入，**入口 CSS 先于懒加载 chunk 的 `el-xxx.css` 加载**。覆盖 Element 的规则要自提特异性（如 `html .el-skeleton`），或加 `!important`。详见 `项目功能与运行逻辑说明.md` §9.4 |
+| `ElMessage` / `ElMessageBox` 怎么用 | 已由 `unplugin-auto-import` 按需注入，**直接用即可、不要手写 import**（手写会绕过样式注入，出现"有提示框但没样式"） |
+| `npm run dev` 起不来，报 `SAFE_DELETE_BULK_CONFIRM_REQUIRED` | Vite 依赖预构建删 `node_modules/.vite/deps_temp_*` 被宿主安全删除守卫拦截。启动前 `unset CODEBUDDY_SAFE_DELETE_BULK_STATE_DIR CODEBUDDY_TOOL_CALL_ID CODEBUDDY_SAFE_DELETE_BULK_GUARD`（用子 shell，勿用 `env -u`），或改用 `npm run preview` |
+| `npm run preview` 下 POST 接口报 `Invalid CORS request` | 后端 CORS 白名单只放行 `http://localhost:5173`，preview 默认 4173 会被拦。**preview 用 `--port 5173`** |
 | 用户改昵称后旧 token 立刻 401 | `JwtAuthenticationFilter` 必须用 token 的 **`uid` claim + `loadUserById`** 解析身份，不能用 `subject`(登录账号) |
 | 非公开帖（待审/隐藏）点赞/回帖报 403 | 设计如此：非公开帖完全只读，**作者本人在审核期也不放行**；管理员/授权版主可走 `previewOnly` 预览 |
 

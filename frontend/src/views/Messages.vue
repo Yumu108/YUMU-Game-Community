@@ -42,7 +42,6 @@
 <script setup>
 import { ref, computed, onMounted, watch, nextTick } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ElMessage } from 'element-plus'
 import AppLayout from '@/layout/AppLayout.vue'
 import {
   getConversations,

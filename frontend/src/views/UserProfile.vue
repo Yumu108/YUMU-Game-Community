@@ -135,7 +135,6 @@
 <script setup>
 import { ref, computed, onMounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ElMessage } from 'element-plus'
 import { Flag, Warning } from '@element-plus/icons-vue'
 import AppLayout from '@/layout/AppLayout.vue'
 import BackButton from '@/components/BackButton.vue'

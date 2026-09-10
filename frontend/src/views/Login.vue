@@ -39,7 +39,6 @@
 import { ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { User, Lock } from '@element-plus/icons-vue'
-import { ElMessage } from 'element-plus'
 import { useUserStore } from '@/store'
 import { login, register } from '@/api/community'
 

@@ -51,7 +51,6 @@
 <script setup>
 import { computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
-import { ElMessage, ElMessageBox } from 'element-plus'
 import { Close } from '@element-plus/icons-vue'
 import { useUserStore, useGameStore } from '@/store'
 import { FIXED_BOARDS } from '@/constants/boards'

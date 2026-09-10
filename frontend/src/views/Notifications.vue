@@ -44,7 +44,6 @@
 <script setup>
 import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
-import { ElMessage, ElMessageBox } from 'element-plus'
 import AppLayout from '@/layout/AppLayout.vue'
 import BackButton from '@/components/BackButton.vue'
 import { getNotifications, markNotificationRead, clearReadNotifications } from '@/api/community'

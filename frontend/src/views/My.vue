@@ -344,7 +344,6 @@
 <script setup>
 import { ref, computed, watch, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ElMessage, ElMessageBox } from 'element-plus'
 import { CaretBottom } from '@element-plus/icons-vue'
 import AppLayout from '@/layout/AppLayout.vue'
 import PostCard from '@/components/PostCard.vue'
