@@ -173,6 +173,12 @@ function escapeHtml(s) {
 
 const CODE_OPEN = '@@CODEBLOCK@@';
 
+// 代码块围栏：三个反引号。此前只定义了 CODE_OPEN，FENCE 被漏掉，
+// 导致 renderMarkdown 一执行就 ReferenceError: FENCE is not defined
+// —— 助手面板整棵子树渲染失败被卸载（消息清空、SSE 连接被 abort）。
+// 必须在 renderMarkdown 之前声明，且不能用 const 声明后再被 hoisting 利用。
+const FENCE = '```';
+
 function renderMarkdown(text) {
   const blocks = [];
   const fenceRe = new RegExp(FENCE + '(\\w*)\\n([\\s\\S]*?)' + FENCE, 'g');

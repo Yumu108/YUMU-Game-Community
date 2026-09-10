@@ -33,7 +33,9 @@ deploy/backup/backups/
 # ============================================================
 # 临时与编辑器
 # ============================================================
-tests/.pw/
+# UI 回归脚本（playwright-core + 系统 Chrome）——脚本入库便于复现，只忽略依赖与调试截图
+tests/.pw/node_modules/
+tests/.pw/*.png
 # vite 改配置时生成的临时文件
 vite.config.js.timestamp-*.mjs
 .DS_Store
