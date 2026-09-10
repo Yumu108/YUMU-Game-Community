@@ -84,3 +84,44 @@ a {
   --el-skeleton-color: #1d2029;      /* 与 --bg-3 一致的静态底色 */
   --el-skeleton-to-color: #2b2f3d;   /* 流光扫过的提亮色，微微可感知即可 */
 }
+
+/* ============================================================
+   移动端弹窗自适应（9-10）
+   问题：详情页的回帖弹窗写死 width="540px"、举报弹窗 420px，
+   在 375~414px 的手机屏上会溢出屏幕右侧，按钮点不到。
+   这里统一兜底：窄屏下所有弹窗/确认框宽度收敛到「视口 - 28px」。
+   ============================================================ */
+@media (max-width: 640px) {
+  .el-dialog {
+    width: calc(100vw - 28px) !important;
+    max-width: 100% !important;
+    margin: 12px auto !important;
+  }
+  .el-dialog__header {
+    padding: 14px 16px 10px !important;
+  }
+  .el-dialog__body {
+    padding: 12px 16px !important;
+  }
+  .el-dialog__footer {
+    padding: 10px 16px 14px !important;
+  }
+  .el-message-box {
+    width: calc(100vw - 28px) !important;
+    max-width: 100% !important;
+  }
+  .el-message {
+    min-width: 0 !important;
+    max-width: calc(100vw - 24px) !important;
+  }
+  /* 表格类内容横向滚动，而不是把整个页面撑宽 */
+  .el-table {
+    font-size: 12.5px;
+  }
+  /* 顶栏「游戏库」弹层固定 :width="420"，窄屏会溢出屏幕（popper 挂在 body 上，
+     由 popper-class 指定，需在这里用 !important 覆盖内联宽度） */
+  .gamelib-pop {
+    width: calc(100vw - 24px) !important;
+    max-width: 100% !important;
+  }
+}

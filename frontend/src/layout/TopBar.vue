@@ -1,6 +1,15 @@
 <template>
   <header class="topbar">
     <div class="inner">
+      <!-- 移动端（≤760px）汉堡入口：打开左侧导航抽屉；桌面端 display:none 不影响原布局。
+           图标用内联 SVG：Element Plus 图标库里 Menu/Grid 都是「田字格」不是三横线，
+           没有现成的汉堡图标，内联 SVG 可控且随 currentColor 继承主题色。 -->
+      <button class="nav-toggle" type="button" aria-label="打开导航菜单" @click="emit('toggle-nav')">
+        <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
+          <path d="M3 6h18M3 12h18M3 18h18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+        </svg>
+      </button>
+
       <router-link to="/" class="logo">
         <span class="logo-mark">Y</span>
         <span class="logo-text">YUMU<small>游戏社区</small></span>
@@ -135,6 +144,8 @@ import { getUnreadCount, getUnreadMessageCount, getPointsStatus, signIn, getHotG
 
 const route = useRoute()
 const router = useRouter()
+// 移动端汉堡 → 通知父级 AppLayout 打开导航抽屉
+const emit = defineEmits(['toggle-nav'])
 const userStore = useUserStore()
 const gameStore = useGameStore()
 const kw = ref('')
@@ -338,6 +349,27 @@ watch(() => route.fullPath, refreshUnread)
   text-decoration: none;
   flex: none;
 }
+/* 移动端汉堡按钮：默认隐藏，≤760px 显示（见文末断点） */
+.nav-toggle {
+  display: none;
+  flex: none;
+  width: 38px;
+  height: 38px;
+  place-items: center;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--bg-2);
+  color: var(--t1);
+  cursor: pointer;
+  padding: 0;
+  transition: border-color 0.15s, color 0.15s, background 0.15s;
+}
+.nav-toggle:hover,
+.nav-toggle:active {
+  border-color: var(--brand);
+  color: var(--brand);
+  background: var(--brand-soft);
+}
 .logo-mark {
   width: 32px;
   height: 32px;
@@ -489,6 +521,89 @@ watch(() => route.fullPath, refreshUnread)
 .ic-badge {
   margin-right: 2px;
 }
+
+/* ============================================================
+   移动端适配（9-10）
+   问题：顶栏原本无任何断点，390px 手机屏上「Logo + 搜索框 + 游戏库 + 发帖 +
+   积分 + 签到 + 通知 + 私信 + 头像」总宽超出视口 → 头像被挤出屏幕、整页横向滚动。
+   策略：窄屏逐项降级，只保留必要元素（搜索 / 发帖 / 通知 / 私信 / 头像）。
+   ⚠️ 必须写在 scoped 块里：scoped 样式在组件挂载时才注入，晚于非 scoped 块；
+      若写到非 scoped 块，同优先级下会被上面的 `.inner { padding: 0 20px }` 覆盖。
+   ============================================================ */
+@media (max-width: 760px) {
+  .inner {
+    padding: 0 12px;
+    gap: 10px;
+  }
+  /* 汉堡出现 */
+  .nav-toggle {
+    display: grid;
+  }
+  /* Logo 只留图形标记 */
+  .logo-text {
+    display: none;
+  }
+  /* 搜索框可压缩（min-width:0 是关键，否则 flex 项按内容宽度撑开） */
+  .search {
+    flex: 1;
+    min-width: 0;
+    max-width: none;
+    padding: 0 10px;
+  }
+  .s-input {
+    min-width: 0;
+    font-size: 13px;
+  }
+  /* 游戏库按钮收成图标 */
+  .game-lib-btn span,
+  .game-lib-btn .caret {
+    display: none;
+  }
+  .actions {
+    gap: 6px;
+  }
+  .post-btn {
+    padding: 8px 12px;
+  }
+  /* 积分 / 签到：手机上收进「我的」页，顶栏不再占位 */
+  .points-chip,
+  .sign-btn {
+    display: none;
+  }
+}
+
+@media (max-width: 480px) {
+  .inner {
+    gap: 8px;
+    padding: 0 10px;
+  }
+  .logo-mark {
+    width: 28px;
+    height: 28px;
+    font-size: 16px;
+  }
+  /* 游戏库在窄屏隐藏（仍可从「全部游戏」页进入） */
+  .game-lib-btn {
+    display: none;
+  }
+  .post-btn {
+    padding: 7px 10px;
+    font-size: 13px;
+  }
+  .ic-badge {
+    margin-right: 0;
+  }
+  /* 手机屏（≤480px）顶栏不再挤搜索框（3 项图标 + 头像 + 汉堡后只剩几十像素，
+     输入框宽度不可用）→ 隐藏，改由导航抽屉顶部的全宽搜索入口承接，见 AppLayout。
+     隐藏后 .nav-center 变空但保留 flex:1，正好把 .actions 顶到右侧。 */
+  .search {
+    display: none;
+  }
+  .nav-toggle {
+    width: 34px;
+    height: 34px;
+  }
+}
 </style>
 
 <style>
@@ -612,4 +727,5 @@ watch(() => route.fullPath, refreshUnread)
 .gamelib .gl-foot .el-button {
   color: var(--brand);
 }
+
 </style>

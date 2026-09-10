@@ -21,7 +21,7 @@
         <span class="p-sep">·</span>
         <span class="p-board">{{ post.boardName }}</span>
         <span v-if="post.gameId" class="p-game" @click.stop="goGame(post.gameId)">
-          <img v-if="post.gameCover" :src="post.gameCover" class="p-game-cover" alt="" loading="lazy" decoding="async" />
+          <img v-if="post.gameCover" :src="thumbUrl(post.gameCover)" class="p-game-cover" alt="" loading="lazy" decoding="async" @error="fallbackToOriginal" />
           <span v-else class="p-game-emoji">🎮</span>{{ post.gameName }}
         </span>
         <span class="p-time num">{{ post.createdAt }}</span>
@@ -53,7 +53,7 @@
     </div>
 
     <div class="p-cover">
-      <img v-if="post.cover" :src="post.cover" alt="cover" loading="lazy" decoding="async" />
+      <img v-if="post.cover" :src="thumbUrl(post.cover)" alt="cover" loading="lazy" decoding="async" @error="fallbackToOriginal" />
       <span v-else>{{ post.coverEmoji }}</span>
     </div>
   </article>
@@ -61,6 +61,7 @@
 
 <script setup>
 import { useRouter } from 'vue-router'
+import { thumbUrl, fallbackToOriginal } from '@/utils/img'
 import StatusBadge from './StatusBadge.vue'
 import BoardTag from './BoardTag.vue'
 import ThumbUp from './ThumbUp.vue'

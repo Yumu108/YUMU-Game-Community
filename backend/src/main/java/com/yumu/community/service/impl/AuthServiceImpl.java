@@ -138,6 +138,30 @@ public class AuthServiceImpl implements AuthService {
         tokenBlacklist.blacklist(jti, expiration);
     }
 
+    /**
+     * 9-10 滑动续签：校验通过后轮换 token（旧 jti 立即入黑名单），有效期重置为配置值。
+     */
+    @Override
+    public Map<String, Object> refresh(Long userId, String jti, java.util.Date currentExpiration) {
+        User user = userMapper.selectById(userId);
+        if (user == null || Integer.valueOf(1).equals(user.getStatus())) {
+            // 账号被删除 / 被禁用 → 不再续签，前端收到 401 后会清理登录态
+            throw new BusinessException(401, "账号状态异常，请重新登录");
+        }
+        String username = user.getUsername();
+        // 角色每次从 DB 重载（与登录路径一致）：权限被调整后无需等 token 过期
+        CustomUserDetails details = (CustomUserDetails) userDetailsService.loadUserByUsername(username);
+        String token = jwtUtil.generateToken(username, details.getUserId());
+        // 轮换：旧 token 立即失效（即便它还没到自然过期时间）
+        if (jti != null) {
+            tokenBlacklist.blacklist(jti, currentExpiration);
+        }
+        Map<String, Object> result = new java.util.HashMap<>();
+        result.put("token", token);
+        result.put("expiresIn", jwtUtil.getExpirationMs());
+        return result;
+    }
+
     private Map<String, Object> buildTokenResult(String username) {
         CustomUserDetails details = (CustomUserDetails) userDetailsService.loadUserByUsername(username);
         String token = jwtUtil.generateToken(username, details.getUserId());

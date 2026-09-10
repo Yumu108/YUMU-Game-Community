@@ -20,6 +20,7 @@ import '@/styles/global.css'
 
 import App from './App.vue'
 import router from './router'
+import { setupTokenWatch } from './utils/tokenWatch'
 
 // 富文本（v-html 渲染的 @提及 / 站内链接）原本是原生 <a href="/...">，点击会触发浏览器整页硬刷新，
 // 在 production 构建下需重新下载并解析 ~1.4MB 的 JS 包，造成 5~6s 的"跳转"卡顿。
@@ -45,3 +46,6 @@ app.use(createPinia())
 app.use(router)
 app.use(ElementPlus)
 app.mount('#app')
+
+// token 滑动续签的后台巡检（临期自动续签 + 跨标签页同步）
+setupTokenWatch()

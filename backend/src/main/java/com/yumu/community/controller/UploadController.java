@@ -3,8 +3,10 @@ package com.yumu.community.controller;
 import com.yumu.community.common.BusinessException;
 import com.yumu.community.common.Result;
 import com.yumu.community.security.ImageMagicByteValidator;
+import com.yumu.community.utils.ImageOptimizer;
 import jakarta.servlet.http.HttpServletRequest;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
@@ -37,10 +39,12 @@ import java.util.UUID;
 @RestController
 @RequestMapping("/upload")
 @RequiredArgsConstructor
+@Slf4j
 public class UploadController {
 
     private static final long MAX_SIZE = 10L * 1024 * 1024; // 10MB
     private final ImageMagicByteValidator magicByteValidator;
+    private final ImageOptimizer imageOptimizer;
 
     @Value("${yumu.upload.dir:./uploads}")
     private String uploadDir;
@@ -91,25 +95,35 @@ public class UploadController {
             throw new BusinessException(400, "文件内容与扩展名不符，请确认是真实图片");
         }
 
-        // 5) 落盘（仅用服务端 UUID 命名，杜绝路径注入）
-        String filename = UUID.randomUUID().toString().replace("-", "") + "." + ext;
+        // 5) 落盘（仅用服务端 UUID 命名，杜绝路径注入）+ 压缩与缩略图生成
+        //    9-10：原图直出改为「限长边压缩 + 生成 _t 缩略图」，列表页封面走缩略图，省流量省首屏
+        String baseName = UUID.randomUUID().toString().replace("-", "");
+        ImageOptimizer.Result optimized;
         try {
             Path dir = Paths.get(uploadDir).toAbsolutePath().normalize();
             Files.createDirectories(dir);
-            Path target = dir.resolve(filename).normalize();
             // 防目录穿越：解析后必须仍位于上传目录内
+            Path target = dir.resolve(baseName).normalize();
             if (!target.startsWith(dir)) {
                 throw new BusinessException(400, "非法文件名");
             }
-            // 原子写入：先写临时文件再 rename，避免半截文件被外部读取
-            Path tmp = dir.resolve(filename + ".tmp");
+            // 原始文件先落到临时名，再由优化器决定最终文件名与格式
+            Path tmp = dir.resolve(baseName + ".upload.tmp");
             file.transferTo(tmp.toFile());
-            Files.move(tmp, target, java.nio.file.StandardCopyOption.ATOMIC_MOVE);
+            try {
+                optimized = imageOptimizer.optimize(tmp, ext, dir, baseName);
+            } finally {
+                Files.deleteIfExists(tmp);
+            }
         } catch (IOException e) {
             throw new BusinessException(500, "文件保存失败：" + e.getMessage());
         }
 
-        String url = urlPrefix + "/" + filename;
+        log.info("[upload] 图片处理完成 原={}KB 存={}KB 主图={} 缩略图={}",
+                optimized.originalBytes() / 1024, optimized.storedBytes() / 1024,
+                optimized.mainFilename(), optimized.hasThumb() ? optimized.thumbFilename() : "无");
+
+        String url = urlPrefix + "/" + optimized.mainFilename();
         return Result.success(url);
     }
 }

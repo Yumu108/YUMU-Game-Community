@@ -50,6 +50,9 @@ public class SecurityConfig {
                         .authenticationEntryPoint(unauthorizedEntryPoint())
                         .accessDeniedHandler(accessDeniedHandler()))
                 .authorizeHttpRequests(auth -> auth
+                        // 9-10 滑动续签：必须携带「仍然有效且未被拉黑」的 token 才能换新，
+                        // 故这条要排在 /auth/** permitAll 之前（顺序即优先级，先匹配先生效）。
+                        .requestMatchers("/auth/refresh").authenticated()
                         .requestMatchers("/auth/**").permitAll()
                         // WebSocket 握手：鉴权在 JwtHandshakeInterceptor 内做（校验 ?token=），
                         // 此处放行是因为握手阶段拿不到 Authorization 头（浏览器原生 WS 不能自定义头）

@@ -1217,4 +1217,134 @@ watch(() => route.query.replyId, () => {
   color: var(--brand);
   text-decoration: underline;
 }
+
+/* ============================================================
+   移动端适配（9-10 第二梯队）
+   背景：社区帖子详情页此前零断点，手机（375~430px）上表现为——
+   ① 标题 + 元信息一行挤不下（头像/昵称/徽章/时间/关注/数据统计全在一行）；
+   ② 作者与管理员操作栏按钮溢出；③ 正文内边距偏大、正文图片 480px 限高在窄屏留白多；
+   ④ 回帖操作栏（点赞/回复/举报/删除）换行挤压。
+   策略：只调「间距 / 字号 / 换行」，不动楼中楼的头像尺寸与 grid 结构
+   （9-07 已定稿：主回复 40px、子评论 30px，改动会引发头像错位）。
+   ============================================================ */
+@media (max-width: 900px) {
+  .d-title {
+    font-size: 20px;
+  }
+  .d-meta {
+    flex-wrap: wrap;
+  }
+  /* 统计信息不再靠右顶，改为整行左对齐（窄屏要避免被挤成两三个字换行） */
+  .d-stats {
+    margin-left: 0;
+    width: 100%;
+    justify-content: flex-start;
+  }
+}
+
+@media (max-width: 760px) {
+  .detail {
+    padding: 14px 13px;
+    border-radius: 12px;
+  }
+  .d-title {
+    font-size: 18.5px;
+    margin-bottom: 10px;
+  }
+  .d-meta {
+    gap: 8px;
+    padding-bottom: 12px;
+  }
+  .d-author-link {
+    gap: 6px;
+  }
+  .d-follow {
+    margin-left: 0;
+  }
+  .d-stats {
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+  /* 操作栏：点赞/收藏/举报换行排列，举报不再被 margin-left:auto 推到屏幕外 */
+  .d-actions {
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .d-report {
+    margin-left: 0;
+  }
+  /* 作者 / 管理员操作栏：按钮换行，标签独占一行 */
+  .d-admin {
+    gap: 8px;
+    padding: 10px 12px;
+  }
+  .d-admin-label {
+    width: 100%;
+  }
+  /* 正文：内边距与字号收紧；图片不设限高（窄屏本来就矮，限高反而留白） */
+  .d-body {
+    padding: 14px 0;
+    font-size: 14px;
+    word-break: break-word;
+    overflow-wrap: anywhere;
+  }
+  .d-body :deep(img) {
+    max-height: none;
+  }
+  /* 长代码块 / 表格横向滚动，不撑破整页 */
+  .d-body :deep(pre),
+  .d-body :deep(table) {
+    overflow-x: auto;
+  }
+  .d-tags {
+    padding-bottom: 12px;
+  }
+  /* 审核/驳回横幅：按钮换行到文案下方 */
+  .d-review-banner {
+    flex-wrap: wrap;
+  }
+  .d-review-banner .d-reject-btn {
+    align-self: flex-start;
+    margin-left: 28px;
+  }
+  /* 回帖：缩小卡片间距与操作栏间隔（头像尺寸保持不变） */
+  .reply {
+    gap: 10px;
+  }
+  .r-actions {
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+  .reply.highlighted {
+    margin: 0 -8px;
+    padding-left: 8px;
+    padding-right: 8px;
+  }
+  .reply-box {
+    padding: 12px;
+  }
+  .reply-locked {
+    font-size: 13px;
+    padding: 11px 12px;
+  }
+  .related {
+    padding: 12px;
+  }
+}
+
+@media (max-width: 420px) {
+  .detail {
+    padding: 12px 10px;
+  }
+  .d-title {
+    font-size: 17px;
+  }
+  .d-stats {
+    font-size: 12px;
+  }
+  /* 操作按钮加大点按区域（手指比鼠标粗，默认 small 尺寸偏小） */
+  .d-actions :deep(.el-button) {
+    padding: 8px 13px;
+  }
+}
 </style>

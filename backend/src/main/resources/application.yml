@@ -54,7 +54,9 @@ jwt:
   # B4：生产环境务必通过 JWT_SECRET 环境变量注入强随机密钥（>= 32 字节），绝不使用默认值上公网
   secret: ${JWT_SECRET:yumu-community-secret-key-change-me-please}
   # A3：access token 短期化（默认 2h → 配合退出黑名单，让"退出即失效"贴合用户感知）。
-  # 上线后再加 refresh token 机制延长有效会话，本期不做。
+  # 9-10：已加「滑动续签」——前端在临期（剩余 <30 分钟）或收到 401 时自动调 POST /auth/refresh
+  #       换取新 token（旧 jti 立即入黑名单轮换），活跃用户不会再被每 2 小时踢下线；
+  #       仍未引入长期 refresh token，短期 token 的安全水位保持不变。
   expiration: ${JWT_EXPIRATION_MS:7200000}
 
 yumu:
@@ -63,6 +65,13 @@ yumu:
   upload:
     dir: ${UPLOAD_DIR:./uploads}
     url-prefix: /api/files
+    # 9-10 图片压缩：长边上限（超过则等比压缩，手机原图 4000px→1920px 体积可降 80%+）
+    max-width: ${UPLOAD_MAX_WIDTH:1920}
+    # 缩略图长边（列表页封面走 {原名}_t.{ext}）
+    thumb-width: ${UPLOAD_THUMB_WIDTH:480}
+    # JPEG 编码质量（0~1）
+    jpeg-quality: ${UPLOAD_JPEG_QUALITY:0.85}
+    thumb-quality: ${UPLOAD_THUMB_QUALITY:0.8}
   security:
     rate-limit:
       # A2 总开关：false 时所有限频直接放行（仅本地调试用，生产务必保持 true）
