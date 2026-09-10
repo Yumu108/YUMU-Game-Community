@@ -164,6 +164,12 @@ public class AiAssistantService {
         body.put("stream", true);
         body.put("temperature", props.getTemperature());
         body.put("max_tokens", props.getMaxTokens());
+        // DeepSeek V4 系列（含 flash）默认开思考模式：先产出一段思维链再出正文。
+        // 社区客服式问答用不到深度推理，关掉可降首字延迟 + 省思维链 token。需要强推理时设 LLM_THINKING=true。
+        //（实测：thinking.type=disabled 与 reasoning_effort=none 均生效；chat_template_kwargs 无效，勿用）
+        if (!props.isThinking()) {
+            body.put("thinking", Map.of("type", "disabled"));
+        }
 
         String jsonBody;
         try {

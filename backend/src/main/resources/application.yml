@@ -85,11 +85,12 @@ yumu:
 llm:
   base-url: ${LLM_BASE_URL:https://api.deepseek.com/v1}   # 不含 /chat/completions
   api-key: ${LLM_API_KEY:}
-  model: ${LLM_MODEL:deepseek-chat}
+  model: ${LLM_MODEL:deepseek-flash}      # DeepSeek 现行模型：deepseek-flash（性价比）/ deepseek-v4-pro（旗舰）
   mock: ${LLM_MOCK:true}                 # 未配置真实 key 时启用本地模拟，便于无 key 也能演示
   enabled: ${LLM_ENABLED:true}
   temperature: ${LLM_TEMPERATURE:0.7}    # 0~2；知识库问答偏保守
-  max-tokens: ${LLM_MAX_TOKENS:1024}     # 单轮回复上限（成本护栏）
+  max-tokens: ${LLM_MAX_TOKENS:2048}     # 单轮回复上限（成本护栏）。flash 的思维链 token 也计入此上限，需留余量
+  thinking: ${LLM_THINKING:false}        # 思考模式。V4 系列默认开启会先出思维链（慢 + 费 token），问答场景建议关
   max-history-turns: ${LLM_MAX_HISTORY_TURNS:6}   # 多轮记忆保留轮数（1 轮 = 一问一答）
   connect-timeout-seconds: ${LLM_CONNECT_TIMEOUT:10}
   read-timeout-seconds: ${LLM_READ_TIMEOUT:120}

@@ -71,7 +71,8 @@ services:
       # 社区智能助手（OpenAI 兼容大模型，默认 DeepSeek；未配 key 时自动走本地 mock 演示）
       LLM_API_KEY: ${LLM_API_KEY:-}
       LLM_BASE_URL: ${LLM_BASE_URL:-https://api.deepseek.com/v1}
-      LLM_MODEL: ${LLM_MODEL:-deepseek-chat}
+      LLM_MODEL: ${LLM_MODEL:-deepseek-flash}
+      LLM_THINKING: ${LLM_THINKING:-false}
       LLM_MOCK: ${LLM_MOCK:-true}
       TZ: Asia/Shanghai
     volumes:
