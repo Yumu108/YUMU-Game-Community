@@ -90,34 +90,52 @@ async function main() {
   console.log('\n[4] 版主负责 (游戏 × 板块) 授权')
   const role = await jput(`/admin/users/${Mid}/roles`, { roles: ['MODERATOR'] }, A)
   assert(role.code === 200, '将 M 设为 MODERATOR')
-  const assign = await jput(`/admin/users/${Mid}/moderator-boards`, {
-    items: [{ gameId: 2, boardId: 1 }, { gameId: 2, boardId: 3 }]
-  }, A)
-  assert(assign.code === 200, '为 M 分配 (游戏2×攻略心得) 与 (游戏2×组队大厅)')
-  const mb = await jget(`/admin/users/${Mid}/moderator-boards`, A)
-  assert(mb.code === 200 && Array.isArray(mb.data) && mb.data.length === 2, `GET 授权列表返回 2 项 (count=${mb.data?.length})`)
-  const coversG2B1 = (mb.data || []).some((x) => x.gameId === 2 && x.boardId === 1)
-  const coversG2B3 = (mb.data || []).some((x) => x.gameId === 2 && x.boardId === 3)
-  assert(coversG2B1 && coversG2B3, '授权项含 (2,1) 与 (2,3)')
 
-  // 覆盖判定：M 可审 游戏2/板块1 的帖，不可审 游戏3/板块1 的帖
+  // 🚨 必须动态挑「版主名额未满」的游戏：MAX_MODS_PER_GAME=5，种子库 + 历史跑测会持续累积版主，
+  //    写死 gameId=2 在名额占满后必然恒红，且报错是 400「版主数量已达上限」，极易被误判成权限 bug。
+  //    （与 hide-preview-verify 采用同一策略）
+  let MOD_GAME = null
+  for (const g of [4, 5, 6, 7, 8, 9, 10, 11, 18, 19, 3, 2, 1]) {
+    const probe = await jput(`/admin/users/${Mid}/moderator-boards`, { items: [{ gameId: g, boardId: 1 }] }, A)
+    if (probe.code === 200) { MOD_GAME = g; break }
+  }
+  assert(MOD_GAME !== null, `找到版主名额未满的游戏 (gameId=${MOD_GAME})`)
+  const OTHER_GAME = MOD_GAME === 3 ? 2 : 3
+
+  const assign = await jput(`/admin/users/${Mid}/moderator-boards`, {
+    items: [{ gameId: MOD_GAME, boardId: 1 }]
+  }, A)
+  assert(assign.code === 200, `为 M 授权负责 游戏${MOD_GAME}`)
+  const mb = await jget(`/admin/users/${Mid}/moderator-boards`, A)
+  // 9-05 起「取消板块细分」：授权以**游戏**为粒度，board_id 统一置 NULL（= 负责该游戏全部板块）；
+  // 且 MAX_GAMES_PER_MOD=1（一名版主只能负责一个游戏）→ 授权列表恒为 1 项。
+  assert(mb.code === 200 && Array.isArray(mb.data) && mb.data.length === 1, `GET 授权列表返回 1 项（游戏级） (count=${mb.data?.length})`)
+  assert((mb.data || []).some((x) => x.gameId === MOD_GAME), `授权项为 游戏${MOD_GAME}`)
+
+  // 覆盖判定：本段自造两张帖（不依赖 [3] 段的 gameId 假设）
+  const cp1 = await jpost('/posts', { boardId: 1, title: 'v12-cp1-' + suffix, content: 'test', gameId: MOD_GAME }, U1)
+  const cp2 = await jpost('/posts', { boardId: 1, title: 'v12-cp2-' + suffix, content: 'test', gameId: OTHER_GAME }, U1)
+  created.push(cp1.data?.id, cp2.data?.id)
+  await jpost(`/admin/posts/${cp1.data?.id}/approve`, null, A)
+  await jpost(`/admin/posts/${cp2.data?.id}/approve`, null, A)
+
   const Mlogin = await jpost('/auth/login', { username: 'v12m_' + suffix, password: 'pass123456' })
   M = Mlogin.data.token
-  const canP1 = await jget(`/admin/posts/${p1.data?.id}/can-review`, M)
-  assert(canP1.code === 200 && canP1.data?.canReview === true, 'M 覆盖 (2,1) → 可审 p1')
-  const canP2 = await jget(`/admin/posts/${p2.data?.id}/can-review`, M)
-  assert(canP2.code === 200 && canP2.data?.canReview === false, 'M 不覆盖 (3,1) → 不可审 p2')
+  const canP1 = await jget(`/admin/posts/${cp1.data?.id}/can-review`, M)
+  assert(canP1.code === 200 && canP1.data?.canReview === true, `M 负责 游戏${MOD_GAME} → 可审该游戏任意板块的帖`)
+  const canP2 = await jget(`/admin/posts/${cp2.data?.id}/can-review`, M)
+  assert(canP2.code === 200 && canP2.data?.canReview === false, `M 不负责 游戏${OTHER_GAME} → 不可审`)
   // 作者本人不可审自己帖：can-review 接口仅对 ADMIN/MODERATOR 开放，普通用户被拒（code=403）
-  const selfReview = await jget(`/admin/posts/${p1.data?.id}/can-review`, U1)
+  const selfReview = await jget(`/admin/posts/${cp1.data?.id}/can-review`, U1)
   assert(selfReview.code === 403 || selfReview.http === 403, '普通作者无权调用 can-review(403)')
 
-  // 多名版主可同管一个 (游戏,板块)
+  // 多名版主可同管一个游戏（上限 MAX_MODS_PER_GAME=5）
   const rm2 = await jpost('/auth/register', { username: 'v12m2_' + suffix, password: 'pass123456', nickname: 'V12M2' })
   const M2 = rm2.data.token; const M2id = rm2.data.user?.id
   await jput(`/admin/users/${M2id}/roles`, { roles: ['MODERATOR'] }, A)
-  await jput(`/admin/users/${M2id}/moderator-boards`, { items: [{ gameId: 2, boardId: 1 }] }, A)
+  await jput(`/admin/users/${M2id}/moderator-boards`, { items: [{ gameId: MOD_GAME, boardId: 1 }] }, A)
   const mb2 = await jget(`/admin/users/${M2id}/moderator-boards`, A)
-  assert(mb2.code === 200 && (mb2.data || []).some((x) => x.gameId === 2 && x.boardId === 1), '第二名版主也可负责 (2,1)（多人同管）')
+  assert(mb2.code === 200 && (mb2.data || []).some((x) => x.gameId === MOD_GAME), `第二名版主也可负责同一游戏 ${MOD_GAME}（多人同管）`)
 
   // 角色切回 USER 自动清空授权
   await jput(`/admin/users/${Mid}/roles`, { roles: ['USER'] }, A)

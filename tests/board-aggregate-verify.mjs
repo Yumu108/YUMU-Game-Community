@@ -1,4 +1,17 @@
-// 验证：父板块聚合子版块帖子与帖子数
+/**
+ * 板块契约验证（9-05「取消板块细分」后的现行契约）
+ *
+ * 📌 历史：本脚本原用于验证「父板块聚合子版块帖数与帖子」的**树形板块**结构。
+ *    9-05 改版后板块收敛为**固定六个平铺分类**（无父子层级，children 恒为 null），
+ *    旧断言（tree[0].children[0] 等）已无对应实现，会直接 TypeError。
+ *    此处改写为对现行契约的守护，避免留下一个必然报错的僵尸脚本。
+ *
+ * 🎯 断言：
+ *   1. GET /boards 恰好 6 个固定分类，且 children 均为空
+ *   2. 每个板块的 postCount 与公开列表 total 一致（口径见 deploy/tools/reconcile-counts.sql）
+ *   3. GET /boards/{id} 与列表中的数据一致
+ *   4. GET /posts?boardId=X 返回的帖 boardId 全为 X（不再向上聚合）
+ */
 const BASE = 'http://localhost:8080/api'
 
 async function get(path) {
@@ -8,61 +21,43 @@ async function get(path) {
   return j.data
 }
 
-function sumChildren(parent) {
-  if (!parent.children || parent.children.length === 0) return parent.postCount || 0
-  return (parent.postCount || 0) + parent.children.reduce((s, c) => s + (c.postCount || 0), 0)
-}
-
-function findBoard(tree, id) {
-  for (const b of tree) {
-    if (b.id === id) return b
-    if (b.children) {
-      const found = b.children.find(c => c.id === id)
-      if (found) return found
-    }
-  }
-  return null
+let passed = 0, failed = 0
+function assert(cond, msg) {
+  if (cond) { passed++; console.log(`  ✅ ${msg}`) }
+  else { failed++; console.log(`  ❌ ${msg}`) }
 }
 
 async function main() {
-  console.log('1) GET /boards 检查父板块 postCount 是否等于子版块之和')
-  const tree = await get('/boards')
-  let pass = true
-  for (const parent of tree) {
-    if (!parent.children || parent.children.length === 0) continue
-    const expected = parent.children.reduce((s, c) => s + (c.postCount || 0), 0)
-    const actual = parent.postCount || 0
-    const ok = actual === expected
-    console.log(`  ${parent.name}: ${actual} (子版块和=${expected}) ${ok ? '✅' : '❌'}`)
-    if (!ok) pass = false
+  console.log('[1] 板块列表：固定六个平铺分类，无父子层级')
+  const boards = await get('/boards')
+  assert(Array.isArray(boards) && boards.length === 6, `GET /boards 返回 6 个分类（实际 ${boards?.length}）`)
+  const expected = ['攻略心得', '游戏吐槽', '组队大厅', '资讯速递', '二次创作', '其他']
+  assert(expected.every((n) => boards.some((b) => b.name === n)), `六个固定分类齐全：${expected.join(' / ')}`)
+  const anyChildren = boards.some((b) => Array.isArray(b.children) && b.children.length > 0)
+  assert(!anyChildren, '没有任何板块带子板块（9-05 起取消板块细分）')
+
+  console.log('\n[2] postCount 与公开列表 total 一致')
+  for (const b of boards) {
+    const list = await get(`/posts?boardId=${b.id}&size=1`)
+    const ok = (b.postCount || 0) === (list.total || 0)
+    assert(ok, `板块「${b.name}」postCount=${b.postCount} vs 列表 total=${list.total}`)
   }
 
-  const parentId = tree[0].id
-  const childId = tree[0].children?.[0]?.id
-  console.log('\n2) GET /boards/{parentId} 与 /boards/{childId}')
-  const parentDetail = await get(`/boards/${parentId}`)
-  const childDetail = await get(`/boards/${childId}`)
-  console.log(`  父板块 ${parentDetail.name}: ${parentDetail.postCount}`)
-  console.log(`  子版块 ${childDetail.name}: ${childDetail.postCount}`)
+  console.log('\n[3] GET /boards/{id} 与列表数据一致')
+  for (const b of boards) {
+    const detail = await get(`/boards/${b.id}`)
+    assert(detail.id === b.id && detail.name === b.name && (detail.postCount || 0) === (b.postCount || 0),
+      `板块详情 #${b.id}「${detail.name}」postCount=${detail.postCount} 与列表一致`)
+  }
 
-  console.log('\n3) GET /posts?boardId={parentId} 应包含子版块帖子')
-  const parentPosts = await get(`/posts?boardId=${parentId}&size=1`)
-  const childPosts = await get(`/posts?boardId=${childId}&size=1`)
-  console.log(`  父板块下帖子总数 total=${parentPosts.total}`)
-  console.log(`  子版块 下帖子总数 total=${childPosts.total}`)
-  const aggregateOk = parentPosts.total >= childPosts.total
-  console.log(`  父板块 total >= 子版块 total: ${aggregateOk ? '✅' : '❌'}`)
-  if (!aggregateOk) pass = false
+  console.log('\n[4] /posts?boardId=X 只返回该板块（不再向上聚合）')
+  const target = boards[0]
+  const page = await get(`/posts?boardId=${target.id}&size=200`)
+  const all = (page.records || []).every((p) => p.boardId === target.id)
+  assert(all, `/posts?boardId=${target.id} 返回的 ${(page.records || []).length} 条帖 boardId 全为 ${target.id}`)
 
-  console.log('\n4) 父板块下列出的帖子 boardId 应落在子版块中')
-  const parentList = await get(`/posts?boardId=${parentId}&size=200`)
-  const childIds = new Set(tree[0].children.map(c => c.id))
-  const allInChildren = parentList.records.every(p => childIds.has(p.boardId))
-  console.log(`  所有 ${parentList.records.length} 条记录都在子版块: ${allInChildren ? '✅' : '❌'}`)
-  if (!allInChildren) pass = false
-
-  console.log('\n' + (pass ? '✅ 全部通过' : '❌ 存在失败项'))
-  process.exit(pass ? 0 : 1)
+  console.log(`\n═══ 板块契约验证：通过 ${passed} / 失败 ${failed} ═══`)
+  process.exit(failed === 0 ? 0 : 1)
 }
 
-main().catch(e => { console.error(e); process.exit(1) })
+main().catch((e) => { console.error('ERR', e.message); process.exit(1) })

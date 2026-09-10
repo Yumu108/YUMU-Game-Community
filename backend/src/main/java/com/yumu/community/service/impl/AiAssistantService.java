@@ -1,7 +1,7 @@
 package com.yumu.community.service.impl;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
 import com.yumu.community.cache.CacheService;
 import com.yumu.community.config.AiAssistantProperties;
 import com.yumu.community.dto.AiChatMessage;

@@ -7,7 +7,7 @@
     <parent>
         <groupId>org.springframework.boot</groupId>
         <artifactId>spring-boot-starter-parent</artifactId>
-        <version>3.3.5</version>
+        <version>4.0.8</version>
         <relativePath/>
     </parent>
 
@@ -26,22 +26,24 @@
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-web</artifactId>
         </dependency>
+        <!-- D1（9-10）：Spring Boot 4 需用官方对应的 boot4 starter（旧 boot-starter 只支持 Boot 3） -->
         <dependency>
             <groupId>com.baomidou</groupId>
-            <artifactId>mybatis-plus-boot-starter</artifactId>
-            <version>3.5.8</version>
+            <artifactId>mybatis-plus-spring-boot4-starter</artifactId>
+            <version>3.5.17</version>
         </dependency>
-        <!-- 3.5.8 boot-starter 已传递 extension，此处确保分页拦截器可用 -->
+        <!-- 3.5.x starter 已传递 extension，此处确保分页拦截器可用 -->
         <dependency>
             <groupId>com.baomidou</groupId>
             <artifactId>mybatis-plus-extension</artifactId>
-            <version>3.5.8</version>
+            <version>3.5.17</version>
         </dependency>
-        <!-- 覆盖 mybatis-spring：3.0.3+ 修复与 Spring 6.1.14 的 factoryBeanObjectType 兼容问题 -->
+        <!-- D1：MyBatis-Plus 3.5.9+ 起，分页插件 PaginationInnerInterceptor 所依赖的 jsqlparser
+             被拆成独立模块 —— 不引入会编译不过（cannot find symbol PaginationInnerInterceptor） -->
         <dependency>
-            <groupId>org.mybatis</groupId>
-            <artifactId>mybatis-spring</artifactId>
-            <version>3.0.4</version>
+            <groupId>com.baomidou</groupId>
+            <artifactId>mybatis-plus-jsqlparser</artifactId>
+            <version>3.5.17</version>
         </dependency>
         <dependency>
             <groupId>org.springframework.boot</groupId>
@@ -80,6 +82,15 @@
             <groupId>io.jsonwebtoken</groupId>
             <artifactId>jjwt-jackson</artifactId>
             <version>0.12.6</version>
+            <scope>runtime</scope>
+        </dependency>
+        <!-- D1：Spring Boot 4 默认切到 Jackson 3（tools.jackson），而 jjwt-jackson 仍实现于 Jackson 2
+             （官方尚无 jackson3 版本）。此处显式引入 Jackson 2 databind **仅供 JJWT 运行时序列化 claims**，
+             版本由 Boot BOM 的 jackson-2-bom 统一管理（当前 2.21.5）。
+             注意：应用自身的 JSON 代码统一使用 Jackson 3，不要再用 com.fasterxml.jackson.databind。 -->
+        <dependency>
+            <groupId>com.fasterxml.jackson.core</groupId>
+            <artifactId>jackson-databind</artifactId>
             <scope>runtime</scope>
         </dependency>
         <dependency>

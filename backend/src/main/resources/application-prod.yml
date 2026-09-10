@@ -1,0 +1,23 @@
+# ============================================================
+# D4（9-10）：生产 profile —— 关键密钥「零默认值」，缺失即拒绝启动
+# ------------------------------------------------------------
+# 为什么需要它：
+#   application.yml 为照顾本地开发，给 DB_PASSWORD / JWT_SECRET 留了弱默认值
+#   （本地零配置直接跑）。副作用是——生产环境忘了注入环境变量时，应用会**照常启动**
+#   并悄悄用弱口令 / 默认密钥运行，属于最危险的一类静默降级。
+#
+# 启用方式：
+#   SPRING_PROFILES_ACTIVE=prod（docker-compose.yml 已默认设置；start.bat 本地开发不设）
+#
+# 生效机制（双保险）：
+#   ① 本文件里的 ${DB_PASSWORD} / ${JWT_SECRET} **不带 `:默认值` 兜底**，
+#      环境变量缺失时 Spring 直接抛 "Could not resolve placeholder" 并终止启动。
+#   ② 即便变量存在但值为弱口令（123456 / change-me-strong-password 等），
+#      仍会被 StartupSecurityValidator 拦截（prod 下抛异常，非 prod 只告警）。
+# ============================================================
+spring:
+  datasource:
+    password: ${DB_PASSWORD}
+
+jwt:
+  secret: ${JWT_SECRET}

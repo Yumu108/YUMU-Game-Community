@@ -37,27 +37,53 @@ async function main() {
   const a1 = await jfetch(`/admin/posts/${list[0].id}/detail`, { headers: adminAuth })
   assert(a1.code === 200 && a1.data?.title, `ADMIN 可查看待审帖 #${list[0].id}：${a1.data?.title}`)
 
-  // yumu（子版主，负责 PC 游戏 board_id=11）
+  // yumu（版主）—— 负责的游戏从**实际授权**动态取。
+  // 🚨 9-05 起授权以游戏为粒度（board_id 恒 NULL），写死 boardId=11 / 「PC 游戏」会因种子数据变化而失效，
+  //    更要命的是「查不到待审帖就 console.log 跳过」会把正向用例静默跳过 → 覆盖盲区。
+  //    这里改为：查不到就自造一张待审帖，保证正向用例一定执行；用完删掉。
   const yumuToken = await login('yumu', '123456')
   const yumuAuth = { Authorization: `Bearer ${yumuToken}` }
-  // 找一个 board_id=11 的待审帖给 yumu 看（应该有，因为 PC 游戏 经常有新帖）
-  const pcPending = await jfetch('/admin/posts?status=2&boardId=11&current=1&size=10', { headers: adminAuth })
-  const pcList = pcPending.data?.records || []
-  if (pcList.length > 0) {
-    const y1 = await jfetch(`/admin/posts/${pcList[0].id}/detail`, { headers: yumuAuth })
-    assert(y1.code === 200 && y1.data?.title, `子版主 yumu 可查看自己板块待审帖 #${pcList[0].id}：${y1.data?.title}`)
-  } else {
-    console.log('⚠️ PC 游戏板块暂无待审帖，跳过 yumu 正面用例')
+  const yumuBoards = await jfetch('/admin/users/2/moderator-boards', { headers: adminAuth })
+  const yumuGameId = (yumuBoards.data || [])[0]?.gameId
+  assert(!!yumuGameId, `yumu 有版主授权（负责 gameId=${yumuGameId}）`)
+
+  let createdPostId = null
+  const ownPending = await jfetch(`/admin/posts?status=2&gameId=${yumuGameId}&current=1&size=10`, { headers: adminAuth })
+  let ownPost = (ownPending.data?.records || [])[0]
+  if (!ownPost) {
+    const author = 'md' + Date.now().toString(36)
+    await jfetch('/auth/register', { method: 'POST', body: JSON.stringify({ username: author, password: 'pass123456', nickname: 'MD' }) })
+    const authorToken = await login(author, 'pass123456')
+    const created = await jfetch('/posts', {
+      method: 'POST',
+      body: JSON.stringify({ boardId: 1, gameId: yumuGameId, title: 'md-pending-' + author, content: 'test' }),
+      headers: { Authorization: `Bearer ${authorToken}` }
+    })
+    createdPostId = created.data?.id
+    ownPost = { id: createdPostId }
+    console.log(`  （本游戏暂无待审帖，已自造 #${createdPostId} 供正向用例）`)
   }
-  // yumu 不能查看非负责板块的待审帖
-  const otherBoardId = 1 // 攻略心得
-  const otherPending = await jfetch(`/admin/posts?status=2&boardId=${otherBoardId}&current=1&size=10`, { headers: adminAuth })
-  const oList = otherPending.data?.records || []
-  if (oList.length > 0) {
-    const y2 = await jfetch(`/admin/posts/${oList[0].id}/detail`, { headers: yumuAuth })
-    assert(y2.code === 403, `子版主 yumu 不能查看非负责板块待审帖 → 403（实际 code=${y2.code}）`)
+  const y1 = await jfetch(`/admin/posts/${ownPost.id}/detail`, { headers: yumuAuth })
+  assert(y1.code === 200 && y1.data?.title, `版主 yumu 可查看本游戏待审帖 #${ownPost.id}：${y1.data?.title}`)
+
+  // 反面用例：yumu 不能查看**非负责游戏**的待审帖
+  const otherGameId = (list.find((p) => p.gameId && p.gameId !== yumuGameId) || {}).gameId
+  if (otherGameId) {
+    const otherPending = await jfetch(`/admin/posts?status=2&gameId=${otherGameId}&current=1&size=10`, { headers: adminAuth })
+    const oList = otherPending.data?.records || []
+    assert(oList.length > 0, `找到非负责游戏(gameId=${otherGameId})的待审帖 ${oList.length} 条`)
+    if (oList.length > 0) {
+      const y2 = await jfetch(`/admin/posts/${oList[0].id}/detail`, { headers: yumuAuth })
+      assert(y2.code === 403, `版主 yumu 不能查看非负责游戏的待审帖 → 403（实际 code=${y2.code}）`)
+    }
   } else {
-    console.log('⚠️ 其他板块暂无待审帖，跳过 yumu 反面用例')
+    console.log('⚠️ 待审队列中没有「其他游戏」的帖，跳过反面用例')
+  }
+
+  // 清理自造帖
+  if (createdPostId) {
+    await jfetch(`/posts/${createdPostId}`, { method: 'DELETE', headers: adminAuth })
+    console.log(`  已清理自造待审帖 #${createdPostId}`)
   }
 
   // 普通用户（注册新用户）
@@ -68,15 +94,23 @@ async function main() {
   const u1 = await jfetch(`/admin/posts/${list[0].id}/detail`, { headers: userAuth })
   assert(u1.code === 403, `普通用户 ${rnd} 无查看审核详情权限 → 403`)
 
-  // 验证个人主页 /auth/me 携带 moderatorBoardNames
+  // 验证 /auth/me 携带版主负责信息
+  // 🚨 9-05 起「取消板块细分」：授权以**游戏**为粒度（board_id 置 NULL）→ moderatorBoardNames 恒为空数组，
+  //    现行字段是 moderatorGameNames（前端徽章 badge.js / My.vue / UserProfile.vue 都用它）。
+  //    期望值从实际授权动态取，别把版主负责的游戏写死（种子数据会变）。
+  const expectedGames = (yumuBoards.data || []).map((x) => x.gameName).filter(Boolean)
+  assert(expectedGames.length > 0, `yumu 有版主授权（实际 ${JSON.stringify(expectedGames)}）`)
+
   const me = await jfetch('/auth/me', { headers: yumuAuth })
-  assert(me.code === 200 && Array.isArray(me.data?.moderatorBoardNames), `/auth/me 含 moderatorBoardNames 数组`)
-  assert(me.data?.moderatorBoardNames?.includes('PC 游戏'), `yumu /auth/me moderatorBoardNames 含「PC 游戏」`)
+  assert(me.code === 200 && Array.isArray(me.data?.moderatorGameNames), `/auth/me 含 moderatorGameNames 数组`)
+  assert(expectedGames.every((g) => me.data?.moderatorGameNames?.includes(g)),
+    `yumu /auth/me moderatorGameNames 含实际负责游戏 ${JSON.stringify(expectedGames)}（实际 ${JSON.stringify(me.data?.moderatorGameNames)}）`)
   assert(me.data?.badge === 'SUB_MODERATOR' || me.data?.badge === 'MODERATOR', `yumu /auth/me badge=${me.data?.badge}`)
 
   // 验证个人主页 /users/{id} 同样字段
   const profile = await jfetch('/users/2', { headers: adminAuth })
-  assert(profile.data?.moderatorBoardNames?.includes('PC 游戏'), `/users/2 moderatorBoardNames 含「PC 游戏」`)
+  assert(expectedGames.every((g) => (profile.data?.moderatorGameNames || []).includes(g)),
+    `/users/2 moderatorGameNames 含实际负责游戏 ${JSON.stringify(expectedGames)}（实际 ${JSON.stringify(profile.data?.moderatorGameNames)}）`)
   assert(profile.data?.badge === 'SUB_MODERATOR' || profile.data?.badge === 'MODERATOR', `/users/2 badge=${profile.data?.badge}`)
 
   console.log(`\n结果：${passed} 通过 / ${failed} 失败`)

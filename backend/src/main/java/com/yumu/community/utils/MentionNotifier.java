@@ -1,7 +1,5 @@
 package com.yumu.community.utils;
 
-import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
-import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.yumu.community.entity.Notification;
 import com.yumu.community.mapper.NotificationMapper;
 import com.yumu.community.mapper.UserMapper;
@@ -70,50 +68,38 @@ public class MentionNotifier {
     }
 
     /**
-     * 9-07：upsert 实现——同 (userId, type, targetId, sourceId) 合并为一条，
-     * 累计计数写 content "提到了你 (×N)"，is_read 置 0、created_at 刷新，sender/target 不动。
+     * 9-07：合并写入——同 (userId, type, targetId, sourceId) 只保留一条，
+     * 累计计数写 content「提到了你 (×N)」，is_read 置 0、created_at 刷新。
+     *
+     * 🚨 查重必须用 selectByMergeKeyIgnoreDeleted（**含软删行**）：软删行虽然查询不可见，
+     * 但 uk_noti_merge 唯一键照样生效，漏查就会 Duplicate entry → 500。
+     * 写入统一走 mapper 的原子 upsert（ON DUPLICATE KEY UPDATE），命中软删行时自动复活。
      */
     private void upsertMentionNotification(Long userId, Long postId, int targetType,
                                            Long sourceId, Long actorId) {
-        // 1) 查重
-        QueryWrapper<Notification> qw = new QueryWrapper<Notification>()
-                .eq("user_id", userId)
-                .eq("type", TYPE_MENTION)
-                .eq("target_id", postId)
-                .eq("source_id", sourceId)   // sourceId == null → 自动 IS NULL
-                .eq("deleted", 0)
-                .last("LIMIT 1");
-        Notification existing = notificationMapper.selectOne(qw);
-        if (existing == null) {
-            // 2a) 全新通知
-            Notification n = new Notification();
-            n.setUserId(userId);
-            n.setType(TYPE_MENTION);
-            n.setSenderId(actorId);
-            n.setTargetType(targetType);
-            n.setTargetId(postId);
-            n.setSourceId(sourceId);
-            n.setContent(CONTENT_TPL);
-            n.setIsRead(0);
-            notificationMapper.insert(n);
-            pushService.pushNotification(userId, n.getId(), TYPE_MENTION,
-                    CONTENT_TPL, actorId, postId);
-        } else {
-            // 2b) 合并：原 content 形如 "提到了你 (×N)"，N +1 后回写
-            int prev = 1;
+        Notification existing = notificationMapper.selectByMergeKeyIgnoreDeleted(
+                userId, TYPE_MENTION, postId, sourceId);
+        int prev = 0;
+        if (existing != null && (existing.getDeleted() == null || existing.getDeleted() == 0)) {
             Matcher m = COUNT_IN_CONTENT.matcher(existing.getContent() == null ? "" : existing.getContent());
             if (m.find()) {
                 try { prev = Integer.parseInt(m.group(1)); } catch (NumberFormatException ignore) {}
+            } else if (existing.getContent() != null && !existing.getContent().isBlank()) {
+                prev = 1;   // 首次提及写的是「提到了你」（不含计数）
             }
-            int next = prev + 1;
-            String newContent = CONTENT_TPL + " (×" + next + ")";
-            notificationMapper.update(null, Wrappers.<Notification>lambdaUpdate()
-                    .eq(Notification::getId, existing.getId())
-                    .set(Notification::getContent, newContent)
-                    .set(Notification::getIsRead, 0)
-                    .set(Notification::getCreatedAt, java.time.LocalDateTime.now()));
-            pushService.pushNotification(userId, existing.getId(), TYPE_MENTION,
-                    newContent, actorId, postId);
         }
+        int next = prev + 1;
+        String content = next > 1 ? CONTENT_TPL + " (×" + next + ")" : CONTENT_TPL;
+
+        Notification n = new Notification();
+        n.setUserId(userId);
+        n.setType(TYPE_MENTION);
+        n.setSenderId(actorId);
+        n.setTargetType(targetType);
+        n.setTargetId(postId);
+        n.setSourceId(sourceId);
+        n.setContent(content);
+        notificationMapper.upsertByMergeKey(n);   // 回填 n.id（含命中已存在行的情况）
+        pushService.pushNotification(userId, n.getId(), TYPE_MENTION, content, actorId, postId);
     }
 }

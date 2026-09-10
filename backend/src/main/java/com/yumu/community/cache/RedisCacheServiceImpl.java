@@ -1,8 +1,8 @@
 package com.yumu.community.cache;
 
-import com.fasterxml.jackson.databind.DeserializationFeature;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
+import tools.jackson.databind.DeserializationFeature;
+import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.json.JsonMapper;
 import lombok.RequiredArgsConstructor;
 import org.springframework.context.annotation.Primary;
 import org.springframework.data.redis.RedisConnectionFailureException;
@@ -32,9 +32,11 @@ public class RedisCacheServiceImpl implements CacheService {
     private final StringRedisTemplate redisTemplate;
     private final LocalCacheServiceImpl local;
 
-    private final ObjectMapper objectMapper = new ObjectMapper()
-            .registerModule(new JavaTimeModule())
-            .configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
+    // Jackson 3 变化：① java.time 支持已内置（不再有独立 jsr310 模块，无需 registerModule）；
+    //               ② ObjectMapper 配置不可变，改配置只能走 JsonMapper.builder()。
+    private final ObjectMapper objectMapper = JsonMapper.builder()
+            .configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false)
+            .build();
 
     private final AtomicBoolean redisHealthy = new AtomicBoolean(true);
     private volatile long lastFailAt = 0;

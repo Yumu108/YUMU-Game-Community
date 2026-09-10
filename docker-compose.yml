@@ -29,7 +29,7 @@ services:
     command: --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci
     logging: *default-logging
     healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-p${MYSQL_ROOT_PASSWORD:-123456}"]
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-p${MYSQL_ROOT_PASSWORD:?MYSQL_ROOT_PASSWORD 未设置}"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -53,16 +53,26 @@ services:
       context: ./backend
       dockerfile: Dockerfile
     container_name: yumu-backend
+    # D6（9-10）：异常退出或宿主机重启后自动拉起
+    # （配合镜像内的 -XX:+ExitOnOutOfMemoryError —— OOM 时快速退出重启，而不是僵死）
+    restart: unless-stopped
+    # D6：容器内存上限。与镜像内 -XX:MaxRAMPercentage=75.0 配合 → 堆上限约 750m。
+    # 作用：把 OOM 限制在容器内，避免拖垮宿主机；需要更大堆时同时调大本值或覆盖 JAVA_OPTS。
+    mem_limit: 1g
     environment:
+      # D4（9-10）：容器部署默认走 prod profile —— 触发启动期安全自检（密钥强度 / 限频开关）。
+      # 本地想用容器全栈调试且接受弱口令时，可在 .env 里临时设 SPRING_PROFILES_ACTIVE=dev。
+      SPRING_PROFILES_ACTIVE: ${SPRING_PROFILES_ACTIVE:-prod}
       DB_HOST: mysql
       DB_PORT: 3306
       DB_NAME: yumu_community
       DB_USERNAME: ${DB_USERNAME:-root}
-      DB_PASSWORD: ${DB_PASSWORD:-123456}
+      # D4：必填校验，杜绝「生产悄悄跑 123456」
+      DB_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD 未设置：请先 cp .env.example .env 并填写强密码}
       REDIS_HOST: redis
       REDIS_PORT: 6379
       REDIS_PASSWORD: ${REDIS_PASSWORD:-}
-      JWT_SECRET: ${JWT_SECRET:-yumu-community-secret-key-change-me-please}
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET 未设置：请先 cp .env.example .env 并填写 >=32 字节随机串}
       JWT_EXPIRATION_MS: ${JWT_EXPIRATION_MS:-7200000}
       CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-http://localhost:5173}
       UPLOAD_DIR: /data/uploads
@@ -77,8 +87,12 @@ services:
       TZ: Asia/Shanghai
     volumes:
       # A4/B2：上传文件持久化到命名卷，重启/换机不丢（换机迁移时同步该卷）
+      # D6：命名卷首次创建时会继承镜像内 /data/uploads 的属主(1000:1000)，无需额外处理
       - uploads_data:/data/uploads
       # B5：应用日志持久化到宿主机 ./logs，方便 grep 排查 + 不随容器销毁丢失
+      # ⚠️ D6：容器已改为非 root(uid 1000) 运行，但 bind mount 的权限由**宿主机目录**决定。
+      #    首次部署前请执行一次，否则应用写不了日志、启动直接失败：
+      #        mkdir -p logs && sudo chown -R 1000:1000 logs
       - ./logs:/app/logs
     depends_on:
       mysql:

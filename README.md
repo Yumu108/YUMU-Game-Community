@@ -10,7 +10,7 @@
 | 层     | 技术                                                       |
 | ----- | -------------------------------------------------------- |
 | 前端    | Vue 3 + Vite + Element Plus + Pinia + Vue Router + Axios（路由懒加载 + Element 按需引入） |
-| 后端    | Java 21 + Spring Boot 3.3.x + Spring Security + JWT      |
+| 后端    | Java 21 + Spring Boot 4.0.x + Spring Security + JWT      |
 | 持久化   | MyBatis-Plus + MySQL 8                                |
 | 缓存/消息 | Redis 7（Spring Data Redis，优雅降级）+ WebSocket 实时通知        |
 | 安全    | JWT（2h 短期 + 退出黑名单 + 滑动续期）· Jsoup 富文本净化 · Redis 滑动窗口限频 · 敏感词/站外联系方式风控 · 上传 magic bytes 校验 |
@@ -155,7 +155,18 @@ npm run dev
 
 ## 演示账号
 
-- 管理员：`admin / admin123456`
+> ⚠️ **D2（9-10）起，仓库内不再记录任何可直接登录的管理员口令**。管理员账号由脚本创建/重置：
+
+```bash
+# 生成随机强口令并创建（或重置）管理员 —— 会打印明文口令，请立即保存
+./deploy/tools/init-admin.sh
+
+# 或指定口令
+./deploy/tools/init-admin.sh '你的强口令'
+```
+
+- **管理员**：`admin`，口令由上面的脚本设置（不写入仓库）
+- **本地开发库**：当前口令记录在本机 `.env` 的 `ADMIN_INIT_PASSWORD`（该文件已 gitignore）
 - 种子演示用户（yumu 等）：密码统一 `123456`
 
 ## 回归测试

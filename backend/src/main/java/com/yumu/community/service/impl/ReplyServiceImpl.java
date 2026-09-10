@@ -283,6 +283,12 @@ public class ReplyServiceImpl implements ReplyService {
         }
         // 楼中楼场景：礼貌性通知被回复者「xxx 删除了对你的回复」
         // 仅在 replyToId 非空、被回复者存在且不是操作者本人时发
+        //
+        // 🚨 必须走 upsertByMergeKey，不能直接 insert：notification 的唯一键是
+        //    uk_noti_merge(user_id, type, target_id, source_id)，而本通知与「回复了你」
+        //    （同被回复者、type=2、同帖子、同回复 id）**用的是完全相同的组合键**。
+        //    直接 insert 会 Duplicate entry → 整个删帖事务 500（删除楼中楼必然失败）。
+        //    语义上也应复用同一条：该行本就代表"你与这条回复的交互"，覆盖文案即可。
         if (r.getReplyToId() != null) {
             Reply replied = replyMapper.selectById(r.getReplyToId());
             if (replied != null && !replied.getUserId().equals(operatorId)) {
@@ -294,8 +300,7 @@ public class ReplyServiceImpl implements ReplyService {
                 n.setTargetId(r.getPostId());
                 n.setSourceId(replyId);
                 n.setContent("删除了对你的回复");
-                n.setIsRead(0);
-                notificationMapper.insert(n);
+                notificationMapper.upsertByMergeKey(n);
                 pushService.pushNotification(replied.getUserId(), n.getId(), 2, "删除了对你的回复", operatorId, r.getPostId());
             }
         }
