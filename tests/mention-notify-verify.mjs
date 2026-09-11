@@ -47,7 +47,7 @@ async function getMentions(token) {
 
 async function main() {
   const stamp = Date.now().toString().slice(-10)
-  const admin = await loginOrRegister('admin', 'admin123456')
+  const admin = await loginOrRegister('admin', (process.env.TEST_ADMIN_PASSWORD || 'REPLACE-ME'))
   const adminToken = admin.token
 
   // 准备 3 个测试用户：张三、李四、王五（昵称 = username）

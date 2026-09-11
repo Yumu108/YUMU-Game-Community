@@ -59,7 +59,7 @@ function buildTree(flat) {
 
 async function main() {
   const stamp = Date.now().toString().slice(-10)
-  const admin = await loginOrRegister('admin', 'admin123456')
+  const admin = await loginOrRegister('admin', (process.env.TEST_ADMIN_PASSWORD || 'REPLACE-ME'))
 
   // 三层嵌套：A → B（回复 A） → C（回复 B）
   const uA = 'ta_' + stamp, uB = 'tb_' + stamp, uC = 'tc_' + stamp

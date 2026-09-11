@@ -34,7 +34,7 @@ async function login(u, p) {
 
 let ok = 0, fail = 0
 async function main() {
-  const tok = await login('admin', 'admin123456')
+  const tok = await login('admin', (process.env.TEST_ADMIN_PASSWORD || 'REPLACE-ME'))
   const auth = { Authorization: `Bearer ${tok}` }
   for (const id of IDS) {
     const r = await jfetch(`/posts/${id}`, { method: 'DELETE', headers: auth })

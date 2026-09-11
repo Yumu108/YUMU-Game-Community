@@ -27,7 +27,7 @@ function assert(cond, msg) {
 const rnd = () => 'd' + Date.now().toString(36) + Math.floor(Math.random() * 1000)
 
 async function main() {
-  const adminToken = await login('admin', 'admin123456')
+  const adminToken = await login('admin', (process.env.TEST_ADMIN_PASSWORD || 'REPLACE-ME'))
   const adminAuth = { Authorization: `Bearer ${adminToken}` }
 
   // 注册测试用户 A（作者）和 B（非作者）

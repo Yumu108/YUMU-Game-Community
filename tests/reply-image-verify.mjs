@@ -19,7 +19,7 @@
  */
 
 const BASE = process.env.BASE || 'http://127.0.0.1:8080/api'
-const ADMIN = { username: 'admin', password: 'admin123456' }
+const ADMIN = { username: 'admin', password: (process.env.TEST_ADMIN_PASSWORD || 'REPLACE-ME') }
 
 let pass = 0
 let fail = 0

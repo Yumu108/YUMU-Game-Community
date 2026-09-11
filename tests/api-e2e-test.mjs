@@ -102,7 +102,7 @@ async function main() {
   check('发帖返回 post id', typeof postId === 'number', `postId=${postId}`)
 
   // 审核流：普通用户新帖默认待审(status=2)，由 admin 审核通过后才能公开访问/回复
-  const loginAdmin = await call('POST', '/auth/login', { body: { username: 'admin', password: 'admin123456' } })
+  const loginAdmin = await call('POST', '/auth/login', { body: { username: 'admin', password: (process.env.TEST_ADMIN_PASSWORD || 'REPLACE-ME') } })
   const tokenAdmin = loginAdmin.json?.data?.token
   check('admin 登录成功', !!tokenAdmin)
   if (tokenAdmin && typeof postId === 'number') {

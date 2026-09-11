@@ -49,7 +49,7 @@ async function main() {
   const anon = await jget('/admin/audit-logs')
   check('匿名访问被拒（401/403）', anon.code === 401 || anon.code === 403, 'code=' + anon.code)
 
-  const admin = await loginOrRegister('admin', 'admin123456')
+  const admin = await loginOrRegister('admin', (process.env.TEST_ADMIN_PASSWORD || 'REPLACE-ME'))
   const adminToken = admin.token
   check('管理员登录成功', !!adminToken, JSON.stringify(admin).slice(0, 120))
 

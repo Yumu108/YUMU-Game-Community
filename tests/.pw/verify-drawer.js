@@ -34,7 +34,7 @@ async function apiLogin() {
   const res = await fetch(`${API}/auth/login`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ username: 'admin', password: 'admin123456' })
+    body: JSON.stringify({ username: 'admin', password: (process.env.TEST_ADMIN_PASSWORD || 'REPLACE-ME') })
   })
   const json = await res.json()
   return { token: json.data.token, user: json.data.user }

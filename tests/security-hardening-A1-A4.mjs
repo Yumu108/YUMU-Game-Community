@@ -47,9 +47,9 @@ function record(name, pass, detail) {
   // 下面每个 record 都会注明检查的是哪一类。
 
   // 先拿一个 admin token 用来发帖（绕过 429 限频 + 需要登录）
-  // admin 默认账号：admin / admin123456
+  // admin 默认账号：admin / $TEST_ADMIN_PASSWORD（环境变量，仓库不存真实口令）
   const login = await jpost('/auth/login', {
-    username: 'admin', password: 'admin123456'
+    username: 'admin', password: (process.env.TEST_ADMIN_PASSWORD || 'REPLACE-ME')
   });
   if (login.status !== 200) {
     console.error('login failed:', login);
@@ -119,7 +119,7 @@ function record(name, pass, detail) {
   // ======== A3 JWT 黑名单（/auth/me 走 Result.error(401)，看 body.code） ========
   {
     const r = await jpost('/auth/login', {
-      username: 'admin', password: 'admin123456'
+      username: 'admin', password: (process.env.TEST_ADMIN_PASSWORD || 'REPLACE-ME')
     });
     const t = r.body.data.token;
 

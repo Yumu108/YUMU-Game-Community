@@ -32,7 +32,7 @@ async function main() {
   console.log('加精奖励只发一次 验证（反复加精不多次加分）')
   console.log('═'.repeat(60))
 
-  const adminTok = await login('admin', 'admin123456')
+  const adminTok = await login('admin', (process.env.TEST_ADMIN_PASSWORD || 'REPLACE-ME'))
   const adminAuth = { Authorization: `Bearer ${adminTok}` }
 
   // 注册一个一次性用户并发一帖

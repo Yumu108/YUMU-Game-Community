@@ -39,7 +39,7 @@ async function main() {
   const username = `sync_${suffix}`
   const password = 'pass123456'
 
-  const adminToken = (await req('POST', '/auth/login', { username: 'admin', password: 'admin123456' })).token
+  const adminToken = (await req('POST', '/auth/login', { username: 'admin', password: (process.env.TEST_ADMIN_PASSWORD || 'REPLACE-ME') })).token
   await req('POST', '/auth/register', { username, password, nickname: 'SyncTester' })
   const token = (await req('POST', '/auth/login', { username, password })).token
 

@@ -6,7 +6,7 @@ const APP = 'http://localhost:5173'
   const login = await fetch('http://127.0.0.1:8080/api/auth/login', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ username: 'admin', password: 'admin123456' })
+    body: JSON.stringify({ username: 'admin', password: (process.env.TEST_ADMIN_PASSWORD || 'REPLACE-ME') })
   }).then((r) => r.json())
   const tk = login.data.token
   const b = await chromium.launch({ executablePath: EXE, headless: true })

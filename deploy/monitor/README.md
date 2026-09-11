@@ -89,7 +89,7 @@ crontab -e
 ```
 
 > ⚠️ **为什么要 `source .env`？** crontab 不继承你的 shell 环境，`db-backup.sh` 拿不到 `DB_PASSWORD`
-> 会退回内建默认值 `123456` → 备份必然失败并告警；`notify.sh` 也拿不到 `ALERT_WEBHOOK_URL` → 告警发不出去
+> 脚本会立即报错退出（`DB_PASSWORD` 现为必填，仓库不设弱口令兜底）→ 备份失败并告警；`notify.sh` 也拿不到 `ALERT_WEBHOOK_URL` → 告警发不出去
 > （降级为写本地日志）。所以 cron 里必须先把 `.env` 载进来。
 
 > ⚠️ **`CHECK_URL` / `CHECK_PORT` 为什么要显式写？**

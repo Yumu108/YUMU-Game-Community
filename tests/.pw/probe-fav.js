@@ -7,7 +7,7 @@ const BASE = process.env.WEB_BASE || 'http://localhost:4173'
   const login = await fetch(`${API}/auth/login`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ username: 'admin', password: 'admin123456' })
+    body: JSON.stringify({ username: 'admin', password: (process.env.TEST_ADMIN_PASSWORD || 'REPLACE-ME') })
   }).then((r) => r.json())
   const b = await chromium.launch({ executablePath: EXE, headless: true })
   const c = await b.newContext({ viewport: { width: 1440, height: 900 } })

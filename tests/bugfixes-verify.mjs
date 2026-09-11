@@ -37,7 +37,7 @@ function assert(cond, msg) {
 
 async function main() {
   // 使用 admin 账号
-  const token = await login('admin', 'admin123456')
+  const token = await login('admin', (process.env.TEST_ADMIN_PASSWORD || 'REPLACE-ME'))
   const auth = { Authorization: `Bearer ${token}` }
 
   // 1. 签到幂等

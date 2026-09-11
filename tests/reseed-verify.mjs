@@ -49,8 +49,8 @@ async function main () {
     ok(true, `新玩家账号可登录（yumu_10057 / ${PWD_DEMO}）`)
   } catch (e) { ok(false, '新玩家账号可登录', e.message) }
 
-  const adminToken = await login('admin', 'admin123456')
-  ok(!!adminToken, '管理员账号可登录（admin / admin123456）')
+  const adminToken = await login('admin', (process.env.TEST_ADMIN_PASSWORD || 'REPLACE-ME'))
+  ok(!!adminToken, '管理员账号可登录（admin / $TEST_ADMIN_PASSWORD）')
 
   const me = await api('/auth/me', { token: playerToken })
   ok(me.code === 200 && me.data?.nickname, 'GET /auth/me 返回昵称', `nickname=${me.data?.nickname}`)

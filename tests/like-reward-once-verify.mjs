@@ -38,7 +38,7 @@ async function main() {
   console.log('═'.repeat(60))
 
   // 作者 = admin（发帖直发 status=0）
-  const adminTok = await login('admin', 'admin123456')
+  const adminTok = await login('admin', (process.env.TEST_ADMIN_PASSWORD || 'REPLACE-ME'))
   const adminAuth = { Authorization: `Bearer ${adminTok}` }
 
   // 两个一次性点赞用户

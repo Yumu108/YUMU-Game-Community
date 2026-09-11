@@ -1,8 +1,9 @@
 # B2：YUMU 游戏社区一键编排 —— mysql / redis / backend / nginx(含前端构建)
 # 用法：
+#   准备：cp .env.example .env && 填好密钥（MYSQL_ROOT_PASSWORD 等为必填，无默认值）
 #   本地开发（只用 mysql/redis）：docker compose up -d mysql redis
-#   生产一键部署：cp .env.example .env && 填好密钥 && docker compose up -d --build
-# 密钥全部来自 .env（B4），生产环境禁止把真实密码写进本文件。
+#   生产一键部署：docker compose up -d --build
+# 密钥全部来自 .env（B4），生产环境禁止把真实密码写进本文件；本文件不设任何弱口令兜底。
 
 # B5：容器日志轮转 —— docker 默认 json-file 无上限，长跑会把磁盘撑爆。
 # 统一限制：单文件 10m、保留 3 份（单服务最多 30m）。下面每个服务通过锚点引用。
@@ -17,7 +18,7 @@ services:
     image: mysql:8.0
     container_name: yumu-mysql
     environment:
-      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-123456}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?MYSQL_ROOT_PASSWORD 未设置：请先 cp .env.example .env 并填写}
       MYSQL_DATABASE: yumu_community
       TZ: Asia/Shanghai
     ports:

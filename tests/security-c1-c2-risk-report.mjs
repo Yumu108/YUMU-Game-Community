@@ -26,7 +26,7 @@ async function jget(path, headers = {}) {
 }
 
 (async () => {
-  const login = await jpost('/auth/login', { username: 'admin', password: 'admin123456' });
+  const login = await jpost('/auth/login', { username: 'admin', password: (process.env.TEST_ADMIN_PASSWORD || 'REPLACE-ME') });
   const token = login.body?.data?.token;
   if (!token) { console.error('admin login failed'); process.exit(1); }
   const auth = { Authorization: 'Bearer ' + token };

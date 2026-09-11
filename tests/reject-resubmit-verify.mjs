@@ -46,7 +46,7 @@ async function main() {
     console.log('驳回 → 重新编辑提审 全链路验证')
     console.log('═'.repeat(62))
 
-    adminTok = await login('admin', 'admin123456')
+    adminTok = await login('admin', (process.env.TEST_ADMIN_PASSWORD || 'REPLACE-ME'))
     const adminAuth = { Authorization: `Bearer ${adminTok}` }
     const name = rnd()
     const authorTok = await register(name)

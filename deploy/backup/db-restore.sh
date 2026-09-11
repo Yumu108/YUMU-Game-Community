@@ -8,7 +8,7 @@ FILE="${1:?用法: $0 <备份文件.sql.gz>}"
 CONTAINER="${YUMU_MYSQL_CONTAINER:-yumu-mysql}"
 DB_NAME="${DB_NAME:-yumu_community}"
 DB_USER="${DB_USERNAME:-root}"
-DB_PASSWORD="${DB_PASSWORD:-123456}"
+DB_PASSWORD="${DB_PASSWORD:?[db-restore] 缺少 DB_PASSWORD 环境变量（写在 .env 或 crontab 顶部）}"
 
 [ -f "$FILE" ] || { echo "备份文件不存在: $FILE" >&2; exit 1; }
 

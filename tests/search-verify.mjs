@@ -55,7 +55,7 @@ async function main() {
   console.log('search 模块专项自动化测试')
   console.log('═'.repeat(60))
 
-  const adminTok = await login('admin', 'admin123456')
+  const adminTok = await login('admin', (process.env.TEST_ADMIN_PASSWORD || 'REPLACE-ME'))
   const adminAuth = { Authorization: `Bearer ${adminTok}` }
   const userAuth = { Authorization: `Bearer ${await register(RUN + 'u', '搜索昵称' + RUN)}` }
   console.log(`本轮标记 = ${RUN}\n`)

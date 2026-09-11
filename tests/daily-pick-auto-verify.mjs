@@ -57,7 +57,7 @@ async function main() {
   console.log('每日精选 / 本周热门 自动化验证（v1.2 自动选）')
   console.log('═'.repeat(60))
 
-  const adminTok = await login('admin', 'admin123456')
+  const adminTok = await login('admin', (process.env.TEST_ADMIN_PASSWORD || 'REPLACE-ME'))
 
   const daily = await jget('/picks/daily')
   const weekly = await jget('/picks/weekly')

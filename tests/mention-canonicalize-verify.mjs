@@ -26,7 +26,7 @@ function check(name, cond) {
 }
 
 console.log('[1] admin 登录')
-const login = await api('POST', '/auth/login', null, { username: 'admin', password: 'admin123456' })
+const login = await api('POST', '/auth/login', null, { username: 'admin', password: (process.env.TEST_ADMIN_PASSWORD || 'REPLACE-ME') })
 check('登录成功', login.code === 200 && login.data && login.data.token)
 const token = login.data.token
 

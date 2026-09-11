@@ -37,7 +37,7 @@ async function register(u, n) {
 console.log('[准备] 账号与板块')
 const tAuthor = await register('pia' + TS, '作者号')
 const tOther = await register('pio' + TS, '路人号')
-const admin = await api('POST', '/auth/login', null, { username: 'admin', password: 'admin123456' })
+const admin = await api('POST', '/auth/login', null, { username: 'admin', password: (process.env.TEST_ADMIN_PASSWORD || 'REPLACE-ME') })
 const tAdmin = admin.data.token
 const boards = await api('GET', '/boards', tAuthor)
 const boardId = boards.data[0].id

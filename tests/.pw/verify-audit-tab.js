@@ -18,7 +18,7 @@ const BASE = process.env.WEB_BASE || 'http://localhost:5173'
   const login = await fetch(`${API}/auth/login`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ username: 'admin', password: 'admin123456' })
+    body: JSON.stringify({ username: 'admin', password: (process.env.TEST_ADMIN_PASSWORD || 'REPLACE-ME') })
   }).then((r) => r.json())
   const token = login.data.token
 

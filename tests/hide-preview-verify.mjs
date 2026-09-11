@@ -39,7 +39,7 @@ async function main() {
   console.log('═══ 隐藏帖预览验证（管理员全权 / 负责版主可看 / 其他 404）═══\n')
 
   // 0. 账号
-  const lr = await jpost('/auth/login', { username: 'admin', password: 'admin123456' })
+  const lr = await jpost('/auth/login', { username: 'admin', password: (process.env.TEST_ADMIN_PASSWORD || 'REPLACE-ME') })
   assert(lr.code === 200 && lr.data?.token, 'admin 登录')
   A = lr.data.token
 

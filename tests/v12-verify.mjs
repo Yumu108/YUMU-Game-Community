@@ -33,7 +33,7 @@ async function main() {
   console.log('═══ 1.2 验证（游戏库核心 / 固定六分类 / 版主(游戏,板块)）═══\n')
 
   // 0. 账号
-  const login = await jpost('/auth/login', { username: 'admin', password: 'admin123456' })
+  const login = await jpost('/auth/login', { username: 'admin', password: (process.env.TEST_ADMIN_PASSWORD || 'REPLACE-ME') })
   assert(login.code === 200 && login.data?.token, 'admin 登录')
   A = login.data.token
   const ru = await jpost('/auth/register', { username: 'v12u_' + suffix, password: 'pass123456', nickname: 'V12U' })

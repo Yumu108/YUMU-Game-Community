@@ -31,7 +31,7 @@ function assert(cond, msg) {
 }
 
 async function main() {
-  const token = await login('admin', 'admin123456')
+  const token = await login('admin', (process.env.TEST_ADMIN_PASSWORD || 'REPLACE-ME'))
   const auth = { Authorization: `Bearer ${token}` }
 
   // 找一篇帖子

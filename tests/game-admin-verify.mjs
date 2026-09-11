@@ -46,7 +46,7 @@ const sameOrder = (arr) => {
 
 ;(async () => {
   section('登录')
-  const admin = await jpost('/auth/login', { username: 'admin', password: 'admin123456' })
+  const admin = await jpost('/auth/login', { username: 'admin', password: (process.env.TEST_ADMIN_PASSWORD || 'REPLACE-ME') })
   ok(admin.code === 200 && admin.data?.token, '管理员登录', admin.data?.token ? '' : JSON.stringify(admin).slice(0, 80))
   const token = admin.data?.token
 

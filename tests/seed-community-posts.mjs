@@ -4,7 +4,7 @@
 //       仅向 deleted=0/status=0 可见逻辑写入（复用已修复的 createPost 计数逻辑）。
 //       一次性脚本，重复运行会再次发帖（用户态不可幂等）。
 const BASE = process.env.YUMU_HOST || 'http://localhost:8080/api'
-const ADMIN = { u: 'admin', p: 'admin123456' }
+const ADMIN = { u: 'admin', p: (process.env.TEST_ADMIN_PASSWORD || 'REPLACE-ME') }
 const SEED_PWD = 'SeedPass123!'
 
 async function jfetch(path, opts = {}) {

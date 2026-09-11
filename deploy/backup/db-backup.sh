@@ -27,7 +27,7 @@ KEEP_DAYS="${1:-14}"
 CONTAINER="${YUMU_MYSQL_CONTAINER:-yumu-mysql}"
 DB_NAME="${DB_NAME:-yumu_community}"
 DB_USER="${DB_USERNAME:-root}"
-DB_PASSWORD="${DB_PASSWORD:-123456}"
+DB_PASSWORD="${DB_PASSWORD:?[db-backup] 缺少 DB_PASSWORD 环境变量（写在 .env 或 crontab 顶部）}"
 STAMP="$(date +%Y%m%d_%H%M%S)"
 TARGET="$BACKUP_DIR/${DB_NAME}_${STAMP}.sql.gz"
 

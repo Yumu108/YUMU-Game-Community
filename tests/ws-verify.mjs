@@ -62,7 +62,7 @@ async function main() {
   console.log('═══ WebSocket 实时通知 验证 ═══\n')
 
   // 0. 账号
-  const lr = await jpost('/auth/login', { username: 'admin', password: 'admin123456' })
+  const lr = await jpost('/auth/login', { username: 'admin', password: (process.env.TEST_ADMIN_PASSWORD || 'REPLACE-ME') })
   assert(lr.code === 200 && lr.data?.token, 'admin 登录')
   const A = lr.data.token
 

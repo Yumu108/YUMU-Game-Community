@@ -34,7 +34,7 @@ async function loginOrRegister(username, password) {
 
 async function main() {
   const stamp = Date.now().toString().slice(-10)
-  const admin = await loginOrRegister('admin', 'admin123456')
+  const admin = await loginOrRegister('admin', (process.env.TEST_ADMIN_PASSWORD || 'REPLACE-ME'))
   check('管理员登录', !!admin.token)
 
   const uA = 'raA_' + stamp

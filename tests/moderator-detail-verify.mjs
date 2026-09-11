@@ -26,7 +26,7 @@ function assert(cond, msg) {
 
 async function main() {
   // 拿一个 pending 帖作为测试对象
-  const adminToken = await login('admin', 'admin123456')
+  const adminToken = await login('admin', (process.env.TEST_ADMIN_PASSWORD || 'REPLACE-ME'))
   const adminAuth = { Authorization: `Bearer ${adminToken}` }
   const pending = await jfetch('/admin/posts?status=2&current=1&size=10', { headers: adminAuth })
   const list = pending.data?.records || []

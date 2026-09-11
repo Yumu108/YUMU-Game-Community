@@ -30,7 +30,7 @@ async function main() {
 
   // ---------- 0. 准备 ----------
   console.log('[0] 准备账号')
-  const login = await jpost('/auth/login', { username: 'admin', password: 'admin123456' })
+  const login = await jpost('/auth/login', { username: 'admin', password: (process.env.TEST_ADMIN_PASSWORD || 'REPLACE-ME') })
   A = login.data?.token
   const rU = await jpost('/auth/register', { username: `p11u_${suffix}`, password: 'pass123456', nickname: 'P11普通用户' })
   U = rU.data?.token; user = rU.data?.user
