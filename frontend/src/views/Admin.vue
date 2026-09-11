@@ -396,7 +396,7 @@
                   <el-tag v-if="g.status === 1" type="danger" size="small" effect="dark">已禁用</el-tag>
                   <el-tag v-else type="success" size="small" effect="dark">启用</el-tag>
                   <span class="a-id num">#{{ g.id }}</span>
-                  <span class="a-time num">排序 {{ g.sort }}</span>
+                  <!-- 9-11：不再展示人工排序值，列表本身按名称拼音序 -->
                 </div>
                 <div class="a-meta">
                   {{ g.platform || '—' }} · {{ g.genre || '未分类' }} · 💬 {{ g.postCount || 0 }} 帖
@@ -426,10 +426,15 @@
                 <el-input v-model="gameForm.cover" placeholder="封面图 URL（选填）" />
               </el-form-item>
               <el-form-item label="平台">
-                <el-input v-model="gameForm.platform" maxlength="30" placeholder="如 PC / 主机 / 移动 / 多平台" />
+                <!-- 9-11：改为选择项（与游戏库筛选栏一致），都不符合选「其他」；旧值不在清单内时动态追加 -->
+                <el-select v-model="gameForm.platform" placeholder="选择平台（可清空）" clearable style="width: 100%">
+                  <el-option v-for="p in platformChoices" :key="p" :label="p" :value="p" />
+                </el-select>
               </el-form-item>
               <el-form-item label="类型">
-                <el-input v-model="gameForm.genre" maxlength="30" placeholder="如 角色扮演 / 射击 / 策略" />
+                <el-select v-model="gameForm.genre" placeholder="选择类型（可清空）" clearable style="width: 100%">
+                  <el-option v-for="g in genreChoices" :key="g" :label="g" :value="g" />
+                </el-select>
               </el-form-item>
               <el-form-item label="开发商">
                 <el-input v-model="gameForm.developer" maxlength="60" placeholder="开发商（选填）" />
@@ -440,10 +445,7 @@
               <el-form-item label="发行日">
                 <el-input v-model="gameForm.releaseDate" maxlength="20" placeholder="如 2024-08-20（选填）" />
               </el-form-item>
-              <el-form-item label="排序">
-                <el-input-number v-model="gameForm.sort" :min="0" :max="9999" size="small" />
-                <span class="a-tip num" style="margin-left: 8px">数字越小越靠前</span>
-              </el-form-item>
+              <!-- 9-11：去掉人工「排序」数字字段 —— 游戏列表已统一默认按名称字母（拼音）序排列 -->
               <el-form-item label="简介">
                 <el-input v-model="gameForm.description" type="textarea" :rows="3" maxlength="500" show-word-limit placeholder="游戏简介（选填）" />
               </el-form-item>
@@ -640,6 +642,7 @@ import AppLayout from '@/layout/AppLayout.vue'
 import BackButton from '@/components/BackButton.vue'
 import { useUserStore } from '@/store'
 import { renderRichText } from '@/utils/richtext'
+import { GAME_PLATFORMS, GAME_GENRES } from '@/constants/gameOptions'
 import {
   listReports,
   handleReport,
@@ -1153,9 +1156,15 @@ const gameForm = reactive({
   developer: '',
   publisher: '',
   releaseDate: '',
-  sort: 0,
   description: ''
 })
+// 9-11：平台/类型选择项 = 固定清单（含「其他」）+ 当前旧值兜底（编辑历史数据时原值不在清单内也能正常显示与保存）
+const platformChoices = computed(() =>
+  gameForm.platform && !GAME_PLATFORMS.includes(gameForm.platform) ? [...GAME_PLATFORMS, gameForm.platform] : GAME_PLATFORMS
+)
+const genreChoices = computed(() =>
+  gameForm.genre && !GAME_GENRES.includes(gameForm.genre) ? [...GAME_GENRES, gameForm.genre] : GAME_GENRES
+)
 function openGameForm(row) {
   if (row) {
     gameForm.id = row.id
@@ -1166,7 +1175,6 @@ function openGameForm(row) {
     gameForm.developer = row.developer || ''
     gameForm.publisher = row.publisher || ''
     gameForm.releaseDate = row.releaseDate || ''
-    gameForm.sort = row.sort || 0
     gameForm.description = row.description || ''
   } else {
     gameForm.id = null
@@ -1177,7 +1185,6 @@ function openGameForm(row) {
     gameForm.developer = ''
     gameForm.publisher = ''
     gameForm.releaseDate = ''
-    gameForm.sort = 0
     gameForm.description = ''
   }
   gameForm.visible = true
@@ -1195,7 +1202,6 @@ async function saveGame() {
     developer: gameForm.developer || null,
     publisher: gameForm.publisher || null,
     releaseDate: gameForm.releaseDate || null,
-    sort: gameForm.sort || 0,
     description: gameForm.description || null
   }
   try {

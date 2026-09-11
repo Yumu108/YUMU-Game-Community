@@ -38,8 +38,8 @@ public class GameServiceImpl implements GameService {
         }
         if (platform != null && !platform.isEmpty()) qw.eq(Game::getPlatform, platform);
         if (genre != null && !genre.isEmpty()) qw.eq(Game::getGenre, genre);
-        // 排序：热门优先（is_hot=1 在前），其后按 id 倒序（新创建的游戏排在「其他游戏」(id=1) 之前，但不挤掉 hot）
-        qw.orderByDesc(Game::getIsHot).orderByDesc(Game::getId);
+        // 9-11：游戏库默认按名称字母（拼音）序排列 —— 取代旧的「热门优先+id倒序」，人工 sort 字段不再参与排序
+        qw.last("ORDER BY name COLLATE utf8mb4_zh_0900_as_cs ASC");
         Page<Game> res = gameMapper.selectPage(page, qw);
         return PageResult.of(res.getTotal(), res.getPages(), res.getCurrent(), res.getSize(), res.getRecords());
     }
@@ -57,6 +57,8 @@ public class GameServiceImpl implements GameService {
     public Long createGame(Game game) {
         game.setStatus(0);
         game.setPostCount(0);
+        // 9-11：前台表单已去掉人工 sort 字段（排序统一走名称拼音序），这里兜底默认 0
+        if (game.getSort() == null) game.setSort(0);
         gameMapper.insert(game);
         return game.getId();
     }
@@ -101,21 +103,20 @@ public class GameServiceImpl implements GameService {
 
     @Override
     public List<Game> listHotGames(int limit) {
-        // 1.2：热门游戏 = 标记为 is_hot 的种子热门游戏（按 sort 升序，sort 越小越靠前）
+        // 9-11：热门游戏 = 标记 is_hot 的游戏，顺序与其他列表统一为名称拼音序（sort 字段不再参与）
         return gameMapper.selectList(Wrappers.<Game>lambdaQuery()
                 .eq(Game::getStatus, 0)
                 .eq(Game::getDeleted, 0)
                 .eq(Game::getIsHot, 1)
-                .orderByAsc(Game::getSort)
-                .last("LIMIT " + Math.max(1, limit)));
+                .last("ORDER BY name COLLATE utf8mb4_zh_0900_as_cs ASC LIMIT " + Math.max(1, limit)));
     }
 
     @Override
     public List<Game> listAllGames() {
+        // 9-11：后台游戏管理列表同样按名称拼音序（与前台游戏库一致）
         return gameMapper.selectList(Wrappers.<Game>lambdaQuery()
                 .eq(Game::getDeleted, 0)
-                .orderByDesc(Game::getSort)
-                .orderByDesc(Game::getId));
+                .last("ORDER BY name COLLATE utf8mb4_zh_0900_as_cs ASC"));
     }
 
     @Override

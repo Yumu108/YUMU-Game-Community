@@ -672,7 +672,8 @@ watch(feedTab, () => {
 
 /* ★ 9-11：窄桌面（左栏 + 右栏都在，主区被压到 ~510px）时进一步收紧胶囊，
    保证 7 款游戏 + 全部游戏仍落在两行内，不冒出第三行。 */
-@media (max-width: 1240px) {
+/* ★ 9-11：热门游戏改拼音序后行首多为长名，收紧断点拆两档，保证 ≥1200px 恒为两行(4+4) */
+@media (max-width: 1320px) {
   .quick-chip {
     padding: 5px 10px;
     gap: 5px;
@@ -683,6 +684,18 @@ watch(feedTab, () => {
   }
   .qc-count {
     padding: 1px 6px;
+  }
+}
+@media (max-width: 1240px) {
+  .quick-chip {
+    padding: 5px 9px;
+  }
+  .qc-name {
+    max-width: 54px;
+    font-size: 12px;
+  }
+  .quick-scroll {
+    gap: 8px 8px;
   }
 }
 

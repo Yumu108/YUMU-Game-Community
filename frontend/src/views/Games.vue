@@ -80,6 +80,7 @@ import AppLayout from '@/layout/AppLayout.vue'
 import BackButton from '@/components/BackButton.vue'
 import { getGames } from '@/api/community'
 import { useGameStore } from '@/store'
+import { GAME_PLATFORMS, GAME_GENRES } from '@/constants/gameOptions'
 
 const router = useRouter()
 const gameStore = useGameStore()
@@ -107,9 +108,9 @@ async function load() {
     games.value = data.records
     total.value = data.total
     current.value = data.current
-    // 用已加载数据推导可筛选维度（无需硬编码，永远与后端一致）
-    const ps = new Set()
-    const gs = new Set()
+    // 筛选维度 = 固定清单（与后台新增游戏的选择项一致，9-11）∪ 库内实际出现过的历史值
+    const ps = new Set(GAME_PLATFORMS)
+    const gs = new Set(GAME_GENRES)
     games.value.forEach((g) => {
       if (g.platform) ps.add(g.platform)
       if (g.genre) gs.add(g.genre)
