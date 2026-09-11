@@ -195,3 +195,7 @@ docker compose up -d --build                   # 5) 启动
 ```
 
 > 部署配套说明见 `deploy/nginx/README.md` 与 `deploy/monitor/README.md`（HTTPS 配置、探活告警细节）。
+
+## License
+
+本项目基于 [MIT License](./LICENSE) 开源 —— 可自由使用、修改、分发（保留版权声明即可），软件按"原样"提供，不含任何担保。
