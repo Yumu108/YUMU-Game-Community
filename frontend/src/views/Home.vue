@@ -333,9 +333,13 @@ function stopCarousel() {
 }
 
 // 1.2：热门板块入口改为「热门游戏」，点击进入对应游戏
+// ★ 9-11：PC 端热门游戏改为「换行 + 居中」展示（不再横向滑动）。
+//   数量取 7：加末尾的「全部游戏」= 8 个胶囊，在 PC 主视野（≥1366）下正好铺满两行，
+//   且「全部游戏」落在第二行末位。取 10 会溢出成三行、取 5 则第二行留白过多。
+//   完整游戏列表仍可从右侧「进入游戏库 ›」查看。
 async function loadHotGames() {
   try {
-    boards.value = await getHotGames(10)
+    boards.value = await getHotGames(7)
   } catch (e) {
     boards.value = []
   }
@@ -598,11 +602,13 @@ watch(feedTab, () => {
   color: var(--t1);
   margin-bottom: 10px;
 }
+/* ★ 9-11：PC 优先 —— 去掉横向滑动（overflow-x:auto 连同滚动条一起移除），
+   改为自动换行 + 整块水平居中。行数由 loadHotGames() 的数量控制（最多两行）。 */
 .quick-scroll {
   display: flex;
-  gap: 10px;
-  overflow-x: auto;
-  padding-bottom: 4px;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px 10px;
 }
 .quick-more {
   font-size: 12px;
@@ -625,14 +631,15 @@ watch(feedTab, () => {
   flex: none;
   display: flex;
   align-items: center;
-  gap: 7px;
+  gap: 6px;
   background: var(--bg-2);
   border: 1px solid var(--border);
   border-radius: 999px;
-  padding: 8px 14px;
+  padding: 6px 12px;
   cursor: pointer;
   transition: all 0.15s;
   white-space: nowrap;
+  max-width: 100%;
 }
 .quick-chip:hover {
   border-color: var(--brand);
@@ -640,11 +647,18 @@ watch(feedTab, () => {
 }
 .qc-emoji {
   font-size: 16px;
+  flex: none;
 }
+/* ★ 9-11：游戏名过长（如「崩坏：星穹铁道」）时截断省略，避免单个胶囊撑宽整行 */
 .qc-name {
-  font-size: 13.5px;
+  font-size: 13px;
   font-weight: 600;
   color: var(--t1);
+  min-width: 0;
+  max-width: 76px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .qc-count {
   font-size: 11px;
@@ -653,6 +667,23 @@ watch(feedTab, () => {
   padding: 1px 8px;
   border-radius: 999px;
   font-weight: 700;
+  flex: none;
+}
+
+/* ★ 9-11：窄桌面（左栏 + 右栏都在，主区被压到 ~510px）时进一步收紧胶囊，
+   保证 7 款游戏 + 全部游戏仍落在两行内，不冒出第三行。 */
+@media (max-width: 1240px) {
+  .quick-chip {
+    padding: 5px 10px;
+    gap: 5px;
+  }
+  .qc-name {
+    max-width: 62px;
+    font-size: 12.5px;
+  }
+  .qc-count {
+    padding: 1px 6px;
+  }
 }
 
 /* ---------- 话题标签云 ---------- */
@@ -791,6 +822,10 @@ watch(feedTab, () => {
   border: 1px solid var(--border);
   border-radius: var(--radius);
   padding: 14px 16px;
+  /* ★ 9-11：grid 子项默认 min-width:auto，会被最长标题的固有宽度顶开 →
+     1fr 1fr 退化成「按内容分配」（实测 267px / 570px 两列不等宽），
+     并把整个主内容区撑出横向滚动条。必须显式归零才会均分。 */
+  min-width: 0;
 }
 .picks-head {
   font-size: 14px;
@@ -831,6 +866,9 @@ watch(feedTab, () => {
 }
 .pick-title {
   flex: 1;
+  /* ★ 9-11：flex 子项默认 min-width:auto → nowrap 的标题不肯收缩，
+     省略号（text-overflow）根本没机会生效，文字直接顶出卡片外。 */
+  min-width: 0;
   font-size: 13px;
   color: var(--t1);
   overflow: hidden;
