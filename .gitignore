@@ -25,6 +25,8 @@ deploy/backup/backups/
 db-backup/
 *.sql.gz
 *.dump
+# 历史全量数据库 dump（含 user 表密码哈希）——仅留本地，绝不入库
+/backend/pre-1.2-backup.sql
 
 # ============================================================
 # 密钥与环境（B4：生产密钥绝不入库）
