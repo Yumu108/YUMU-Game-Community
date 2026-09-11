@@ -4,7 +4,7 @@ name: CI
 # 职责边界：
 #   - 本工作流只做「一定能跑通的事」：编译 + 单元测试 + 前端生产构建。
 #   - 端到端脚本（tests/*.mjs 60+ 个）依赖 MySQL/Redis + 种子数据，暂不放入 CI，
-#     避免在未稳定验证的流水线里产生假红；本地执行方式见 tests/legacy/README.md 与《上线部署操作手册.md》。
+#     避免在未稳定验证的流水线里产生假红；本地执行方式见 tests/legacy/README.md。
 on:
   push:
     branches: [master, main]

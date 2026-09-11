@@ -24,22 +24,13 @@
 /YUMUGameCommunity
 ├── backend/            # Spring Boot Maven 工程（端口 8080，context-path /api）
 ├── frontend/           # Vue 3 + Vite 工程（端口 5173）
-├── deploy/             # 部署编排：docker-compose.yml（mysql/redis/backend/nginx 四服务）、Nginx 配置、备份与监控脚本
+├── deploy/             # 部署编排：Nginx 配置、备份与监控脚本、密钥生成/数据库初始化/管理员初始化/上线自检工具
 ├── tests/              # Node .mjs 接口冒烟 / 回归测试（需后端 8080 运行）
 │   └── .pw/            # Playwright UI 回归（playwright-core + 系统 Chrome，需 5173 + 8080 同时运行）
-├── docs/               # 近期开发总结合集（近期开发总结.md）、docs/screenshots 截图留档
-├── 项目开发文档/        # 需求分析、技术选型等早期过程文档
-├── 原型预览/           # 视觉原型
+├── .github/workflows/  # CI：编译 + 单元测试 + 前端生产构建
+├── docker-compose.yml  # mysql/redis/backend/nginx 四服务一键编排（nginx 镜像内含前端构建）
 ├── .env.example        # 生产环境变量模板（密钥外置；复制为 .env 后填入，.env 不入库）
-├── README.md           # ← 本文档
-├── 项目进度总结.md      # 阶段进度主档（持续更新）
-├── 项目功能与运行逻辑说明.md # 功能契约总文档
-├── 项目开发日志.md      # 逐日开发流水（Day 1 起）
-├── 玩家视角功能优化清单.md  # P0/P1/P2 产品需求清单
-├── 上线前必做清单.md     # Go/No-Go 评估 + 安全/部署/合规状态跟踪
-├── YUMU社区知识库.md     # 社区规则官方说明（助手知识库来源；改后需同步 resources/ai/ 副本）
-├── 智能助手接入说明.md   # 助手技术接入（DeepSeek 直连 + SSE 代理）
-└── yumu游戏社区助手-修订版.md # 助手人设 Prompt（改后需同步 resources/ai/ 副本）
+└── README.md           # ← 本文档
 ```
 
 ## 获取代码
@@ -99,7 +90,7 @@ mvn.cmd -f backend spring-boot:run "-Dspring-boot.run.arguments=--server.port=80
 
 后端启动后访问：`http://localhost:8080/api`
 
-> 💡 **一键启动（推荐）**：项目根双击 `start.bat`，同时拉起后端 + 前端，并**自动加载项目根 `.env`**（用于注入智能助手 `LLM_API_KEY` / `LLM_MOCK=false` 等密钥）。不建 `.env` 也能跑 —— 智能助手会回退 mock 模式（用真实库数据生成演示回答）。
+> 💡 **密钥加载**：后端启动时自动读取项目根 `.env`（用于注入智能助手 `LLM_API_KEY` / `LLM_MOCK=false` 等）。不建 `.env` 也能跑 —— 智能助手会回退 mock 模式（用真实库数据生成演示回答）。
 > 🚨 改前端源码后**必须 `npm run build`**：5173 提供的是构建产物（`/assets/index-*.js`），只改源码不构建是看不到效果的。
 
 ### 4. 启动前端
@@ -115,11 +106,11 @@ npm run dev
 ## 开发说明
 
 - 前端请求统一走 `src/api/request.js` 封装的 Axios 实例，自动携带 JWT、统一错误处理（**注意**：拦截器已解包 `Result`，业务代码直接拿 `Result.data`，不要再判 `.code`）。
-- **token 会自动续期**：access token 有效期 2 小时；剩余不足 30 分钟或收到 401 时，前端自动调 `POST /auth/refresh` 换新 token 并重放请求。改这块代码前请先读 `项目功能与运行逻辑说明.md` **§9.1**（尤其 `res.data.token` 这个字段路径，写错会导致"静默登出"）。
-- **移动端**：断点约定见 `项目功能与运行逻辑说明.md` **§9.3**（详情页 900/760/420、顶栏 760/480；窄屏左栏改由顶栏汉堡唤出抽屉，抽屉内复用同一个 `SideNav`）。⚠️ 移动端媒体查询**必须写在组件的 scoped `<style>` 块里**，写到非 scoped 块会被覆盖。
-- 后端统一响应体、全局异常处理、JWT 拦截器见 `项目功能与运行逻辑说明.md` §2。
+- **token 会自动续期**：access token 有效期 2 小时；剩余不足 30 分钟或收到 401 时，前端自动调 `POST /auth/refresh` 换新 token 并重放请求。改这块代码前先看 `frontend/src/api/request.js`（尤其 `res.data.token` 这个字段路径，写错会导致"静默登出"）。
+- **移动端**：断点约定 —— 详情页 900/760/420、顶栏 760/480；窄屏左栏改由顶栏汉堡唤出抽屉，抽屉内复用同一个 `SideNav`。⚠️ 移动端媒体查询**必须写在组件的 scoped `<style>` 块里**，写到非 scoped 块会被覆盖。
+- 后端统一响应体、全局异常处理、JWT 拦截器见 `com.yumu.community.security` 包源码。
 - 数据库表结构由 `backend/src/main/resources/db/schema.sql` 初始化（`data.sql` 写入角色种子），开发期手动执行该脚本建表。
-- 安全相关（净化 / 限频 / 风控 / 上传校验）集中在 `com.yumu.community.security` 包与 `utils/ImageOptimizer`，详见 §4.20 / §4.21。
+- 安全相关（净化 / 限频 / 风控 / 上传校验）集中在 `com.yumu.community.security` 包与 `utils/ImageOptimizer`。
 
 ## 核心功能（2026-09-10 快照）
 
@@ -128,7 +119,7 @@ npm run dev
 - 成长体系：每日签到（连续天数递增奖励）、积分明细、活跃度等级（发帖/回帖/获赞/登录累加）、Badge 徽章（🛡️管理员/⭐版主/🔹子版主）。
 - 内容发现：每日精选/本周热门（系统自动选：人工加精优先 + 综合评分）、游戏库（条目 + 聚合帖 + 一键发帖挂 gameId）、**游戏专区主页 Game Hub**、板块/关键词订阅 + 个性化订阅流。
 - 管理后台（ADMIN + MODERATOR 双角色）：用户管理（封禁/改密/删除/角色/版主板块分配）、游戏管理、公告管理、**帖子分层级审核**（按身份分流 + 驳回理由 + 通知作者）、举报队列 + 「我的举报」状态页；审核人可预览待审/隐藏帖（按负责板块限权）。
-- **社区智能助手**：右下角面板，SSE 流式；后端**直连 DeepSeek**（OpenAI 兼容，可换 SiliconFlow / 本地 Ollama），每轮注入社区实时快照 + 自持知识库，多轮记忆走 `CacheService`；未配 key 时自动 mock 演示。真实 Key 放项目根 `.env`（已 gitignore，`start.bat` 启动时自动加载）。
+- **社区智能助手**：右下角面板，SSE 流式；后端**直连 DeepSeek**（OpenAI 兼容，可换 SiliconFlow / 本地 Ollama），每轮注入社区实时快照 + 自持知识库（`backend/src/main/resources/ai/`），多轮记忆走 `CacheService`；未配 key 时自动 mock 演示。真实 Key 放项目根 `.env`（已 gitignore）。
 - **安全与合规**：Jsoup 服务端富文本净化、接口滑动窗口限频、敏感词 + 站外联系方式风控、注册协议与隐私政策页、上传五重校验（含 magic bytes）。
 - **图片优化**：上传自动压缩（长边 1920）+ 生成缩略图（480），列表页走缩略图省流量；GIF/WEBP 直通不重编码。
 - **移动端**：详情页 + 顶栏响应式断点，窄屏汉堡唤出**导航抽屉**（复用同一个 `SideNav` + 全宽搜索入口）。
@@ -146,7 +137,7 @@ npm run dev
 | 重启后端报 jar `Unable to rename` | 8080 被旧 java 进程占用锁住 jar；先停掉旧进程再 `mvn package` |
 | 探测 `127.0.0.1:5173` 连不上 / 返回 502 | Vite 默认监听 `[::1]`（IPv6），且本机代理会把 `127.0.0.1` 打成 502。**一律用 `localhost` 探测** |
 | 页面缺图标 / 控制台报 `Failed to resolve component` | `main.js` 里 Element 图标是**显式注册的 13 个**（为 tree-shake 精简过）。新增图标用完必须去 `main.js` 补注册；**注意属性式用法 `:prefix-icon="Xxx"` 用正则扫标签扫不出来**，改完要真跑一遍 UI 看控制台 |
-| 改 Element 样式不生效（被官方样式盖掉） | 已按需引入，**入口 CSS 先于懒加载 chunk 的 `el-xxx.css` 加载**。覆盖 Element 的规则要自提特异性（如 `html .el-skeleton`），或加 `!important`。详见 `项目功能与运行逻辑说明.md` §9.4 |
+| 改 Element 样式不生效（被官方样式盖掉） | 已按需引入，**入口 CSS 先于懒加载 chunk 的 `el-xxx.css` 加载**。覆盖 Element 的规则要自提特异性（如 `html .el-skeleton`），或加 `!important` |
 | `ElMessage` / `ElMessageBox` 怎么用 | 已由 `unplugin-auto-import` 按需注入，**直接用即可、不要手写 import**（手写会绕过样式注入，出现"有提示框但没样式"） |
 | `npm run dev` 起不来，报 `SAFE_DELETE_BULK_CONFIRM_REQUIRED` | Vite 依赖预构建删 `node_modules/.vite/deps_temp_*` 被宿主安全删除守卫拦截。启动前 `unset CODEBUDDY_SAFE_DELETE_BULK_STATE_DIR CODEBUDDY_TOOL_CALL_ID CODEBUDDY_SAFE_DELETE_BULK_GUARD`（用子 shell，勿用 `env -u`），或改用 `npm run preview` |
 | `npm run preview` 下 POST 接口报 `Invalid CORS request` | 后端 CORS 白名单只放行 `http://localhost:5173`，preview 默认 4173 会被拦。**preview 用 `--port 5173`** |
@@ -191,8 +182,7 @@ cd tests/.pw && node verify-audit-tab.js          # 管理后台审计日志 Tab
 
 ## 部署上线
 
-> 面向生产环境的完整操作流程（服务器 / 域名 / HTTPS / 密钥 / 初始化 / 监控备份 / 回滚）见
-> **`上线部署操作手册.md`**。三条命令先记住：
+> 生产部署全部走 `deploy/` 下的脚本 + 根目录 `docker-compose.yml`（四容器：mysql 8 / redis 7 / backend / nginx，前端构建已做进 nginx 镜像）。核心命令：
 
 ```bash
 cd /opt/yumu && set -a && . ./.env && set +a   # 载入生产环境变量
@@ -204,7 +194,4 @@ CHECK_URL=http://127.0.0.1/api/actuator/health ./deploy/tools/preflight-check.sh
 docker compose up -d --build                   # 5) 启动
 ```
 
-## 文档导航
-
-> 项目按七阶段推进（第一至五阶段完成；第六阶段「功能增强与体验优化」进行中；**第七阶段「部署上线」的代码侧准备已全部收口 —— D1~D9 加固落地、审计日志/单测/CI/部署脚本齐备，剩余项均依赖部署环境，需按 `上线部署操作手册.md` 执行**）。各文档定位：
-> `项目进度总结.md` 阶段进度｜`项目开发日志.md` 逐日流水｜`项目功能与运行逻辑说明.md` 功能契约（**改动前先读 §9 前端基础设施**）｜`玩家视角功能优化清单.md` 产品需求（P0/P1/P2）｜`上线前必做清单.md` Go/No-Go 评估与 D1~D9 加固明细｜**`上线部署操作手册.md` 部署执行步骤（服务器/域名/HTTPS/密钥/初始化/监控备份/回滚）**｜`docs/近期开发总结.md` 近期阶段性汇总（合集，最新为 9-10 六节）｜`deploy/nginx/README.md` + `deploy/monitor/README.md` + `deploy/backup/备份与恢复演练.md` 部署运维细节｜`YUMU社区知识库.md` + `yumu游戏社区助手-修订版.md` + `智能助手接入说明.md` 社区智能助手三件套。
+> 部署配套说明见 `deploy/nginx/README.md` 与 `deploy/monitor/README.md`（HTTPS 配置、探活告警细节）。
