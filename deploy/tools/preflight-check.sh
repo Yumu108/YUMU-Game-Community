@@ -64,6 +64,24 @@ else
   pass "必填变量齐全（$(echo $REQUIRED | wc -w) 项）"
 fi
 
+# ---------------------------------------------------------------------------
+# 1.1 连接一致性（2026-09-13 实测踩坑）
+#   docker-compose.yml：MySQL 的 root 口令 = MYSQL_ROOT_PASSWORD
+#                       后端连库 = DB_USERNAME(=root) + DB_PASSWORD
+#   两者不一致 → 容器起来后后端连不上库，日志刷
+#   `Access denied for user 'root'@'172.18.x.x' (using password: YES)`
+# ---------------------------------------------------------------------------
+DBU="$(getv DB_USERNAME)"; DBU="${DBU:-root}"
+if [ "$DBU" = "root" ]; then
+  if [ "$(getv DB_PASSWORD)" = "$(getv MYSQL_ROOT_PASSWORD)" ]; then
+    pass "DB_PASSWORD 与 MYSQL_ROOT_PASSWORD 一致（后端以 root 连库）"
+  else
+    fail "DB_PASSWORD 与 MYSQL_ROOT_PASSWORD 不一致 —— 后端会连不上 MySQL（Access denied for user 'root'）。修法：把 .env 里 DB_PASSWORD 改成与 MYSQL_ROOT_PASSWORD 相同的值，再 docker compose up -d --force-recreate backend"
+  fi
+else
+  warn "DB_USERNAME=$DBU（非 root）—— 请确认该账号已在 MySQL 内创建、口令为 DB_PASSWORD 且已授权 yumu_community 库"
+fi
+
 PROFILE="$(getv SPRING_PROFILES_ACTIVE)"
 case "$PROFILE" in
   prod|production) pass "SPRING_PROFILES_ACTIVE=$PROFILE（启动期安全自检已开启）" ;;

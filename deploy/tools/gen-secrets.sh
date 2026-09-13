@@ -51,7 +51,10 @@ gen_secret() {
 
 JWT_SECRET="$(gen_secret 48)"
 MYSQL_ROOT_PASSWORD="$(gen_secret 24)"
-DB_PASSWORD="$(gen_secret 24)"
+# ⚠️ 必须是同一个值！docker-compose.yml 里 MySQL 的 root 口令取 MYSQL_ROOT_PASSWORD，
+#   而后端以 DB_USERNAME=root + DB_PASSWORD 连库。两者若不同，后端启动即报
+#   `Access denied for user 'root'@'172.18.x.x' (using password: YES)`（2026-09-13 实测踩坑）。
+DB_PASSWORD="$MYSQL_ROOT_PASSWORD"
 ADMIN_INIT_PASSWORD="$(gen_secret 16)"
 
 # 长度自检：JWT_SECRET 少于 32 字节会让 HS256 签名不安全（Keys.hmacShaKeyFor 会抛错）
@@ -64,7 +67,7 @@ echo " 已生成生产密钥（仅本次运行有效）"
 echo "============================================================"
 echo " JWT_SECRET          = $(mask "$JWT_SECRET")"
 echo " MYSQL_ROOT_PASSWORD = $(mask "$MYSQL_ROOT_PASSWORD")"
-echo " DB_PASSWORD         = $(mask "$DB_PASSWORD")"
+echo " DB_PASSWORD         = $(mask "$DB_PASSWORD")   ← 与上面同一个值（后端以 root 连库）"
 echo " 管理员初始口令        = $(mask "$ADMIN_INIT_PASSWORD")"
 echo
 
