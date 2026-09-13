@@ -2,6 +2,11 @@
 FROM maven:3.9-eclipse-temurin-21 AS build
 WORKDIR /src
 COPY pom.xml .
+# 国内加速（9-13）：dependency:go-offline 直连 Maven Central 在国内 ECS 上常需 5~15 分钟，
+# 默认改用阿里云公共镜像（settings.xml 只镜像 central，不影响其他仓库）。
+# 可用 --build-arg MAVEN_MIRROR=... 覆盖。
+ARG MAVEN_MIRROR=https://maven.aliyun.com/repository/public
+RUN mkdir -p /root/.m2 && printf '<settings xmlns="http://maven.apache.org/SETTINGS/1.0.0"><mirrors><mirror><id>cn-mirror</id><mirrorOf>central</mirrorOf><url>%s</url></mirror></mirrors></settings>' "$MAVEN_MIRROR" > /root/.m2/settings.xml
 # 先拷 pom 下依赖，利用 Docker 层缓存加速后续构建
 RUN mvn -q dependency:go-offline -DskipTests
 COPY src ./src
