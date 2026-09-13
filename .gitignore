@@ -72,3 +72,6 @@ NVIDIA/
 /项目开发日志.md
 /项目进度总结.md
 /deploy/backup/备份与恢复演练.md
+
+# compose 本地/服务器覆盖文件（生产删端口映射等定制写这里，不进仓库以免 git pull 冲突）
+docker-compose.override.yml
