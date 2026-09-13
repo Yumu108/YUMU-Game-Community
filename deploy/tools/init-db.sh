@@ -126,7 +126,10 @@ echo
 
 # 统一执行入口：$1=文件名  $2=是否指定库名(1=是)
 run_sql() {
-  local file="$1" use_db="$2" path="$DB_DIR/$file"
+  # 注意：拆成两条 local —— bash 先展开整行参数再执行 local 赋值，
+  # 写在同一行时 $file 尚未赋值，set -u 下会报 "file: unbound variable"
+  local file="$1" use_db="$2"
+  local path="$DB_DIR/$file"
   printf '  → %-32s' "$file"
   if [ "$USE_DOCKER" -eq 1 ]; then
     if [ "$use_db" -eq 1 ]; then
