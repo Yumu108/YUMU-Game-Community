@@ -191,14 +191,27 @@ if [ -f "$ROOT_DIR/docker-compose.yml" ]; then
 fi
 
 # 端口占用（80/443 若被非本项目进程占用，Nginx 起不来）
+# ⚠️ 坑：容器发布端口后，宿主上持有该端口的是 `docker-proxy` 进程，
+#    ss 看不到容器名，只看进程名会把「本项目容器占着」误报成「被别的程序占了」。
+#    所以这里反过来判定：`docker port <本项目 nginx 容器>` 是否发布过这个端口。
+own_nginx_publishes() {
+  local p="$1"
+  command -v docker >/dev/null 2>&1 || return 1
+  docker port yumu-nginx 2>/dev/null | grep -qE "(^|[^0-9])$p\$"
+}
+
 if command -v ss >/dev/null 2>&1; then
   for p in 80 443; do
-    if ss -ltn 2>/dev/null | grep -q ":$p "; then
-      warn "端口 $p 已被占用 —— 若占用者不是本项目的 nginx 容器，需先释放"
-    else
+    if ! ss -ltn 2>/dev/null | grep -q ":$p "; then
       pass "端口 $p 空闲"
+    elif own_nginx_publishes "$p"; then
+      pass "端口 $p 由本项目 nginx 容器占用（docker-proxy 代持，正常）"
+    else
+      OWNER=$(ss -ltnp 2>/dev/null | grep ":$p " | sed -n 's/.*users:((\([^)]*\)).*/\1/p' | head -1)
+      warn "端口 $p 被其他进程占用（${OWNER:-未知}）—— 常见是宝塔自带 Nginx，停掉它再起本项目 nginx"
     fi
   done
+  printf '  ℹ️  排障口诀：本机 curl 正常而外网打不开 = 云安全组/防火墙问题（查 80/443 的「授权对象」是否为 0.0.0.0/0）；外网「拒绝连接」= 本机没监听\n'
 fi
 
 # 磁盘余量
