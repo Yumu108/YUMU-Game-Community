@@ -16,7 +16,13 @@ RUN command -v curl || (apt-get update && apt-get install -y --no-install-recomm
 #     bind mount（./logs）的属主对齐；不固定的话容器内用户与宿主机目录属主对不上，
 #     应用连日志都写不进去、启动即失败。
 #   · 上传目录（命名卷）与日志目录必须归该用户所有，否则运行时 EACCES。
-RUN groupadd -g 1000 yumu \
+#   · 兼容性（9-13）：eclipse-temurin:21-jre 升级到 Ubuntu 24.04 底座后自带
+#     UID/GID 1000 的 ubuntu 默认用户，直接 groupadd -g 1000 会报
+#     "GID '1000' already exists"（exit 4）。故先清掉 1000 的既有用户/组再创建，
+#     新旧底座（无默认用户）也兼容（条件判断跳过）。
+RUN if getent passwd 1000 >/dev/null 2>&1; then userdel -r "$(getent passwd 1000 | cut -d: -f1)" 2>/dev/null || true; fi \
+ && if getent group 1000 >/dev/null 2>&1; then groupdel "$(getent group 1000 | cut -d: -f1)" 2>/dev/null || true; fi \
+ && groupadd -g 1000 yumu \
  && useradd -u 1000 -g 1000 -M -s /usr/sbin/nologin yumu \
  && mkdir -p /data/uploads /app/logs \
  && chown -R 1000:1000 /data /app
