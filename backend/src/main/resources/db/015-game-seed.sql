@@ -4,9 +4,9 @@
 -- ============================================================
 
 -- 0) 幂等给活库 game 表加 is_hot 列（schema.sql 已含，活库需补）
-SET @db = 'yumu_community';
+SET @db = DATABASE();
 SET @h = (SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=@db AND TABLE_NAME='game' AND COLUMN_NAME='is_hot');
-SET @a = IF(@h=0, "ALTER TABLE game ADD COLUMN is_hot TINYINT NOT NULL DEFAULT 0 COMMENT '是否热门游戏（首页/下拉优先展示）' AFTER status", 'SELECT 1');
+SET @a = IF(@h=0, "ALTER TABLE game ADD COLUMN is_hot TINYINT NOT NULL DEFAULT 0 COMMENT '是否热门游戏（首页/下拉优先展示）' AFTER status", 'DO 0');
 PREPARE sa FROM @a; EXECUTE sa; DEALLOCATE PREPARE sa;
 
 INSERT INTO `game` (`id`, `name`, `cover`, `platform`, `genre`, `description`, `developer`, `publisher`, `release_date`, `post_count`, `sort`, `status`, `is_hot`, `created_at`, `updated_at`, `deleted`) VALUES

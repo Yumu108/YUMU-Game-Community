@@ -63,7 +63,7 @@ done
 #   data.sql            role 表三种角色（USER/MODERATOR/ADMIN）—— 用户系统依赖
 #   init-boards.sql     固定六板块（攻略心得/游戏吐槽/组队大厅/资讯速递/二次创作/其他）
 #   seed-tags.sql       12 个标签 + 按 id 取模回灌 post_tag
-#   015-game-seed.sql   26 款游戏库（幂等 ON DUPLICATE KEY UPDATE）
+#   015-game-seed.sql   18 款游戏库（幂等 ON DUPLICATE KEY UPDATE）
 #   016-v12-content-reset.sql  演示内容：清空内容表后灌入覆盖「热门游戏 × 六板块」的帖子
 SCHEMA_FILES=(
   "schema.sql"
@@ -72,7 +72,9 @@ SCHEMA_FILES=(
   "seed-tags.sql"
   "015-game-seed.sql"
 )
+# 演示内容（--no-demo 可跳过）：顺序不可颠倒 —— 演示帖子引用了演示用户的 id
 DEMO_FILES=(
+  "seed-demo-users.sql"
   "016-v12-content-reset.sql"
 )
 
@@ -189,7 +191,7 @@ fi
 
 echo
 echo "✅ 数据库初始化完成。"
-echo "   基线期望值：board=6、tag=12、game=26、role=3；post/reply/user 视是否导入演示内容而定。"
+echo "   基线期望值：board=6、tag=12、game=18、role=3；post/reply/user 视是否导入演示内容而定。"
 echo "   下一步："
 echo "     1) ./deploy/tools/init-admin.sh          # 创建管理员（打印一次随机口令）"
 echo "     2) ./deploy/tools/preflight-check.sh     # 上线前自检"

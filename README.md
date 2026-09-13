@@ -58,14 +58,22 @@ cd YUMU-Game-Community
 > 库里有数据/换机器后无需重复；先确认 MySQL 服务在跑（`net start mysql`，Windows 服务名可能带 MySQL 字样）。
 
 ```bash
-# 建库建表（脚本自带 CREATE DATABASE yumu_community）
-mysql -uroot -p123456 -h127.0.0.1 -P3306 < backend/src/main/resources/db/schema.sql
-# 后续脚本需显式指定库名 yumu_community；务必带 --default-character-set=utf8mb4，否则中文乱码
-mysql --default-character-set=utf8mb4 -uroot -p123456 -h127.0.0.1 -P3306 yumu_community < backend/src/main/resources/db/data.sql
-mysql --default-character-set=utf8mb4 -uroot -p123456 -h127.0.0.1 -P3306 yumu_community < backend/src/main/resources/db/init-boards.sql
-mysql --default-character-set=utf8mb4 -uroot -p123456 -h127.0.0.1 -P3306 yumu_community < backend/src/main/resources/db/seed-posts.sql
-mysql --default-character-set=utf8mb4 -uroot -p123456 -h127.0.0.1 -P3306 yumu_community < backend/src/main/resources/db/seed-tags.sql
+# 方式 A（推荐）：一条命令，执行顺序已固化在脚本里
+DB_PASSWORD=123456 bash ./deploy/tools/init-db.sh            # 结构 + 种子 + 演示内容
+DB_PASSWORD=123456 bash ./deploy/tools/init-db.sh --no-demo  # 只要结构 + 种子（正式环境用）
+
+# 方式 B：手工逐条执行（顺序即依赖，勿调换；每条都要带 --default-character-set=utf8mb4，否则中文乱码）
+mysql -uroot -p123456 < backend/src/main/resources/db/schema.sql
+mysql --default-character-set=utf8mb4 -uroot -p123456 yumu_community < backend/src/main/resources/db/data.sql
+mysql --default-character-set=utf8mb4 -uroot -p123456 yumu_community < backend/src/main/resources/db/init-boards.sql
+mysql --default-character-set=utf8mb4 -uroot -p123456 yumu_community < backend/src/main/resources/db/seed-tags.sql
+mysql --default-character-set=utf8mb4 -uroot -p123456 yumu_community < backend/src/main/resources/db/015-game-seed.sql
+mysql --default-character-set=utf8mb4 -uroot -p123456 yumu_community < backend/src/main/resources/db/seed-demo-users.sql
+mysql --default-character-set=utf8mb4 -uroot -p123456 yumu_community < backend/src/main/resources/db/016-v12-content-reset.sql
 ```
+
+> 期望基线：`board=6 / tag=12 / game=18 / role=3`；导入演示内容后 `user=7 / post=36 / reply=30`。
+> 演示用户密码统一 `123456`（仅供本地/演示，正式环境请用 `--no-demo`）。
 
 > 账号：root / 123456；库名 `yumu_community`。`application.yml` 中的密码已同步为 `123456`。
 
