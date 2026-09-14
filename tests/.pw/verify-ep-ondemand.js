@@ -19,7 +19,7 @@ const BASE = process.env.WEB_BASE || 'http://localhost:5173'
 const ROUTES = [
   '/', '/games', '/game/2', '/board/1', '/post/3019', '/search?keyword=原神',
   '/user/2', '/tag/1', '/announcements', '/agreement', '/privacy',
-  '/editor', '/my', '/subscribe', '/messages', '/notifications', '/my-reports', '/admin'
+  '/login', '/editor', '/my', '/subscribe', '/messages', '/notifications', '/my-reports', '/admin'
 ]
 
 // 硬失败：只认「按需引入漏注册」的信号（组件/指令没解析出来 = 本次改造引入的回归）

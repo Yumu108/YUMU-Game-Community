@@ -28,6 +28,12 @@
           {{ mode === 'login' ? '登录' : '注册并登录' }}
         </el-button>
         <el-button text size="large" class="guest" @click="enterGuest">游客浏览</el-button>
+        <el-checkbox v-model="agreed" class="agree" size="small">
+          我已阅读并同意
+          <router-link to="/agreement" class="agree-link" @click.stop>《用户协议》</router-link>
+          与
+          <router-link to="/privacy" class="agree-link" @click.stop>《隐私政策》</router-link>
+        </el-checkbox>
       </el-form>
 
       <p class="hint">已接入后端：用户名 3-20 位、密码 6-32 位；未注册可直接「注册并登录」</p>
@@ -92,6 +98,10 @@ function enterGuest() {
 .login-wrap {
   min-height: 100vh;
   display: grid;
+  /* ⚠️ 必须显式给列轨道：默认单列 auto 轨道会被定宽卡片（.login-card width:360px）撑开，
+     连带让卡片的 max-width:100% 失去参照而失效 → 视口 <400px 时横向溢出 20px。
+     minmax(0,1fr) 把轨道钉在可用宽度上，max-width 才真正生效。 */
+  grid-template-columns: minmax(0, 1fr);
   place-items: center;
   background:
     radial-gradient(900px 500px at 50% -10%, rgba(124, 92, 255, 0.18), transparent),
@@ -165,6 +175,13 @@ function enterGuest() {
   border-color: var(--brand);
   font-weight: 700;
 }
+/* 🚨 Element Plus 对相邻按钮有 `.el-button + .el-button { margin-left: 12px }`，
+   而 .guest 是 width:100% —— 两者叠加会把整块右移 12px（实测 right 越界），视觉上就是"歪了"。
+   入口 CSS 早于懒加载的 el-button.css 加载，同特异性拼不过它，故用 :deep() 提到
+   `.login-card[data-v-x] .el-button + .el-button`（0,3,0）压过 Element 的（0,2,0）。 */
+.login-card :deep(.el-button + .el-button) {
+  margin-left: 0;
+}
 .guest {
   width: 100%;
   color: var(--t2);
@@ -180,13 +197,37 @@ function enterGuest() {
   color: var(--t3);
   text-align: center;
 }
-/* C3：协议勾选行 */
+/* C3：协议勾选行（置于「游客浏览」下方；注册时未勾选会被拦截）
+   ⚠️ el-checkbox 默认 white-space:nowrap —— 这行文案不可收缩，会把 .login-wrap 的
+   grid 单列 auto 轨道撑宽，连带让卡片的 max-width:100% 失去参照而失效，
+   结果是 360px 视口横向溢出。必须允许折行 + 允许 flex 子项收缩。 */
 .agree {
-  margin: 2px 0 14px;
+  display: flex;
+  justify-content: center;
+  flex-wrap: wrap;
+  white-space: normal;
+  margin: 10px 0 0;
 }
 .agree :deep(.el-checkbox__label) {
   font-size: 12px;
+  line-height: 1.5;
   color: var(--t2);
+  white-space: normal;
+  word-break: break-word;
+  min-width: 0;
+}
+/* 暗色主题适配：Element 的 checkbox 默认填充是 --el-fill-color-blank（纯白），
+   在 #16181f 卡片上就是一块白色实心方块，极易被误读成"已勾选"。改成深底 + 描边。 */
+.agree :deep(.el-checkbox__inner) {
+  background-color: var(--bg-3);
+  border-color: var(--border);
+}
+.agree :deep(.el-checkbox__inner:hover) {
+  border-color: var(--brand);
+}
+.agree :deep(.is-checked .el-checkbox__inner) {
+  background-color: var(--brand);
+  border-color: var(--brand);
 }
 .agree-link {
   color: var(--brand);
