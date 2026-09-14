@@ -17,6 +17,9 @@ services:
   mysql:
     image: mysql:8.0
     container_name: yumu-mysql
+    # D7（9-14）：补 restart 策略 —— 此前只有 backend 配了，宿主机重启后 mysql/redis/nginx
+    # 不会自愈，表现为「网站莫名打不开」。三件套一起补上，才是完整的自愈组合。
+    restart: unless-stopped
     environment:
       MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?MYSQL_ROOT_PASSWORD 未设置：请先 cp .env.example .env 并填写}
       MYSQL_DATABASE: yumu_community
@@ -38,6 +41,8 @@ services:
   redis:
     image: redis:7
     container_name: yumu-redis
+    # D7（9-14）：同 mysql，补自愈策略
+    restart: unless-stopped
     # 生产如需密码：command 加 --requirepass，并给 backend 传 REDIS_PASSWORD
     ports:
       # ⚠️ 生产服务器建议删除此映射，backend 走内网 redis:6379
@@ -115,6 +120,14 @@ services:
       context: .
       dockerfile: deploy/nginx/Dockerfile
     container_name: yumu-nginx
+    # D7（9-14）：🚨 这两行是「网站打不开」的根治项，缺一不可。
+    # 病因：nginx 在**启动瞬间**就把 proxy_pass 里的 `backend` 解析成 IP，解析失败直接
+    #      `[emerg] host not found in upstream "backend"` 退出（容器 Exited (1)）——
+    #      此后 80 无人监听，对外就是 Connection refused / 502。
+    # ① restart：崩了就自己重试（此前后端有、nginx 没有 → 秒退后永不恢复）
+    # ② depends_on 用 long syntax 等 **service_healthy**：短语法（- backend）只等容器
+    #    "启动"，不等它就绪/进 DNS，nginx 会抢跑。
+    restart: unless-stopped
     ports:
       - "80:80"
       # HTTPS 签发后取消注释，并追加证书挂载（见 deploy/nginx/README.md）：
@@ -125,7 +138,10 @@ services:
       # certbot webroot 验证目录（HTTP 版也挂上，方便直接签发）
       - certbot_web:/var/www/certbot
     depends_on:
-      - backend
+      backend:
+        # D7（9-14）：由短语法 `- backend`（= service_started）改为等 healthcheck 通过。
+        # 后端 healthcheck 已配置（打 /api/actuator/health，start_period 60s）。
+        condition: service_healthy
     logging: *default-logging
 
 volumes:
