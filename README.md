@@ -24,6 +24,10 @@
 /YUMUGameCommunity
 ├── backend/            # Spring Boot Maven 工程（端口 8080，context-path /api）
 ├── frontend/           # Vue 3 + Vite 工程（端口 5173）
+├── miniprogram/        # 小程序子项目（uni-app，课程大作业）：社区内容的「消费端」，复用同一后端
+│   ├── docs/           #   方案设计 + 子项目开发日志
+│   ├── prototype/      #   6 屏移动端视觉原型（纯 HTML，浏览器直接打开）
+│   └── src/            #   uni-app 工程（待建，可同时产出小程序 + H5）
 ├── deploy/             # 部署编排：Nginx 配置、备份与监控脚本、密钥生成/数据库初始化/管理员初始化/上线自检工具
 ├── tests/              # Node .mjs 接口冒烟 / 回归测试（需后端 8080 运行）
 │   └── .pw/            # Playwright UI 回归（playwright-core + 系统 Chrome，需 5173 + 8080 同时运行）
@@ -98,7 +102,7 @@ mvn.cmd -f backend spring-boot:run "-Dspring-boot.run.arguments=--server.port=80
 
 后端启动后访问：`http://localhost:8080/api`
 
-> 💡 **密钥加载**：后端启动时自动读取项目根 `.env`（用于注入智能助手 `LLM_API_KEY` / `LLM_MOCK=false` 等）。不建 `.env` 也能跑 —— 智能助手会回退 mock 模式（用真实库数据生成演示回答）。
+> 💡 **密钥加载**：后端启动时自动读取项目根 `.env`（用于注入智能助手 `LLM_API_KEY` / `LLM_MOCK=false`、邮件 `MAIL_USERNAME` / `MAIL_PASSWORD` 等）。不建 `.env` 也能跑 —— 智能助手回退 mock 模式，**邮箱验证码则只打印到后端日志**（本地开发模式，无需真邮箱）。
 > 🚨 改前端源码后**必须 `npm run build`**：5173 提供的是构建产物（`/assets/index-*.js`），只改源码不构建是看不到效果的。
 
 ### 4. 启动前端
@@ -120,8 +124,9 @@ npm run dev
 - 数据库表结构由 `backend/src/main/resources/db/schema.sql` 初始化（`data.sql` 写入角色种子），开发期手动执行该脚本建表。
 - 安全相关（净化 / 限频 / 风控 / 上传校验）集中在 `com.yumu.community.security` 包与 `utils/ImageOptimizer`。
 
-## 核心功能（2026-09-10 快照）
+## 核心功能（2026-09-15 快照）
 
+- **账号体系（9-15 邮箱化）**：注册 = **账号id + 密码 + 邮箱 + 邮箱验证码 + 协议勾选**（邮箱必填，它是「忘记密码」唯一可自助的通道）；登录标识**同时支持账号id 与邮箱**（+ 密码）；**忘记密码**走「邮箱验证码重置」；个人中心支持**更换绑定邮箱**（验证原邮箱 + 新邮箱两个验证码后一次性替换，不提供解绑）。验证码存 Redis、300 秒有效、**一次性消费**、同邮箱 60 秒冷却、同 IP 每小时上限；未配 SMTP 时仅打日志（**prod 下拒绝降级**，绝不把验证码写进服务器日志）。
 - 社区基础：板块（固定六分类，服务于游戏库）、帖子列表/详情/发布、**楼中楼回帖（平铺式）**、标签、搜索、用户主页、私信、通知、关注/粉丝。
 - 互动：点赞/取消点赞、收藏、举报（管理员处理自动隐藏）；帖子作者可**删除/隐藏自己的帖子**；**@提及**（正文蓝色可点 + 触发通知 + 通知合并/待审不发/编辑补发）。
 - 成长体系：每日签到（连续天数递增奖励）、积分明细、活跃度等级（发帖/回帖/获赞/登录累加）、Badge 徽章（🛡️管理员/⭐版主/🔹子版主）。
@@ -151,6 +156,11 @@ npm run dev
 | `npm run preview` 下 POST 接口报 `Invalid CORS request` | 后端 CORS 白名单只放行 `http://localhost:5173`，preview 默认 4173 会被拦。**preview 用 `--port 5173`** |
 | 用户改昵称后旧 token 立刻 401 | `JwtAuthenticationFilter` 必须用 token 的 **`uid` claim + `loadUserById`** 解析身份，不能用 `subject`(登录账号) |
 | 非公开帖（待审/隐藏）点赞/回帖报 403 | 设计如此：非公开帖完全只读，**作者本人在审核期也不放行**；管理员/授权版主可走 `previewOnly` 预览 |
+| 注册接口报「邮箱不能为空」/ 接口测试脚本批量失败 | 9-15 起注册**邮箱为必填**（含 6 位邮箱验证码）。跑老脚本时给后端加 `MAIL_TEST_CODE=123456` 即开启**仅非生产**的自动化测试通道（允许不带邮箱注册、固定码可当正确码用），prod profile 下该通道被一票否决 |
+| 本地注册收不到邮件 / 想验证发码是否正常 | 这是**预期行为**：`MAIL_ENABLED=false` 时验证码只打印在后端日志（`[mail-mock] ... 验证码 : xxxxxx`）。要真发邮件需在 `.env` 填 `MAIL_ENABLED=true` + `MAIL_USERNAME` + QQ 邮箱 **SMTP 授权码**（不是登录密码） |
+| 生产环境发码接口报「邮箱服务尚未配置」 | prod profile **拒绝把验证码降级写入日志**（那等于公开验证码）。必须配好 `MAIL_*` 并重启后端 |
+| 发码报 429「请 N 秒后再试」 | 同邮箱 60 秒冷却**刻意不分场景**（换场景重发同样受限，防「换场景刷同一地址」）。本地跑测试可把 `MAIL_CODE_COOLDOWN=3`、`MAIL_CODE_IP_PER_HOUR=100` 放宽 |
+| 提示「请先验证当前绑定的邮箱」但明明填了码 | 已绑邮箱的账号换绑**必须同时**验证原邮箱码与新邮箱码；页面上原邮箱码在「原邮箱验证码」那一行。**原邮箱已失效只能联系管理员**（功能上不提供解绑） |
 
 ## 演示账号
 
@@ -203,6 +213,15 @@ docker compose up -d --build                   # 5) 启动
 ```
 
 > 部署配套说明见 `deploy/nginx/README.md` 与 `deploy/monitor/README.md`（HTTPS 配置、探活告警细节）。
+
+> 🚨 **已有库升级（非全新库）**：部署 9-15 的邮箱功能前必须先执行一次迁移，否则注册会因缺列报错：
+> ```bash
+> docker compose exec -T mysql mysql -uroot -p"$MYSQL_ROOT_PASSWORD" yumu_community \
+>   < backend/src/main/resources/db/029-email-verified.sql
+> ```
+> （全新库无需执行 —— `schema.sql` 已包含该列。`init-db.sh` 只适用于全新库，别对已有数据的库跑。）
+>
+> 同时确认 `.env` 里 `MAIL_ENABLED=true` 且 `MAIL_USERNAME` / `MAIL_PASSWORD`（QQ 邮箱 **SMTP 授权码**）已填，否则生产发码接口会直接报错（prod 拒绝把验证码写进日志）。
 
 ## License
 

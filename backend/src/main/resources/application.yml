@@ -78,6 +78,28 @@ yumu:
       enabled: ${RATE_LIMIT_ENABLED:true}
       # 智能助手：单个 IP 每分钟提问次数（/ai/chat 是 permitAll，超限=白烧大模型 token）
       ai-per-minute: ${AI_RATE_PER_MINUTE:20}
+  # 9-15 邮箱能力：注册验证码 / 找回密码 / 换绑邮箱。
+  # 🔑 QQ 邮箱授权码怎么拿：网页版邮箱 → 设置 → 账户 → 开启「POP3/SMTP服务」→ 短信验证 → 生成 16 位授权码
+  #    （注意：是「授权码」，不是你登录 QQ 邮箱的密码）。
+  # ⚠️ enabled 保持 false 时不会连接任何 SMTP，验证码只打印到后端日志 ——
+  #    本地开发与自动化测试靠这个模式跑通全流程，不必真配邮箱。
+  #    但 **prod profile 下会拒绝降级发码**（绝不让验证码落进服务器日志文件），那时发码接口会直接报错。
+  mail:
+    enabled: ${MAIL_ENABLED:false}
+    host: ${MAIL_HOST:smtp.qq.com}
+    port: ${MAIL_PORT:465}
+    username: ${MAIL_USERNAME:}
+    password: ${MAIL_PASSWORD:}
+    from: ${MAIL_FROM:}                     # 留空则用 username
+    from-name: ${MAIL_FROM_NAME:YUMU 游戏社区}
+    ssl: ${MAIL_SSL:true}
+    code-ttl-seconds: ${MAIL_CODE_TTL:300}          # 验证码有效期
+    code-cooldown-seconds: ${MAIL_CODE_COOLDOWN:60} # 同一邮箱重发冷却
+    code-ip-per-hour: ${MAIL_CODE_IP_PER_HOUR:10}   # 同一 IP 每小时发码上限
+    code-max-fail: ${MAIL_CODE_MAX_FAIL:5}          # 同一验证码最多输错几次
+    # ⚠️ 自动化测试通道：**仅非生产环境**生效。设置后任何邮箱都能用这个固定码通过校验，
+    #    且注册接口允许不带邮箱（保护既有的 28 个接口测试脚本）。prod 下该值被完全忽略。
+    test-code: ${MAIL_TEST_CODE:}
 
 # 社区智能助手（大模型直连）—— OpenAI 兼容协议，默认 DeepSeek。
 # 密钥走环境变量，不进仓库（延续 B4 密钥外置）。任何 OpenAI 兼容服务（SiliconFlow / 本地 Ollama 等）

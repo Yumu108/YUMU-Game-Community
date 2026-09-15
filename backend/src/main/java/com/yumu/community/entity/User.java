@@ -14,6 +14,8 @@ public class User extends BaseEntity {
     private String nickname;
     private String password;
     private String email;
+    /** 029：该邮箱是否经过验证码验证（0=未验证/未绑定，1=已验证）。老账号保持 0，不影响账号id登录。 */
+    private Integer emailVerified;
     private String phone;
     private String avatar;
     private Integer gender;

@@ -20,6 +20,7 @@ CREATE TABLE `user` (
   `nickname`     VARCHAR(50)  NOT NULL,
   `password`     VARCHAR(100) NOT NULL,
   `email`        VARCHAR(100) DEFAULT NULL,
+  `email_verified` TINYINT    NOT NULL DEFAULT 0 COMMENT '邮箱是否已验证：0=未验证/未绑定，1=已验证',
   `phone`        VARCHAR(20)  DEFAULT NULL,
   `avatar`       VARCHAR(255) DEFAULT NULL,
   `gender`       TINYINT      NOT NULL DEFAULT 0,

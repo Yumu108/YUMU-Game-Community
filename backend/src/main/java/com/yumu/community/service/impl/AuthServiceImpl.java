@@ -3,11 +3,15 @@ package com.yumu.community.service.impl;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.yumu.community.common.BusinessException;
 import com.yumu.community.config.JwtUtil;
+import com.yumu.community.dto.EmailCodeRequest;
 import com.yumu.community.dto.LoginRequest;
+import com.yumu.community.dto.PasswordResetRequest;
 import com.yumu.community.dto.RegisterRequest;
 import com.yumu.community.entity.Role;
 import com.yumu.community.entity.User;
 import com.yumu.community.entity.UserRole;
+import com.yumu.community.mail.EmailScene;
+import com.yumu.community.mail.MailService;
 import com.yumu.community.mapper.RoleMapper;
 import com.yumu.community.mapper.UserMapper;
 import com.yumu.community.mapper.UserRoleMapper;
@@ -18,6 +22,7 @@ import com.yumu.community.security.TokenBlacklistService;
 import com.yumu.community.service.AuthService;
 import com.yumu.community.service.ActivityScoreService;
 import com.yumu.community.service.BadgeService;
+import com.yumu.community.service.EmailCodeService;
 import com.yumu.community.service.GameService;
 import com.yumu.community.service.ModeratorBoardService;
 import com.yumu.community.entity.Post;
@@ -26,16 +31,21 @@ import com.yumu.community.vo.GameMiniVO;
 import com.yumu.community.vo.UserIdentity;
 import com.yumu.community.vo.UserInfoVO;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.security.core.userdetails.UsernameNotFoundException;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.util.StringUtils;
 
 import java.time.LocalDateTime;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class AuthServiceImpl implements AuthService {
@@ -55,6 +65,8 @@ public class AuthServiceImpl implements AuthService {
     private final RateLimiter rateLimiter;
     /** A3：JWT 退出黑名单（jti → Redis，TTL=剩余有效期）。 */
     private final TokenBlacklistService tokenBlacklist;
+    /** 9-15：邮箱验证码（注册 / 找回密码 / 换绑邮箱）。 */
+    private final EmailCodeService emailCodeService;
 
     private static final String DEFAULT_ROLE_CODE = "USER";
 
@@ -66,18 +78,42 @@ public class AuthServiceImpl implements AuthService {
         if (!rateLimiter.tryAcquire("register:ip:" + ip, 5, 300)) {
             throw new BusinessException(429, "注册尝试过于频繁，请 5 分钟后再试");
         }
+        // 9-15：邮箱归一化（去空格 + 小写）—— 必须与库中已有数据、Redis 里的验证码 key 完全一致。
+        //   自动化测试通道（MAIL_TEST_CODE，仅非生产）下允许不带邮箱，回到 9-15 之前的旧式注册，
+        //   好让既有那批走 /auth/register 的接口测试脚本不必为「邮箱改必填」整批重写。
+        boolean testChannel = emailCodeService.testChannelEnabled();
+        String email;
+        if (!StringUtils.hasText(req.getEmail())) {
+            if (!testChannel) {
+                throw new BusinessException(400, "邮箱不能为空");
+            }
+            email = null;
+        } else {
+            email = emailCodeService.normalize(req.getEmail());
+        }
+
+        // 查重排在「校验验证码」之前：否则用户填了个已被占用的账号id，
+        // 验证码却已经被消费掉，得重新发一封邮件才敢重试。
         if (userMapper.selectCount(Wrappers.<User>lambdaQuery().eq(User::getUsername, req.getUsername())) > 0) {
-            throw new BusinessException(409, "用户名已存在");
+            throw new BusinessException(409, "账号id 已被使用，请换一个");
         }
-        if (req.getEmail() != null && !req.getEmail().isBlank()
-                && userMapper.selectCount(Wrappers.<User>lambdaQuery().eq(User::getEmail, req.getEmail())) > 0) {
-            throw new BusinessException(409, "邮箱已被注册");
+        if (email != null && userMapper.selectCount(Wrappers.<User>lambdaQuery().eq(User::getEmail, email)) > 0) {
+            throw new BusinessException(409, "该邮箱已被注册");
         }
+
+        // 9-15：邮箱验证码是注册的前置条件 —— 校验通过即消费（同一个码不能重复使用）。
+        //   无邮箱（仅测试通道可达）时自然无需校验。
+        if (email != null) {
+            emailCodeService.verifyAndConsume(email, EmailScene.REGISTER, req.getEmailCode());
+        }
+
         User user = new User();
         user.setUsername(req.getUsername());
         user.setNickname(req.getNickname() != null && !req.getNickname().isBlank() ? req.getNickname() : req.getUsername());
         user.setPassword(passwordEncoder.encode(req.getPassword()));
-        user.setEmail(req.getEmail());
+        user.setEmail(email);
+        // 能走到这里说明邮箱验证码是对的 —— 注册即视为已验证；无邮箱的测试账号则标记为未验证
+        user.setEmailVerified(email != null ? 1 : 0);
         user.setStatus(0);
         user.setPoints(0);
         userMapper.insert(user);
@@ -97,17 +133,26 @@ public class AuthServiceImpl implements AuthService {
     @Override
     public Map<String, Object> login(LoginRequest req) {
         // A2：登录限频——同一账号 1 分钟 5 次、同一 IP 1 分钟 20 次，防撞库 / 刷密码
-        String usernameKey = req.getUsername() == null ? "?" : req.getUsername().trim();
-        if (!rateLimiter.tryAcquire("login:user:" + usernameKey, 5, 60)) {
+        String identifier = req.getUsername() == null ? "?" : req.getUsername().trim();
+        if (!rateLimiter.tryAcquire("login:user:" + identifier.toLowerCase(Locale.ROOT), 5, 60)) {
             throw new BusinessException(429, "该账号尝试过于频繁，请稍后再试");
         }
         String ip = com.yumu.community.utils.RequestUtils.clientIp();
         if (!rateLimiter.tryAcquire("login:ip:" + ip, 20, 60)) {
             throw new BusinessException(429, "当前 IP 尝试过于频繁，请稍后再试");
         }
-        CustomUserDetails details = (CustomUserDetails) userDetailsService.loadUserByUsername(req.getUsername());
+        // 9-15：登录标识兼容「账号id」与「邮箱」——先按账号id精确查，查不到再按邮箱查。
+        //   用 loadByLoginIdentifier 而不是 loadUserByUsername：后者还被 refresh 路径使用，
+        //   语义保持「就是账号id」更清晰。
+        CustomUserDetails details;
+        try {
+            details = (CustomUserDetails) userDetailsService.loadByLoginIdentifier(identifier);
+        } catch (UsernameNotFoundException e) {
+            // 提示与「密码错误」完全一致，不暴露该账号/邮箱是否已注册
+            throw new BusinessException(401, "账号或密码错误");
+        }
         if (!passwordEncoder.matches(req.getPassword(), details.getPassword())) {
-            throw new BusinessException(401, "用户名或密码错误");
+            throw new BusinessException(401, "账号或密码错误");
         }
         // 被封禁（status=1）账号禁止登录
         if (!details.isEnabled()) {
@@ -115,7 +160,74 @@ public class AuthServiceImpl implements AuthService {
         }
         // 每日首次登录 +3 活跃度（内部自动按 lastLoginAt 判断）
         activityScoreService.onDailyLogin(details.getUserId());
-        return buildTokenResult(req.getUsername());
+        // ⚠️ 必须用库里的真实 username，不能用用户输入值 —— 输入的可能是邮箱
+        return buildTokenResult(details.getUser().getUsername());
+    }
+
+    /**
+     * 9-15：请求邮箱验证码（免登录场景：注册 / 忘记密码）。
+     *
+     * <p><b>防枚举差异</b>：</p>
+     * <ul>
+     *   <li>{@code register} —— 邮箱已被占用时<b>必须</b>明确告知，否则用户不知道为何收不到码；</li>
+     *   <li>{@code reset} —— 邮箱没注册过时<b>静默返回成功</b>（但一封邮件都不发），
+     *       否则这个免登录接口会变成「批量探测全站邮箱是否注册过」的工具。</li>
+     * </ul>
+     */
+    @Override
+    public void sendEmailCode(EmailCodeRequest req) {
+        EmailScene scene;
+        try {
+            scene = EmailScene.of(req.getScene());
+        } catch (IllegalArgumentException e) {
+            throw new BusinessException(400, "不支持的场景");
+        }
+        // 免登录入口只允许这两个场景；bind / unbind 必须登录后走 /user/email/code
+        if (scene != EmailScene.REGISTER && scene != EmailScene.RESET) {
+            throw new BusinessException(400, "不支持的场景");
+        }
+        String email = emailCodeService.normalize(req.getEmail());
+
+        if (scene == EmailScene.REGISTER) {
+            if (userMapper.selectCount(Wrappers.<User>lambdaQuery().eq(User::getEmail, email)) > 0) {
+                throw new BusinessException(409, "该邮箱已被注册");
+            }
+        } else {
+            User exists = userMapper.selectOne(Wrappers.<User>lambdaQuery().eq(User::getEmail, email));
+            if (exists == null) {
+                log.info("[auth] reset 发码命中未注册邮箱，按防枚举策略静默返回（不发送）: {}", MailService.mask(email));
+                return;
+            }
+        }
+        emailCodeService.send(email, scene);
+    }
+
+    /**
+     * 9-15：忘记密码 —— 邮箱验证码重置密码。
+     *
+     * <p>只改密码：不返回账号信息、不自动登录、不影响账号禁用状态。
+     * 邮箱不存在时与「验证码错误」返回同一句提示，避免被用来枚举邮箱。</p>
+     */
+    @Override
+    @Transactional
+    public void resetPassword(PasswordResetRequest req) {
+        String ip = com.yumu.community.utils.RequestUtils.clientIp();
+        if (!rateLimiter.tryAcquire("reset:ip:" + ip, 10, 3600)) {
+            throw new BusinessException(429, "操作过于频繁，请稍后再试");
+        }
+        String email = emailCodeService.normalize(req.getEmail());
+        User user = userMapper.selectOne(Wrappers.<User>lambdaQuery().eq(User::getEmail, email));
+        if (user == null) {
+            // 与下面「验证码不对」保持同一提示
+            throw new BusinessException(400, "验证码不正确或已过期");
+        }
+        emailCodeService.verifyAndConsume(email, EmailScene.RESET, req.getEmailCode());
+
+        User upd = new User();
+        upd.setId(user.getId());
+        upd.setPassword(passwordEncoder.encode(req.getNewPassword()));
+        userMapper.updateById(upd);
+        log.info("[auth] 密码已通过邮箱验证码重置: uid={}, email={}", user.getId(), MailService.mask(email));
     }
 
     @Override

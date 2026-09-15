@@ -503,12 +503,58 @@ export async function login({ username, password }) {
   const res = await request.post('/auth/login', { username, password })
   return res.data // { user, token }
 }
-export async function register({ username, password, nickname }) {
-  const res = await request.post('/auth/register', { username, password, nickname })
+/**
+ * 注册（9-15 起为「邮箱注册」）。
+ * ⚠️ email 与 emailCode 现在都是**后端必填** —— 先调 sendEmailCode(email,'register') 拿码再提交。
+ * @param {{username:string, password:string, nickname?:string, email:string, emailCode:string}} p
+ */
+export async function register({ username, password, nickname, email, emailCode }) {
+  const res = await request.post('/auth/register', { username, password, nickname, email, emailCode })
   return res.data // { user, token }
 }
 export async function getMe() {
   const res = await request.get('/auth/me')
+  return res.data
+}
+
+/**
+ * 请求邮箱验证码（9-15，免登录）。
+ *
+ * 防枚举：scene='reset' 时即便邮箱没注册过也返回成功（但不会真发信），
+ * 所以前端**不要**根据这个接口判断「邮箱是否注册过」。
+ *
+ * @param {string} email
+ * @param {'register'|'reset'} scene
+ */
+export async function sendEmailCode(email, scene) {
+  await request.post('/auth/email-code', { email, scene })
+}
+
+/**
+ * 忘记密码：用邮箱验证码重置（9-15）。
+ * 成功后后端**不会**自动登录，需用新密码重新登一次。
+ */
+export async function resetPassword({ email, emailCode, newPassword }) {
+  await request.post('/auth/reset-password', { email, emailCode, newPassword })
+}
+
+/**
+ * 账号设置：给「新邮箱」或「当前绑定邮箱」发验证码（9-15，需登录）。
+ * @param {'new'|'old'} scene  new = 给新邮箱发（会查重）；old = 给当前绑定邮箱发
+ * @param {string} [email]     scene='new' 时必填
+ */
+export async function sendBindEmailCode({ scene, email }) {
+  await request.post('/user/email/code', { scene, email })
+}
+
+/**
+ * 账号设置：绑定 / 更换邮箱（9-15，需登录）。
+ * 已绑定过邮箱的账号必须同时给 oldEmailCode（发往原邮箱）与 emailCode（发往新邮箱）；
+ * 从未绑定邮箱的老账号只需 emailCode。后端只做更换、不提供解绑。
+ * @returns 最新用户信息（含 email）
+ */
+export async function bindEmail({ email, emailCode, oldEmailCode }) {
+  const res = await request.post('/user/email/bind', { email, emailCode, oldEmailCode })
   return res.data
 }
 

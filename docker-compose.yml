@@ -90,6 +90,17 @@ services:
       LLM_MODEL: ${LLM_MODEL:-deepseek-flash}
       LLM_THINKING: ${LLM_THINKING:-false}
       LLM_MOCK: ${LLM_MOCK:-true}
+      # 9-15 邮箱验证码（注册 / 找回密码 / 换绑邮箱）。MAIL_PASSWORD 填 QQ 邮箱 SMTP **授权码**。
+      # ⚠️ 生产必须 MAIL_ENABLED=true 并填好下面两项，否则发码接口直接报错（prod 拒绝把验证码写进日志）。
+      MAIL_ENABLED: ${MAIL_ENABLED:-false}
+      MAIL_HOST: ${MAIL_HOST:-smtp.qq.com}
+      MAIL_PORT: ${MAIL_PORT:-465}
+      MAIL_USERNAME: ${MAIL_USERNAME:-}
+      MAIL_PASSWORD: ${MAIL_PASSWORD:-}
+      MAIL_FROM: ${MAIL_FROM:-}
+      MAIL_FROM_NAME: ${MAIL_FROM_NAME:-YUMU 游戏社区}
+      # ⚠️ 自动化测试万能码：**prod profile 下被完全忽略**（代码里一票否决），生产留空即可。
+      MAIL_TEST_CODE: ${MAIL_TEST_CODE:-}
       TZ: Asia/Shanghai
     volumes:
       # A4/B2：上传文件持久化到命名卷，重启/换机不丢（换机迁移时同步该卷）

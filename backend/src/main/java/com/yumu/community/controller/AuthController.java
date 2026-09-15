@@ -2,7 +2,9 @@ package com.yumu.community.controller;
 
 import com.yumu.community.common.Result;
 import com.yumu.community.config.JwtUtil;
+import com.yumu.community.dto.EmailCodeRequest;
 import com.yumu.community.dto.LoginRequest;
+import com.yumu.community.dto.PasswordResetRequest;
 import com.yumu.community.dto.RegisterRequest;
 import com.yumu.community.security.CustomUserDetails;
 import com.yumu.community.service.AuthService;
@@ -24,14 +26,52 @@ public class AuthController {
     private final AuthService authService;
     private final JwtUtil jwtUtil;
 
+    /**
+     * 注册（9-15 起为「邮箱注册」）。
+     *
+     * <p>请求体必须带 {@code email} + {@code emailCode}（6 位验证码，先调
+     * {@code POST /auth/email-code} 拿）。服务端校验通过才落库，验证码一次性消费。</p>
+     */
     @PostMapping("/register")
     public Result<Map<String, Object>> register(@Valid @RequestBody RegisterRequest req) {
         return Result.success(authService.register(req));
     }
 
+    /**
+     * 登录。
+     *
+     * <p>9-15 起 {@code username} 字段同时接受<b>账号id</b>与<b>邮箱</b>：
+     * 先按账号id查，查不到再按邮箱查。</p>
+     */
     @PostMapping("/login")
     public Result<Map<String, Object>> login(@Valid @RequestBody LoginRequest req) {
         return Result.success(authService.login(req));
+    }
+
+    /**
+     * 9-15：请求邮箱验证码（免登录）。
+     *
+     * <p>scene 只允许 {@code register}（注册）与 {@code reset}（忘记密码）——
+     * 换绑邮箱用的 bind / unbind 走需登录的 {@code POST /user/email/code}，
+     * 否则任何人都能给任意邮箱发「绑定」验证码。</p>
+     *
+     * <p>防枚举：reset 场景若邮箱未注册，同样返回成功但不会真的发信。</p>
+     */
+    @PostMapping("/email-code")
+    public Result<Void> emailCode(@Valid @RequestBody EmailCodeRequest req) {
+        authService.sendEmailCode(req);
+        return Result.success(null);
+    }
+
+    /**
+     * 9-15：忘记密码 —— 邮箱验证码重置。
+     *
+     * <p>成功后<b>不自动登录</b>，用户需用新密码登一次。</p>
+     */
+    @PostMapping("/reset-password")
+    public Result<Void> resetPassword(@Valid @RequestBody PasswordResetRequest req) {
+        authService.resetPassword(req);
+        return Result.success(null);
     }
 
     @GetMapping("/me")

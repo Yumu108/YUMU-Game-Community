@@ -325,6 +325,48 @@
             />
           </el-form>
 
+          <!-- 9-15 邮箱：绑定 / 更换。
+               只做「更换」不提供「解绑」—— 让账号永远有个可找回密码的通道。 -->
+          <el-form :model="emailForm" label-width="84px" class="set-form">
+            <h3 class="pc-title">📧 绑定邮箱</h3>
+            <el-form-item label="当前邮箱">
+              <span v-if="hasEmail" class="acc-now">{{ maskedEmail }}</span>
+              <span v-else class="acc-tip">尚未绑定。绑定后即可用邮箱登录，也能自助找回密码。</span>
+            </el-form-item>
+
+            <!-- 已绑定过的账号必须先验证原邮箱（证明是号主本人），否则只能验新邮箱 -->
+            <el-form-item v-if="hasEmail" label="原邮箱验证码">
+              <div class="acc-change">
+                <el-input v-model="emailForm.oldCode" maxlength="6" placeholder="6 位数字" />
+                <el-button :disabled="oldCooling > 0" :loading="oldSending" @click="sendOldCode">
+                  {{ oldCooling > 0 ? `${oldCooling}s` : '发送验证码' }}
+                </el-button>
+              </div>
+            </el-form-item>
+
+            <el-form-item label="新邮箱">
+              <div class="acc-change">
+                <el-input v-model="emailForm.newEmail" placeholder="要绑定 / 更换到的邮箱" />
+                <el-button :disabled="newCooling > 0" :loading="newSending" @click="sendNewCode">
+                  {{ newCooling > 0 ? `${newCooling}s` : '发送验证码' }}
+                </el-button>
+              </div>
+            </el-form-item>
+            <el-form-item label="新邮箱验证码">
+              <el-input v-model="emailForm.newCode" maxlength="6" placeholder="6 位数字" />
+            </el-form-item>
+            <el-form-item label="">
+              <span class="acc-tip">
+                {{ hasEmail
+                  ? '更换需同时验证原邮箱与新邮箱，两个验证码都通过才生效；原邮箱已失效请联系管理员。'
+                  : '绑定后可用邮箱登录与找回密码。邮箱只支持更换，不支持解绑。' }}
+              </span>
+            </el-form-item>
+            <el-button type="primary" :loading="savingEmail" @click="saveEmail">
+              {{ hasEmail ? '确认更换' : '绑定邮箱' }}
+            </el-button>
+          </el-form>
+
           <el-form :model="pwdForm" label-width="84px" class="set-form">
             <h3 class="pc-title">🔒 修改密码</h3>
             <el-form-item label="原密码">
@@ -360,6 +402,8 @@ import {
   updateProfile,
   updatePassword,
   updateUsername,
+  sendBindEmailCode,
+  bindEmail,
   uploadImage,
   getPointsStatus,
   signIn,
@@ -466,6 +510,28 @@ const savingPwd = ref(false)
 // 修改登录账号
 const accountForm = ref({ newUsername: '' })
 const savingUser = ref(false)
+
+// ---- 9-15 绑定 / 更换邮箱 ----
+const emailForm = ref({ oldCode: '', newEmail: '', newCode: '' })
+const savingEmail = ref(false)
+const oldSending = ref(false)
+const newSending = ref(false)
+/** 发送验证码按钮的 60s 冷却，与后端 code-cooldown-seconds 对齐 */
+const oldCooling = ref(0)
+const newCooling = ref(0)
+
+/** 是否已绑定邮箱（决定要不要走「验证原邮箱」那一步）。 */
+const hasEmail = computed(() => !!(userStore.userInfo?.email || '').trim())
+/** 邮箱脱敏展示：yumu@qq.com → yu***@qq.com（与后端日志用的是同一套规则，避免页面泄露完整邮箱）。 */
+const maskedEmail = computed(() => {
+  const mail = (userStore.userInfo?.email || '').trim()
+  if (!mail) return ''
+  const at = mail.indexOf('@')
+  if (at <= 0) return mail
+  const local = mail.slice(0, at)
+  const head = local.length <= 2 ? local.slice(0, 1) : local.slice(0, 2)
+  return `${head}***${mail.slice(at)}`
+})
 
 function syncProfileForm() {
   const u = userStore.userInfo || {}
@@ -752,6 +818,92 @@ async function saveUsername() {
     // 拦截器已提示（含「每年一次」限制、账号被占用等）
   } finally {
     savingUser.value = false
+  }
+}
+
+/**
+ * 9-15：给邮箱发验证码（换绑用）。
+ * @param {'old'|'new'} scene  old = 发到当前绑定邮箱（证明是号主）；new = 发到新邮箱
+ */
+async function sendBindCode(scene) {
+  const isOld = scene === 'old'
+  const sending = isOld ? oldSending : newSending
+  const cooling = isOld ? oldCooling : newCooling
+  if (cooling.value > 0 || sending.value) return
+
+  let mail
+  if (isOld) {
+    mail = (userStore.userInfo?.email || '').trim()
+    if (!mail) return ElMessage.warning('当前账号还没有绑定邮箱')
+  } else {
+    mail = (emailForm.value.newEmail || '').trim()
+    if (!mail) return ElMessage.warning('请先填写新邮箱')
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(mail)) return ElMessage.warning('邮箱格式不正确')
+  }
+
+  sending.value = true
+  try {
+    await sendBindEmailCode({ scene, email: isOld ? undefined : mail })
+    ElMessage.success(isOld ? '验证码已发送到当前绑定邮箱' : '验证码已发送到新邮箱（5 分钟内有效）')
+    startCooling(cooling)
+  } catch (e) {
+    // 拦截器已提示（如「该邮箱已被其他账号绑定」）
+  } finally {
+    sending.value = false
+  }
+}
+
+function sendOldCode() {
+  return sendBindCode('old')
+}
+
+function sendNewCode() {
+  return sendBindCode('new')
+}
+
+/** 发送验证码按钮的 60 秒冷却倒计时。 */
+function startCooling(coolingRef) {
+  coolingRef.value = 60
+  const timer = setInterval(() => {
+    coolingRef.value -= 1
+    if (coolingRef.value <= 0) clearInterval(timer)
+  }, 1000)
+}
+
+/**
+ * 9-15：绑定 / 更换邮箱。
+ *
+ * <p>已绑定过的账号：原邮箱码 + 新邮箱码<b>都要对</b>（后端两个都校验通过才一次性替换）；
+ * 从没绑过的老账号：只需新邮箱码。</p>
+ */
+async function saveEmail() {
+  const newEmail = (emailForm.value.newEmail || '').trim()
+  const newCode = (emailForm.value.newCode || '').trim()
+  const oldCode = (emailForm.value.oldCode || '').trim()
+
+  if (!newEmail) return ElMessage.warning('请填写新邮箱')
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(newEmail)) return ElMessage.warning('邮箱格式不正确')
+  if (!/^\d{6}$/.test(newCode)) return ElMessage.warning('请填写 6 位新邮箱验证码')
+  if (hasEmail.value && !/^\d{6}$/.test(oldCode)) {
+    return ElMessage.warning('请先完成原邮箱验证（发送验证码并填写 6 位数字）')
+  }
+
+  savingEmail.value = true
+  try {
+    const info = await bindEmail({
+      email: newEmail,
+      emailCode: newCode,
+      oldEmailCode: hasEmail.value ? oldCode : ''
+    })
+    // 只合并 email 字段：不整体覆盖 store（store 用 name 而不是后端的 nickname，整体覆盖会把显示名冲掉）
+    const base = userStore.userInfo || {}
+    userStore.setUserInfo({ ...base, email: info.email })
+    emailForm.value = { oldCode: '', newEmail: '', newCode: '' }
+    ElMessage.success(hasEmail.value ? '邮箱更换成功' : '邮箱绑定成功，之后可用它登录')
+  } catch (e) {
+    // 拦截器已提示
+  } finally {
+    savingEmail.value = false
   }
 }
 

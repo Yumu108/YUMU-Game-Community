@@ -1,6 +1,8 @@
 package com.yumu.community.service;
 
+import com.yumu.community.dto.EmailCodeRequest;
 import com.yumu.community.dto.LoginRequest;
+import com.yumu.community.dto.PasswordResetRequest;
 import com.yumu.community.dto.RegisterRequest;
 import com.yumu.community.vo.UserInfoVO;
 
@@ -14,13 +16,31 @@ public interface AuthService {
 
     /**
      * 注册新用户，自动分配 USER 角色，返回 token 与用户信息。
+     *
+     * <p>9-15 起：必须提供「邮箱 + 邮箱验证码」，校验通过才落库（邮箱注册）。</p>
      */
     Map<String, Object> register(RegisterRequest req);
 
     /**
      * 登录校验，返回 token 与用户信息。
+     *
+     * <p>9-15 起：登录标识（{@code username} 字段）同时接受<b>账号id</b>与<b>邮箱</b>。</p>
      */
     Map<String, Object> login(LoginRequest req);
+
+    /**
+     * 9-15：请求邮箱验证码（免登录场景 —— 注册 / 忘记密码）。
+     *
+     * <p>内含邮箱级冷却与 IP 级小时上限；reset 场景对未注册邮箱静默返回成功以防枚举。</p>
+     */
+    void sendEmailCode(EmailCodeRequest req);
+
+    /**
+     * 9-15：忘记密码 —— 用邮箱验证码重置密码。
+     *
+     * <p>只改密码：不返回账号信息、不自动登录、不影响账号禁用状态。</p>
+     */
+    void resetPassword(PasswordResetRequest req);
 
     /**
      * 当前登录用户信息。
