@@ -14,6 +14,9 @@
 #   ⑦ 只看 Started 就以为成功   → 强制验 health / 80 端口 / HTTP 200 / API UP
 #   ⑧ 「看着发了、其实没发」    → 以「上次发版成功的 sha」为基线判断有无新代码，
 #                               空跑时明确告知「本次没构建、网站不会有变化」
+#   ⑨ 宿主 80 被别人占着        → 构建全做完才在最后一步 up -d 栽跟头（宝塔自带
+#                               的 nginx 抢 80）。现在改成**构建前**预检，几分钟
+#                               的编译不会再白跑
 #
 # 用法（在服务器上，仓库根目录 /opt/yumu）：
 #   bash deploy/tools/release.sh                 # 自动探测改动范围（推荐）
@@ -67,7 +70,11 @@ warn() { printf '  %s⚠️  %s%s\n' "$C_Y" "$1" "$C_0"; }
 err()  { printf '  %s❌ %s%s\n' "$C_R" "$1" "$C_0"; }
 note() { printf '  %s·  %s%s\n' "$C_D" "$1" "$C_0"; }
 step() { printf '\n%s▶ %s%s\n' "$C_B" "$1" "$C_0"; }
-die()  { err "$1"; printf '\n%s发版中止（未做任何破坏性操作）。%s\n' "$C_R" "$C_0"; exit 1; }
+die()  {
+  err "$1"
+  printf '\n%s✋ 发版中止。命名卷（数据库 / 上传文件）不会因此丢失，但已经重建过的服务可能停在未就绪状态（如 nginx 建好却起不来），按上面的提示处理后再重跑本脚本。%s\n' "$C_R" "$C_0"
+  exit 1
+}
 
 # 每一步都记录到日志（也能事后回看）
 exec > >(tee -a "$LOG") 2>&1
@@ -282,6 +289,50 @@ fi
 ok "计划重建：$PLAN"
 
 # ---------------------------------------------------------------------------
+# 3.5 宿主 80 端口占用预检（只在本机确实要重建 nginx 时才做）
+# ---------------------------------------------------------------------------
+# 🚨 实测事故（2026-09-15）：宝塔面板自带的 nginx 占着宿主 80，构建（后端 + 前端，
+#    几分钟）全部顺利完成后，最后一步 `up -d` 才报：
+#      failed to set up container networking: ... failed to bind host port
+#      0.0.0.0:80/tcp: address already in use
+#    → yumu-nginx 建出来却起不来（容器停在 Created），网站直接打不开，
+#      而前面几分钟的编译全白跑。同一台机器上「宝塔 nginx」与「项目 nginx」
+#      只能有一个占用 80，所以在**花时间之前**就把它检出来。
+if [ "$WANT_NGINX" -eq 1 ] && [ "$DRY_RUN" -eq 0 ]; then
+  if ! command -v ss >/dev/null 2>&1; then
+    warn "没有 ss 命令，跳过 80 端口占用预检（可 yum install -y iproute 补上）"
+  else
+    P80="$(ss -lntp 2>/dev/null | grep ':80 ' || true)"
+    if [ -z "$P80" ]; then
+      ok "80 端口空闲（可自由绑定）"
+    else
+      # 区分「我们自己的 yumu-nginx」与「外来的占用者」
+      P80_DOCKER="$(docker ps --format '{{.Names}}	{{.Ports}}' 2>/dev/null | grep -E ':80->' || true)"
+      if printf '%s\n' "$P80_DOCKER" | grep -qE '^yumu-nginx	'; then
+        ok "80 被 yumu-nginx 自己占着（recreate 会先替换它，正常）"
+      else
+        err "80 端口已被【本项目之外】的进程占用 —— 现在继续 build，最后一定栽在 up -d"
+        printf '%s\n' "$P80" | sed 's/^/     /'
+        if [ -n "$P80_DOCKER" ]; then
+          note "占用 80 的容器："
+          printf '%s\n' "$P80_DOCKER" | sed 's/^/     /'
+        fi
+        echo
+        note "最常见：这台机器上还跑着宝塔自带的 nginx（宿主进程，不是容器）。"
+        note "  ① 停掉并禁止自启（宝塔 nginx）："
+        note "       /etc/init.d/nginx stop    ||    systemctl stop nginx"
+        note "       systemctl disable nginx   # 防止重启服务器后又抢回去"
+        note "     也可以走面板：软件商店 → 已安装 → Nginx → 设置 → 停止服务"
+        note "  ② 若上面列出的占用者是别的容器：docker stop <容器名>"
+        note "  ③ 确认已释放：ss -lntp | grep ':80 '     （无输出 = 已释放）"
+        note "  然后重跑：bash deploy/tools/release.sh"
+        die "80 端口被占用，拒绝继续（不用等编译白跑）"
+      fi
+    fi
+  fi
+fi
+
+# ---------------------------------------------------------------------------
 # 4. 构建
 # ---------------------------------------------------------------------------
 if [ "$WANT_NGINX" -eq 1 ] || [ "$WANT_BACKEND" -eq 1 ]; then
@@ -333,13 +384,40 @@ UP_TARGETS="${UP_TARGETS# }"
 if [ "$DRY_RUN" -eq 1 ]; then
   note "[dry-run] docker compose up -d $UP_TARGETS"
 else
-  if [ "$RECREATE_BACKEND" -eq 1 ]; then
-    note "--env 模式：只重建容器读取新变量，不重新编译"
-    $DC up -d --force-recreate $UP_TARGETS || die "重建容器失败（$LOG）"
-  else
-    $DC up -d $UP_TARGETS || die "启动容器失败（$LOG）"
+  FORCE_RECREATE=""
+  [ "$RECREATE_BACKEND" -eq 1 ] && FORCE_RECREATE="--force-recreate"
+  [ "$RECREATE_BACKEND" -eq 1 ] && note "--env 模式：只重建容器读取新变量，不重新编译"
+
+  # 捕获输出：失败时要能从原文里认出具体原因（如 80 端口被占），
+  # 而不是只丢一句「启动容器失败」让人自己翻日志。
+  UP_OUT="$($DC up -d $FORCE_RECREATE $UP_TARGETS 2>&1)"
+  UP_RC=$?
+  printf '%s\n' "$UP_OUT" | sed 's/^/     /'
+
+  if [ "$UP_RC" -ne 0 ]; then
+    echo
+    if printf '%s' "$UP_OUT" | grep -qi 'address already in use'; then
+      err "端口冲突：宿主 80 被别的进程占着 —— nginx 容器建好了但起不来（网站当前打不开）"
+      note "定位占用者："
+      note "    ss -lntp | grep ':80 '"
+      note "    docker ps --format '{{.Names}} -> {{.Ports}}' | grep ':80->'"
+      note "宝塔自带 nginx 抢 80 时（宿主进程）：/etc/init.d/nginx stop || systemctl stop nginx"
+      note "  建议顺手 systemctl disable nginx，免得重启服务器又被抢回去"
+      note "释放 80 后重跑本脚本即可 —— 镜像已构建好，会走缓存，很快"
+    fi
+    note "当前容器状态（看清谁在跑、谁没起来）："
+    $DC ps -a 2>/dev/null | sed 's/^/     /'
+    die "启动容器失败（$LOG）"
   fi
-  ok "up -d 完成：$UP_TARGETS（mysql / redis 未触碰，数据安全）"
+
+  # compose 只会在「容器配置与目标不一致」时顺带重建别的服务 ——
+  # 典型场景：docker-compose.yml 补了 restart 策略，而容器是在那之前创建的。
+  # 这属于一次性对齐，不是脚本乱动，但要如实告知（命名卷不会被删，数据安全）。
+  if printf '%s' "$UP_OUT" | grep -qE 'Container yumu-(mysql|redis) +Recreat'; then
+    warn "本次顺带重建了 mysql / redis —— 说明 compose 配置变过（如补 restart 自愈策略）"
+    note "命名卷未被删除，数据不受影响；这类对齐只发生一次，下次发版不会再重建"
+  fi
+  ok "up -d 完成，目标服务：$UP_TARGETS"
 fi
 
 # ---------------------------------------------------------------------------
