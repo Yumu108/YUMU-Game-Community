@@ -20,6 +20,8 @@ backend/uploads/
 *.log
 logs/
 .monitor-state/
+# release.sh 的发版基线（记录上次发版成功的 sha）—— 机器本地状态，不入库
+.deploy-state/
 deploy/backup/backups/
 # 数据库导出（含 user 表 email / 密码哈希）——绝不入库
 db-backup/

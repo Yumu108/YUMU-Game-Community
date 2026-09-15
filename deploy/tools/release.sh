@@ -12,6 +12,8 @@
 #   ⑤ 网页终端断连杀掉构建      → 日志落盘 + 打印「如何防 SIGHUP」提示
 #   ⑥ nginx 抢跑 Exited(1)      → up 后自检，秒退则自动 --force-recreate 补救
 #   ⑦ 只看 Started 就以为成功   → 强制验 health / 80 端口 / HTTP 200 / API UP
+#   ⑧ 「看着发了、其实没发」    → 以「上次发版成功的 sha」为基线判断有无新代码，
+#                               空跑时明确告知「本次没构建、网站不会有变化」
 #
 # 用法（在服务器上，仓库根目录 /opt/yumu）：
 #   bash deploy/tools/release.sh                 # 自动探测改动范围（推荐）
@@ -25,7 +27,12 @@
 #   --no-pull       已经手动 pull 过，跳过拉取
 #   --force         跳过「本地有未提交改动」的拦截（⚠️ 确认你知道后果再用）
 #
-# 退出码：0 = 发版成功且验收全过；1 = 中途失败 / 验收不过。
+# 退出码：0 = 发版成功且验收全过（也可能是「确实没新代码」的空跑，屏幕会明说）；
+#         1 = 中途失败 / 验收不过。
+#
+# 📌 发版基线：本脚本把「验收全过的那个 commit」记在 .deploy-state/last-deployed，
+#    下次据它算出「该重建哪一端」。所以**你先手动 git pull 再跑脚本也没关系**；
+#    基线不存在（首次使用）时会保守地前后端全发一次。
 #
 # ⚠️ 防 SIGHUP：阿里云 Workbench、宝塔网页终端在断连时会给前台进程发 SIGHUP，
 #    构建会被中途杀掉。发版建议这样跑（日志落地，断连也不影响）：
@@ -38,6 +45,10 @@ BASE_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT_DIR="$(cd "$BASE_DIR/../.." && pwd)"
 ENV_FILE="${ENV_FILE:-$ROOT_DIR/.env}"
 LOG="/tmp/yumu-release-$(date +%Y%m%d-%H%M%S).log"
+# 发版基线：记录「上一次验收全过的 commit」。判断有无新代码、该重建哪一端都以它为准，
+# 而不是「本次 pull 前后 HEAD 变没变」（见步骤 2 的长注释）。
+STATE_DIR="$ROOT_DIR/.deploy-state"
+STATE_FILE="$STATE_DIR/last-deployed"
 BASE_URL="${BASE_URL:-http://127.0.0.1}"
 
 MODE="auto"; NO_PULL=0; DRY_RUN=0; FORCE=0
@@ -149,17 +160,23 @@ if [ -n "$UNTRACKED" ]; then
 fi
 
 # ---------------------------------------------------------------------------
-# 2. 拉取最新代码
+# 2. 拉取最新代码 + 判断「到底有没有新代码要发」
 # ---------------------------------------------------------------------------
-BEFORE_SHA=""
+# 🚨 基线**不能**用「本次 pull 前后 HEAD 变没变」—— 它回答的是「我的 pull 拉到东西了吗」，
+#    而不是「线上容器是不是用当前代码构建的」。这两件事在下面场景会分道扬镳：
+#      · 先手动 `git pull` 再跑本脚本（手册里就是这么教的）→ 脚本自己的 pull 无事可做
+#      · 上一次发版拉到了代码，但构建/验收中途失败 → 代码在本地，镜像还是旧的
+#    实测后果（2026-09-15）：脚本在第 2 步就 exit 0，**一次构建都没发生**，
+#    而退出码是 0、屏幕上也没有任何「失败」字样 —— 表现就是「发了版，网站一点没变」。
+#    正确基线：本机记录的「上次发版成功的 sha」（验收全过才写）vs 当前 HEAD。
 step "2/7 拉取最新代码"
+
 if [ "$NO_PULL" -eq 1 ]; then
   warn "--no-pull：跳过 git pull（用当前本地代码构建）"
 elif [ "$DRY_RUN" -eq 1 ]; then
   note "[dry-run] git fetch + git pull --ff-only origin master"
 else
-  BEFORE_SHA="$(git rev-parse HEAD)"
-  note "当前 HEAD：${BEFORE_SHA:0:8}"
+  note "当前 HEAD：$(git rev-parse --short=8 HEAD)"
 
   if ! git fetch origin master 2>&1 | tail -3; then
     die "git fetch 失败 —— 检查网络（服务器访问 GitHub 不通时重试或走镜像）"
@@ -170,20 +187,41 @@ else
   if ! git pull --ff-only origin master 2>&1 | tail -5; then
     die "git pull 失败 —— 若提示 local changes would be overwritten，说明服务器上有手改文件（见上一步提示）"
   fi
-  AFTER_SHA="$(git rev-parse HEAD)"
-  if [ "$BEFORE_SHA" = "$AFTER_SHA" ]; then
-    ok "已是最新（${AFTER_SHA:0:8}）—— 代码没有新提交"
-    if [ "$MODE" = "auto" ]; then
-      echo
-      note "没有新代码可发。若你改的是 .env，请用：bash deploy/tools/release.sh --env"
-      note "若只是想强制重建某个服务：bash deploy/tools/release.sh all"
-      exit 0
-    fi
-    warn "但你显式指定了 $MODE，仍然继续（等价于强制重建）"
-  else
-    ok "更新到 ${AFTER_SHA:0:8}"
-    git log --oneline "$BEFORE_SHA..$AFTER_SHA" | sed 's/^/     /'
+  ok "代码同步完成"
+fi
+
+AFTER_SHA="$(git rev-parse HEAD)"
+LAST_DEPLOYED="$(cat "$STATE_FILE" 2>/dev/null | tr -d '[:space:]')"
+
+# 基线是否可信：对象还在仓库里，且是当前 HEAD 的祖先（历史被重写/force push 时都不是）
+DEPLOY_FROM=""
+if [ -z "$LAST_DEPLOYED" ]; then
+  warn "本机没有发版基线（$STATE_FILE 不存在）"
+  note "首次用本脚本、或从旧流程切换过来时会这样 —— 本次按「前后端全发」保守处理；"
+  note "验收通过后会记下基线，之后每次都能精确算出只该重建哪一端。"
+elif ! git cat-file -e "${LAST_DEPLOYED}^{commit}" 2>/dev/null; then
+  warn "基线提交 ${LAST_DEPLOYED} 已不在仓库中（历史被重写过？）—— 按全发处理"
+elif ! git merge-base --is-ancestor "$LAST_DEPLOYED" "$AFTER_SHA" 2>/dev/null; then
+  warn "基线 ${LAST_DEPLOYED} 不是当前 HEAD 的祖先（可能 force push 过）—— 按全发处理"
+else
+  DEPLOY_FROM="$LAST_DEPLOYED"
+fi
+
+if [ "$DEPLOY_FROM" = "$AFTER_SHA" ]; then
+  ok "线上跑的就是当前代码（${AFTER_SHA:0:8}）—— 没有新代码可发"
+  if [ "$MODE" = "auto" ]; then
+    echo
+    warn "本次没有构建任何镜像、没有替换任何容器 —— 网站不会有任何变化（正常的空跑）"
+    note "想用当前代码强制重建一次：bash deploy/tools/release.sh all"
+    note "只改过 .env（没改代码）：bash deploy/tools/release.sh --env"
+    exit 0
   fi
+  warn "但你显式指定了 $MODE，仍然继续（等价于强制重建）"
+elif [ -n "$DEPLOY_FROM" ]; then
+  ok "基线 ${DEPLOY_FROM:0:8} → 当前 ${AFTER_SHA:0:8}，期间新提交："
+  git log --oneline "$DEPLOY_FROM..$AFTER_SHA" | sed 's/^/     /'
+else
+  ok "当前 ${AFTER_SHA:0:8}（无基线可比对，按全发处理）"
 fi
 
 # ---------------------------------------------------------------------------
@@ -191,12 +229,11 @@ fi
 # ---------------------------------------------------------------------------
 step "3/7 判断改动范围"
 
+# 改动面 = 上次发版成功的 sha .. 当前 HEAD。基线缺失时故意留空，
+# 下面的 auto 分支会走「保守全发」——宁可贵一次，不能漏发。
 CHANGED=""
-if [ -n "$BEFORE_SHA" ] && [ "$BEFORE_SHA" != "${AFTER_SHA:-}" ]; then
-  CHANGED="$(git diff --name-only "$BEFORE_SHA" "${AFTER_SHA:-HEAD}")"
-else
-  # 无法比对时（--no-pull / dry-run）保守取「最近一次提交」的改动面
-  CHANGED="$(git diff --name-only HEAD~1 HEAD 2>/dev/null || echo '')"
+if [ -n "$DEPLOY_FROM" ]; then
+  CHANGED="$(git diff --name-only "$DEPLOY_FROM" "$AFTER_SHA")"
 fi
 
 WANT_NGINX=0; WANT_BACKEND=0; RECREATE_BACKEND=0
@@ -209,7 +246,7 @@ case "$MODE" in
   env)      RECREATE_BACKEND=1 ;;
   auto)
     if [ -z "$CHANGED" ]; then
-      warn "无法判断改动面 —— 保守起见按前端 + 后端全发（或用 frontend/backend 显式指定）"
+      warn "无法算出改动面（没有发版基线）—— 保守起见按前端 + 后端全发"
       WANT_NGINX=1; WANT_BACKEND=1
     else
       printf '%s\n' "$CHANGED" | grep -qE '^(frontend/|deploy/nginx/)' && WANT_NGINX=1
@@ -399,6 +436,34 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# 6.7 记录发版基线（只有「验收全过」才写；中途失败不写 → 下次重跑不会漏发）
+# ---------------------------------------------------------------------------
+RECORD=1
+[ "$DRY_RUN" -eq 1 ] && RECORD=0
+# --env 只重建容器、不重新编译，镜像未必等于当前代码 → 不能算「这一版已上线」
+[ "$RECREATE_BACKEND" -eq 1 ] && RECORD=0
+# 手动指定范围时，只有把改动面**完整覆盖**了，才能说「当前代码已上线」
+if [ "$MODE" != "auto" ] && [ -n "$CHANGED" ]; then
+  printf '%s\n' "$CHANGED" | grep -qE '^(frontend/|deploy/nginx/)' && [ "$WANT_NGINX" -ne 1 ]   && RECORD=0
+  printf '%s\n' "$CHANGED" | grep -qE '^backend/'                  && [ "$WANT_BACKEND" -ne 1 ] && RECORD=0
+fi
+
+if [ "$RECORD" -eq 1 ]; then
+  mkdir -p "$STATE_DIR" 2>/dev/null
+  if printf '%s\n' "$AFTER_SHA" > "$STATE_FILE" 2>/dev/null; then
+    printf '%s  %s  %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$AFTER_SHA" "${UP_TARGETS:-none}" \
+      >> "$STATE_DIR/history.log" 2>/dev/null
+    note "已记下发版基线 ${AFTER_SHA:0:8}（下次据此算出改动面）"
+  else
+    warn "写基线失败（$STATE_FILE）—— 不影响本次上线，但下次会按「全发」处理"
+  fi
+elif [ "$DRY_RUN" -eq 1 ]; then
+  note "[dry-run] 不写发版基线"
+else
+  warn "本次**未记**发版基线（--env 或只发了局部）—— 下次仍会按改动面判断，不会漏发"
+fi
+
+# ---------------------------------------------------------------------------
 # 7. 汇总
 # ---------------------------------------------------------------------------
 step "7/7 完成"
@@ -410,5 +475,5 @@ if [ "$DRY_RUN" -eq 1 ]; then
   exit 0
 fi
 printf '%s✅ 发版成功。访问：%s/   （域名未备案期间用 IP）%s\n' "$C_G" "$BASE_URL" "$C_0"
-printf '%s   完整日志：%s%s\n' "$C_D" "$LOG" "$C_0"
+printf '%s   已上线版本：%s   完整日志：%s%s\n' "$C_D" "${AFTER_SHA:0:8}" "$LOG" "$C_0"
 exit 0
