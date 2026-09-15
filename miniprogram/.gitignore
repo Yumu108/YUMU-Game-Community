@@ -1,0 +1,18 @@
+# ============================================================
+# uni-app / 小程序 构建产物与本地环境
+# ============================================================
+node_modules/
+dist/
+unpackage/
+.hbuilderx/
+.hbuilderx_backup/
+
+# 微信开发者工具本地配置（含个人 AppID / 项目私有设置）
+project.private.config.json
+src/project.private.config.json
+
+# 本地环境变量
+.env.local
+
+# 打包产物
+*.zip

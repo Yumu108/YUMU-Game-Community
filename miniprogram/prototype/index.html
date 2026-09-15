@@ -1,0 +1,276 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-page-node-id="y4VZAkRXeSRGNiw57L1vZU">
+<head data-page-node-id="YQkq19LApB8NQom5tHOcll">
+<meta charset="UTF-8" data-page-node-id="BiGQvvN2B9nzfbzjuzaDqV">
+<meta name="viewport" content="width=device-width,initial-scale=1" data-page-node-id="43AcvrUvTRAZW1tk2ukTrR">
+<title>YUMU 游戏助手 · 小程序原型 v1</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;background:#f2f2f5;color:#1c1c1e;padding:30px 24px 56px}
+h1{font-size:20px;font-weight:600;margin-bottom:8px}
+.lead{font-size:13px;color:#5f5f66;line-height:1.75;max-width:820px}
+.legend{font-size:12px;color:#8a8a90;line-height:1.8;max-width:820px;margin-top:10px;padding-left:2px;border-left:2px solid #5a4fd6;padding:4px 0 4px 12px}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,320px);gap:34px 26px;justify-content:start;margin-top:30px}
+figure{display:flex;flex-direction:column;gap:9px}
+figcaption{font-size:13px;font-weight:500;color:#3c3c43;display:flex;align-items:center;gap:7px}
+figcaption i{display:inline-flex;width:18px;height:18px;border-radius:50%;background:#5a4fd6;color:#fff;font-size:11px;font-style:normal;align-items:center;justify-content:center}
+.device{width:320px;height:660px;border-radius:30px;background:#0f0d16;border:1px solid #d5d5dc;overflow:hidden;display:flex;flex-direction:column;color:#e9e7f2;box-shadow:0 2px 8px rgba(20,20,40,.10)}
+.status{height:26px;flex:none;display:flex;align-items:center;justify-content:space-between;padding:0 16px;font-size:10px;color:#8b8599}
+.navbar{flex:none;height:42px;display:flex;align-items:center;justify-content:space-between;padding:0 14px;font-size:15px;font-weight:500}
+.navbar .ic{display:flex;gap:14px;color:#9791ab}
+.body{flex:1;overflow:hidden;padding:2px 14px 0}
+.tabbar{flex:none;height:54px;display:flex;border-top:1px solid #2a2538;background:#16131f}
+.tab{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;font-size:10px;color:#6e6880}
+.tab.on{color:#a892ff}
+.tab svg{width:19px;height:19px;fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
+.search{height:34px;border-radius:17px;background:#231f31;display:flex;align-items:center;gap:7px;padding:0 13px;font-size:12px;color:#6f6a80;margin-top:6px}
+.sec{margin-top:16px}
+.sec-t{font-size:13px;font-weight:500;display:flex;justify-content:space-between;align-items:baseline;margin-bottom:9px}
+.sec-t em{font-size:11px;color:#8b8599;font-style:normal;font-weight:400}
+.chips{display:flex;gap:8px;overflow:hidden}
+.chip{flex:none;padding:6px 13px;border-radius:15px;background:#231f31;font-size:12px;color:#c8c3d6;border:1px solid transparent}
+.chip.on{background:rgba(124,92,255,.20);border-color:#7C5CFF;color:#cbbdff}
+.card{background:#1a1725;border:1px solid #2a2538;border-radius:12px;padding:10px 11px;display:flex;gap:10px;margin-bottom:8px}
+.thumb{width:50px;height:50px;border-radius:9px;flex:none;display:flex;align-items:center;justify-content:center;font-size:16px;font-weight:500;color:#fff;background:#3a3350}
+.thumb.g{background:#2d4a45;color:#7fe3cd}
+.thumb.o{background:#4a3d2d;color:#f0c07a}
+.thumb.b{background:#2d3a4a;color:#8fbdf0}
+.ttl{font-size:12.5px;line-height:1.5;font-weight:500;color:#e6e3f0}
+.meta{font-size:10.5px;color:#8b8599;margin-top:5px;display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+.tag{font-size:10px;padding:1px 6px;border-radius:4px;background:rgba(25,227,194,.14);color:#19E3C2;flex:none}
+.tag.p{background:rgba(124,92,255,.20);color:#b9a9ff}
+.tag.o{background:rgba(240,159,39,.15);color:#f0b45f}
+.banner{margin-top:6px;border-radius:14px;padding:16px 14px;background:#221d33;border:1px solid #332c4a}
+.banner .bn{font-size:19px;font-weight:600}
+.banner .bs{font-size:11px;color:#9791ab;margin-top:5px}
+.banner .btns{display:flex;gap:8px;margin-top:12px}
+.banner .btn{font-size:11px;padding:6px 14px;border-radius:15px;background:#7C5CFF;color:#fff;font-weight:500}
+.banner .btn.ghost{background:transparent;border:1px solid #4a4166;color:#b9b3c9}
+.stats{display:flex;margin:12px 0 4px;border-radius:11px;background:#1a1725;border:1px solid #2a2538;padding:10px 0}
+.stats div{flex:1;text-align:center;font-size:10.5px;color:#8b8599}
+.stats b{display:block;font-size:15px;color:#e9e7f2;font-weight:600;margin-bottom:2px}
+.tabs2{display:flex;gap:20px;font-size:13px;color:#8b8599;margin:14px 0 10px;border-bottom:1px solid #2a2538;padding-bottom:9px}
+.tabs2 span.on{color:#e9e7f2;font-weight:500;position:relative}
+.tabs2 span.on:after{content:'';position:absolute;left:0;right:0;bottom:-10px;height:2px;background:#7C5CFF;border-radius:1px}
+.back{flex:none;height:40px;display:flex;align-items:center;gap:8px;padding:0 14px;font-size:13px;color:#9791ab}
+.art-t{font-size:16px;font-weight:600;line-height:1.45;margin-top:4px}
+.art-m{display:flex;align-items:center;gap:7px;margin:10px 0 12px;font-size:10.5px;color:#8b8599;flex-wrap:wrap}
+.avatar{width:20px;height:20px;border-radius:50%;background:#3a3350;color:#c3bcd6;font-size:10px;display:flex;align-items:center;justify-content:center;flex:none}
+.art-p{font-size:12.5px;line-height:1.75;color:#cfcade}
+.steps{margin:14px 0 4px;border-radius:12px;background:#1a1725;border:1px solid #2a2538;padding:4px 12px}
+.steps .sh{font-size:11px;color:#8b8599;padding:9px 0 7px;border-bottom:1px solid #2a2538}
+.step{display:flex;gap:10px;padding:11px 0;border-bottom:1px solid #242030}
+.step:last-child{border-bottom:none}
+.step .idx{width:21px;height:21px;border-radius:50%;background:rgba(124,92,255,.20);color:#b9a9ff;font-size:11px;display:flex;align-items:center;justify-content:center;flex:none;font-weight:500}
+.step .st-t{font-size:12.5px;font-weight:500;margin-bottom:3px}
+.step .st-d{font-size:11.5px;color:#8b8599;line-height:1.55}
+.video{margin:12px 0;border-radius:12px;background:#1a1725;border:1px solid #2a2538;padding:11px;display:flex;align-items:center;gap:11px}
+.video .play{width:36px;height:36px;border-radius:50%;background:#7C5CFF;flex:none;display:flex;align-items:center;justify-content:center}
+.video .play:after{content:'';width:0;height:0;border-left:11px solid #fff;border-top:7px solid transparent;border-bottom:7px solid transparent;margin-left:3px}
+.actions{flex:none;height:52px;display:flex;align-items:center;justify-content:space-around;border-top:1px solid #2a2538;background:#16131f;font-size:11px;color:#9791ab}
+.actions div{display:flex;align-items:center;gap:5px}
+.actions svg{width:17px;height:17px;fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
+.actions .hl{color:#a892ff}
+.hl-t{color:#f0b45f}
+.login{margin-top:14px;border-radius:14px;background:#1a1725;border:1px solid #2a2538;padding:16px 14px;text-align:center}
+.login .lg-a{width:44px;height:44px;border-radius:50%;background:#2a2538;margin:0 auto 10px;display:flex;align-items:center;justify-content:center;color:#6e6880}
+.login .lg-t{font-size:13px;font-weight:500}
+.login .lg-s{font-size:11px;color:#8b8599;margin-top:5px;line-height:1.6}
+.login .btn{margin-top:12px;height:36px;border-radius:18px;background:#7C5CFF;color:#fff;font-size:13px;font-weight:500;display:flex;align-items:center;justify-content:center}
+.note{font-size:10.5px;color:#6e6880;line-height:1.6;margin-top:12px;padding:9px 11px;border-radius:9px;background:#191527;border:1px dashed #362f4d}
+.empty{font-size:11.5px;color:#8b8599;text-align:center;padding:26px 0}
+</style>
+</head>
+<body data-page-node-id="gARKXqOkwnx2EJHK6eIloC">
+
+<h1 data-page-node-id="VWwIBeVYS2aNROu6W1Macl">YUMU 游戏助手 · 小程序原型 v1</h1>
+<p class="lead" data-page-node-id="Wq21h4hfvEmX7UIhpRcTFg">游戏社区附带小程序，定位「弱社交、重内容」：以<b data-page-node-id="6ZmCh0x0foxsGhxEhfIeEp">攻略</b>与<b data-page-node-id="kiy4EN2lZdeRdpRzMSKUG5">资讯</b>两条主线替代原社区的互动链路。视觉延续 YUMU 深色 + 电竞紫基调，内容全部来自现有社区的真实数据。</p>
+<p class="legend" data-page-node-id="8HplDnFBt9GA720Xhq5TnH">原型只表达页面结构与信息层级，数据为示意。核心亮点是第 4 屏的<b data-page-node-id="oFHq8mcLMXBe7Rm6rWvhA6">攻略步骤卡</b>——把现有长文攻略在前端自动拆成可逐步阅读的卡片，后端零改动。</p>
+
+<div class="grid" data-page-node-id="z89V2UXcocAdiGCq17HauS">
+
+<figure data-page-node-id="rc2wAchSA2ZPCjT91iRTKq">
+<figcaption data-page-node-id="ppYj4QXt52Dr7HsQVmcDpS"><i data-page-node-id="U2MndMSISHvUzWp1LJxWfM">1</i>首页</figcaption>
+<div class="device" data-page-node-id="YEmLkGtEDf1DYmB6WuG9Gy">
+  <div class="status" data-page-node-id="by9FscldG1RSuU1dnUseMU"><span data-page-node-id="PeZ9bnVAdKNtodcTK0Ab5S">9:41</span><span data-page-node-id="GMQn42sVLuiNDgkGiu5CEo">5G &#9632;&#9632;&#9632;</span></div>
+  <div class="navbar" data-page-node-id="yakLNSy0K00BgEbIYblfmD"><span data-page-node-id="qspn6xL7CnDGpxcrCSkvAn">YUMU 游戏助手</span><span class="ic" data-page-node-id="6zGij0ntEveoxDe5W616GS"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" data-page-node-id="bGvcswOAWcEHvKKt28lBzH"><circle cx="11" cy="11" r="6" data-page-node-id="tUbwwBlZYDXvQzBOtOSNSn"/><path d="M20 20l-4.5-4.5" data-page-node-id="l2R8PkjuApYUBoUwX47qH3"/></svg></span></div>
+  <div class="body" data-page-node-id="sqOQv8wwK0FU6Jgj1dtGrV">
+    <div class="search" data-page-node-id="ferWQJOAowfOOyZijFYVW8"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" data-page-node-id="eRPGpsZQo5kIGjcErQ8SK9"><circle cx="11" cy="11" r="7" data-page-node-id="nsfPUKVezfTWc0Tb37BK0X"/><path d="M20 20l-4-4" data-page-node-id="b3rsEyVHb3BLuWLw1wg39U"/></svg><span data-page-node-id="Yw4A3qElhjOd34rq9oNUVP">搜索游戏 / 攻略 / 资讯</span></div>
+
+    <div class="sec" data-page-node-id="UndZmSubhZaxLYZMiBKYFN">
+      <div class="sec-t" data-page-node-id="Awv1Wb32W9IuCNGGDEIHuk"><span data-page-node-id="Sx6O2abDCzhz7iFrQsBzOG">热门游戏</span><em data-page-node-id="H4mNpg4neAnSj2s8mE11BZ">全部 &#8250;</em></div>
+      <div class="chips" data-page-node-id="poi4AM4oshLhweyL20j98d"><span class="chip on" data-page-node-id="9uD49wemVL3bRdG8ZjZXa5">原神</span><span class="chip" data-page-node-id="MhIC4hgcmmWSmYIRPlmWt6">王者荣耀</span><span class="chip" data-page-node-id="Cv1H8InQV3CB0HljhOVMrR">黑神话</span><span class="chip" data-page-node-id="0HSrtUATFApWz49FaoAFR5">艾尔登法环</span></div>
+    </div>
+
+    <div class="sec" data-page-node-id="cqsoNvM3kBu54pqepINOB3">
+      <div class="sec-t" data-page-node-id="DdhxiRwzwEmjscReFdOepA"><span data-page-node-id="3Cul2c3VJzqwsAGGkgtGMH">最新资讯</span><em data-page-node-id="d1oR26slY7xx3ME1lZr5kv">更多 &#8250;</em></div>
+      <div class="card" data-page-node-id="jLzUrz9D68HtJIJFXUUUoh"><div class="thumb b" data-page-node-id="VuQeLmZKSbEDehqdxOCh0j">原</div><div data-page-node-id="whD3gCJ4tZJBXjdF9oRBGf"><div class="ttl" data-page-node-id="Uai5eUORz60HejEsfnHULD">原神 5.2 版本前瞻：新角色与地图情报</div><div class="meta" data-page-node-id="J5CV3Zr6Hvk74IfPYgEj7P"><span class="tag" data-page-node-id="XoFAw9enDBDo1Pjlidswfm">原神</span><span data-page-node-id="iixIDCyAoiWMDjBlRntf3B">版本更新</span><span data-page-node-id="PATel6Li0NVwMABvrr95XM">2 小时前</span></div></div></div>
+      <div class="card" data-page-node-id="d3bTnbjHF8lBc4XPmGVEuL"><div class="thumb o" data-page-node-id="UY04xpgB6EdEPdJysxgO0v">黑</div><div data-page-node-id="Smj05LqDdBixEzNXGAAqxs"><div class="ttl" data-page-node-id="kHdsX1VSoTlVMbchET4EXw">黑神话 DLC 曝光：新场景概念图流出</div><div class="meta" data-page-node-id="XB3RL8izyoB2PnYgoQMt2K"><span class="tag" data-page-node-id="T3j6SpEVvyZDtjyXeqReBS">黑神话：悟空</span><span data-page-node-id="cW1MgFHvejQZ6U7DcAeeyN">昨天</span></div></div></div>
+      <div class="card" data-page-node-id="4QGTVxHeseLDdjez5eR8kg"><div class="thumb g" data-page-node-id="LB8UaLsUrDVBDr7vTXZyvP">英</div><div data-page-node-id="TakmT4dAtDP5pBi9m9Zz8k"><div class="ttl" data-page-node-id="CUT3dR8gGGJhvEjNtXWTUy">英雄联盟 S14 世界赛赛程与分组出炉</div><div class="meta" data-page-node-id="pCRE5TtAQA1V9PwBQ8twWj"><span class="tag" data-page-node-id="0baECABvH1AhWqsbbPpimP">英雄联盟</span><span data-page-node-id="QyQOYPPDTFYTx9b3XtXMUT">昨天</span></div></div></div>
+    </div>
+
+    <div class="sec" data-page-node-id="JLwdNnoDf6XN9EnEucb5DV">
+      <div class="sec-t" data-page-node-id="5X5rJHXW7mCiyx7pn5wJOj"><span data-page-node-id="TNFf9zZXwGUqDgnFSkuCqx">推荐攻略</span><em data-page-node-id="PGOv5e0mloydL5JsoPmyOA">换一批</em></div>
+      <div class="card" data-page-node-id="SsL7boGvcFE1CIRArPaEru"><div class="thumb g" data-page-node-id="ecJG7MXsnnVepRhZIFkvDo">&#9654;</div><div data-page-node-id="W5vKLeAZOBPyhtTJUT2Agh"><div class="ttl" data-page-node-id="v4GwgFrDHqmKekuD6rjkLr">原神深渊 12 层平民配队思路，无五星也能满星</div><div class="meta" data-page-node-id="SlIZJ3jVzPndh4BrV1FU6f"><span class="tag p" data-page-node-id="YhFroXjJJJk0FO0CtqQoIw">攻略心得</span><span data-page-node-id="p4f0akUHBjiMKGjIvOge4s">1.8k 阅读</span></div></div></div>
+      <div class="card" data-page-node-id="tUtQX8VrXxSKwqkXB6EfkA"><div class="thumb" data-page-node-id="GlSzZuQ0T5wyHw5qlcaDZ2">&#9654;</div><div data-page-node-id="DQQ4c0Vqc0Opar6kaEolEG"><div class="ttl" data-page-node-id="em4ymwFx9ChAF6hzguJAAB">打野前期节奏与中期带线：这版本的上分思路</div><div class="meta" data-page-node-id="7Q7iLweMTWf6HrZ7OTW40w"><span class="tag p" data-page-node-id="yyi4Qbru04VCZqubzCKQHC">攻略心得</span><span data-page-node-id="LdZKJnWJtQhhTMv2K8p8Mz">962 阅读</span></div></div></div>
+    </div>
+  </div>
+  <nav class="tabbar" data-page-node-id="srAnMZchqskeTXYaZomKuH">
+    <div class="tab on" data-page-node-id="phD1m9Nj7QpOtY6BSac9sI"><svg viewBox="0 0 24 24" data-page-node-id="fXNv1pAMFBCu6duN7EASGc"><path d="M3 10.5 12 3.5l9 7V21H3z" data-page-node-id="SoBE5Q6xgItLQxPN00WUm2"/></svg><span data-page-node-id="myGRlSNmF8cRfkNoHskn1M">首页</span></div>
+    <div class="tab" data-page-node-id="O741R9h1woBmxUX0WDhjCG"><svg viewBox="0 0 24 24" data-page-node-id="RIUW1ADV1EiLxeNA9QC0DX"><rect x="3" y="3" width="7.5" height="7.5" rx="1.5" data-page-node-id="9ol2DuTh5KqredjIuHpM9H"/><rect x="13.5" y="3" width="7.5" height="7.5" rx="1.5" data-page-node-id="MZxfrjGEDTuIacOApP9pis"/><rect x="3" y="13.5" width="7.5" height="7.5" rx="1.5" data-page-node-id="igTkYX4H4LYhYwAfQCkhU2"/><rect x="13.5" y="13.5" width="7.5" height="7.5" rx="1.5" data-page-node-id="ZqFxcU0mjxUH7hi9E6bGBb"/></svg><span data-page-node-id="OMCtZ7bY0ofMVpT2scr9bS">游戏库</span></div>
+    <div class="tab" data-page-node-id="fDHHor9zxFe4IWJQgv3LQO"><svg viewBox="0 0 24 24" data-page-node-id="DgUyS4iMZ6gJk1xHMS1oJ2"><rect x="4" y="3" width="16" height="18" rx="2" data-page-node-id="esIEHdcxxAj0ZIkaXLqW6F"/><path d="M8 8h8M8 12h8M8 16h5" data-page-node-id="p6JtPztwC9E0Lrc4YAa6pp"/></svg><span data-page-node-id="b726ra3DJjhloCL0RUlDz2">资讯</span></div>
+    <div class="tab" data-page-node-id="gvuOPQ6BtlpqhqGmYJFRKR"><svg viewBox="0 0 24 24" data-page-node-id="o8C3q6w16NVK05vk8RYlih"><circle cx="12" cy="8" r="3.5" data-page-node-id="a59bB43emTPLg1Qb2w6Nl0"/><path d="M5 20c0-3.9 3.1-7 7-7s7 3.1 7 7" data-page-node-id="2iBAYvOMRLVaeJr8ygmcig"/></svg><span data-page-node-id="Y0Z793mN3EsF6WQlztwFc5">我的</span></div>
+  </nav>
+</div>
+</figure>
+
+<figure data-page-node-id="x1Lm4R85XpVg5FQZFJJjwo">
+<figcaption data-page-node-id="Q3B2mEmLqXg2v9SX9uLwD1"><i data-page-node-id="PCjA5ruRDEouZG2zLzQHWw">2</i>游戏库</figcaption>
+<div class="device" data-page-node-id="tcBL6Cz6sP5X7DeW2bsRfa">
+  <div class="status" data-page-node-id="pbsmfM57Txn4hMSTatKiP1"><span data-page-node-id="CClAfkznGgFsPEUlwj7yN3">9:41</span><span data-page-node-id="w7sRVNt3th4peaKVa4huhQ">5G &#9632;&#9632;&#9632;</span></div>
+  <div class="navbar" data-page-node-id="46tLO7NbDvoUCXdPg2uvZX"><span data-page-node-id="OVdgjyTcJHHxjlN1Ylyfgo">游戏库</span><span class="ic" data-page-node-id="U2gqMA9AtXiS3DIyuKs5Bu"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" data-page-node-id="SF86RqfKiIa6OmMCvygwVf"><circle cx="11" cy="11" r="6" data-page-node-id="V8W5LI9fUbJIhDxa2nCzxo"/><path d="M20 20l-4.5-4.5" data-page-node-id="bgc0F7g7S9n807EC6kLD4a"/></svg></span></div>
+  <div class="body" data-page-node-id="FNfj08Xq2sweOtirIpKGLs">
+    <div class="search" data-page-node-id="k882Itm1P5NuIQCH6UtZfh"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" data-page-node-id="Z1AAWkWkYWeG3PEvYX3WQM"><circle cx="11" cy="11" r="7" data-page-node-id="iirnYWNWzuKA1hVU70OUYT"/><path d="M20 20l-4-4" data-page-node-id="jNANFRpiGQCbDRjRY01DNs"/></svg><span data-page-node-id="0AMtq8Rv4WxbdrY5kii3uD">搜索游戏名</span></div>
+    <div class="sec" data-page-node-id="eJxe9v6P8xY7LcCGTC3veG">
+      <div class="chips" data-page-node-id="bEEQ5plD4FGUbZ3EzyjFeq"><span class="chip on" data-page-node-id="Q47SAMldb2wKR2ozBPQzbD">全部</span><span class="chip" data-page-node-id="GLTeukcXLK7Xvgh3AcCzOw">PC</span><span class="chip" data-page-node-id="8fWTVAFVtW1aZWsLM7TYx9">手机</span><span class="chip" data-page-node-id="e9kZorbQWkz9s54eim2I1N">主机</span><span class="chip" data-page-node-id="AEmcWW5ndxFSK2AsEk2Cfy">多平台</span></div>
+    </div>
+    <div class="sec" data-page-node-id="2yG614uH0yHTXZhdrw6uvi">
+      <div class="sec-t" data-page-node-id="cqgn8j6yKEZie69HXHJtGD"><span data-page-node-id="BbNEHEn95oJadBbmvMJAjj">全部游戏</span><em data-page-node-id="WASEiYcSydDo6Hn0ZHQaZs">18 款</em></div>
+      <div class="card" data-page-node-id="7LFWOppEoA7XOxJDSsm2Pa"><div class="thumb b" data-page-node-id="JVdLAIDEiBTXfgfTgm6nv7">原</div><div data-page-node-id="M1cZFjCyl1iaAmHP2b1YhQ"><div class="ttl" data-page-node-id="gLrtLcaGbzTHMeLnOuIpDH">原神</div><div class="meta" data-page-node-id="GPcHz0DzGFpBzK38gBxHiD"><span data-page-node-id="UKdyvgjkKFmHKWIfeYdxpU">miHoYo</span><span data-page-node-id="f6SLSeaBFRFc5CajpFo8bL">RPG</span><span data-page-node-id="DD87CsxAIq1DDuSJ4Tr496">多平台</span><span data-page-node-id="VpDUUjGEtp1CYLyijLvRAJ">27 帖</span></div></div></div>
+      <div class="card" data-page-node-id="sjjqcFxqqGbZzkQYC8Hn0x"><div class="thumb o" data-page-node-id="ikczQstaDAfqkFzZ8ga4Lx">王</div><div data-page-node-id="osB62HzYTtcG2jIOTtDFzQ"><div class="ttl" data-page-node-id="FKN6G3Y1Q5DOCCR2LKwrFv">王者荣耀</div><div class="meta" data-page-node-id="KyoiMoZpBvivDSBHRC6PAQ"><span data-page-node-id="KuGwiV7OtwFtaHMv2IzmiW">腾讯</span><span data-page-node-id="2HO1suAzLESxuDTP5TgFAT">MOBA</span><span data-page-node-id="9Rm0Ab3jPVmaICFkwKPEGr">手机</span><span data-page-node-id="r8YRxbnL9zMOQtLrbVYZjA">24 帖</span></div></div></div>
+      <div class="card" data-page-node-id="qbaVaoZvUAPqXWcmGMesHz"><div class="thumb" data-page-node-id="hVEFh47tEv3SIL1zzx3irq">黑</div><div data-page-node-id="JRF93tQAr0katOFy7VOj0x"><div class="ttl" data-page-node-id="NYDM31tZqoZru4Xwf2mXV7">黑神话：悟空</div><div class="meta" data-page-node-id="l4VGhbC5aSTgDw6KInKaBC"><span data-page-node-id="zsK663yYsBvsmGGOzQXzlh">游戏科学</span><span data-page-node-id="q7PoiRFbDFQMBvKn8ARXsX">动作</span><span data-page-node-id="e95voHDGrZPmR7SqX2y6cA">PC</span><span data-page-node-id="jMAzIbnl4QRZyBYwZM1OE0">18 帖</span></div></div></div>
+      <div class="card" data-page-node-id="vJJnBCTTCJgwgVx95aYUIl"><div class="thumb g" data-page-node-id="ooouKgrWKpFuSA889qMoDW">艾</div><div data-page-node-id="qy8Z2KmY2mPeaRx547T2mL"><div class="ttl" data-page-node-id="ee5PpXp54jLaMSYo2Ydine">艾尔登法环</div><div class="meta" data-page-node-id="UQEcLYI8U1chm1zjxhCZQf"><span data-page-node-id="TtfBmEn1wwW8yky40ZzWP1">FromSoftware</span><span data-page-node-id="AL6Di4EU7qiTSulGnBfJ8H">魂类</span><span data-page-node-id="7iUrCaCmyPEtDsELsgKQDZ">多平台</span><span data-page-node-id="EFgAXWFGaA1NtcOK7Gn5bn">2 帖</span></div></div></div>
+      <div class="card" data-page-node-id="mkFDWPU9Yd5wjHTmza9Xy4"><div class="thumb b" data-page-node-id="USGVFKgSCGTECbInz2DqTU">绝</div><div data-page-node-id="Qs1gi1x8sJgsHgppL2ONgg"><div class="ttl" data-page-node-id="L3WBrjldSx524YhpRMyBkH">绝区零</div><div class="meta" data-page-node-id="mCZnfGQoEKsNAooLGMWjej"><span data-page-node-id="A9wFTZZIrylaPCtLLQ6pqt">miHoYo</span><span data-page-node-id="D0HRyxqQLrW4TdjrwBThGF">动作</span><span data-page-node-id="PlhvfNQA0aSmwsE63QEGNX">多平台</span><span data-page-node-id="lpa2w9ij1ZRUJ9CYlLGPuE">8 帖</span></div></div></div>
+      <div class="card" data-page-node-id="vcIxONRjK6JdHuZbTQRzZH"><div class="thumb o" data-page-node-id="Fh2RB5hhvkLHuNnFdUdhwB">第</div><div data-page-node-id="Wd8iiXjoVaAGCgRZhlyS2Z"><div class="ttl" data-page-node-id="ALtUUc3GiRLQTvdkGSKrKS">第五人格</div><div class="meta" data-page-node-id="qoNi7xVWcgvXIQ8Pg1uZdp"><span data-page-node-id="IlIoxsQTDprLhIMarvNn3y">网易</span><span data-page-node-id="Ii6LRwNGOsGlbvoIVHE6br">非对称</span><span data-page-node-id="BzjMdjB6CdxEhFDXFMsm27">手机</span><span data-page-node-id="6k9YgeQHgREPTsi45LvgHF">7 帖</span></div></div></div>
+    </div>
+  </div>
+  <nav class="tabbar" data-page-node-id="BDjBdIHiGniIrBD0EQuzBm">
+    <div class="tab" data-page-node-id="qoOJSrAFU7It1VEYvPNKhp"><svg viewBox="0 0 24 24" data-page-node-id="FJMEzpke8atmfzmqwgffCq"><path d="M3 10.5 12 3.5l9 7V21H3z" data-page-node-id="fPOgSQAh8d5FFsEaQmhwtX"/></svg><span data-page-node-id="MPvhH5Ky1HdwpwWK227GJW">首页</span></div>
+    <div class="tab on" data-page-node-id="WwK9QOD4VGLbbQURnNTDGu"><svg viewBox="0 0 24 24" data-page-node-id="flov53bQ1zXQWrN9c5nCKh"><rect x="3" y="3" width="7.5" height="7.5" rx="1.5" data-page-node-id="uBvmC8Ynhb7fY8WoPN82Vl"/><rect x="13.5" y="3" width="7.5" height="7.5" rx="1.5" data-page-node-id="6oPyzxHmwwEMg9byymlnE6"/><rect x="3" y="13.5" width="7.5" height="7.5" rx="1.5" data-page-node-id="Mo7unI8u7ll5bQk3T6u16G"/><rect x="13.5" y="13.5" width="7.5" height="7.5" rx="1.5" data-page-node-id="tR4GTgDE8IgFCWpX2Nto0F"/></svg><span data-page-node-id="p6Plc0o6c4AluR4D7AmogP">游戏库</span></div>
+    <div class="tab" data-page-node-id="dEA0DX8sCgeEigWmoSifrc"><svg viewBox="0 0 24 24" data-page-node-id="J6pz0u24SAXlzGRqcTQOYI"><rect x="4" y="3" width="16" height="18" rx="2" data-page-node-id="ZzZeejdNZ4DEvhZ8MSnrRR"/><path d="M8 8h8M8 12h8M8 16h5" data-page-node-id="fRtmF6ro1PoLNkoK8Afrhd"/></svg><span data-page-node-id="H7E28RoGKo0e9mviN2E6Bb">资讯</span></div>
+    <div class="tab" data-page-node-id="BbmhVcR0YfyXqcEYvkqf9o"><svg viewBox="0 0 24 24" data-page-node-id="i5O43ipOSvSNdvq7UZemtb"><circle cx="12" cy="8" r="3.5" data-page-node-id="795WgxCNMyzx3vE10rwHlJ"/><path d="M5 20c0-3.9 3.1-7 7-7s7 3.1 7 7" data-page-node-id="u964CM90I8W4yPjQXTr9yj"/></svg><span data-page-node-id="P13MR4WsJioCpbyBqT20RQ">我的</span></div>
+  </nav>
+</div>
+</figure>
+
+<figure data-page-node-id="UO45LoYCtlIBTEPNLOBQv9">
+<figcaption data-page-node-id="T1duQEmjS79sPI0iCgCGK8"><i data-page-node-id="OSRf1gQ25jiKyQAApNJHp2">3</i>游戏主页</figcaption>
+<div class="device" data-page-node-id="c0Rm5jyoQfMCjlpqIHZmrm">
+  <div class="status" data-page-node-id="vL9nAzBRjzE3kcnFKW0GzA"><span data-page-node-id="3HCIIN1D6nWReTzdxgGtS0">9:41</span><span data-page-node-id="gE9PjVzplcZZaQlNJL1MMY">5G &#9632;&#9632;&#9632;</span></div>
+  <div class="navbar" data-page-node-id="9uLrngFGFKVgLUeD7TsK1Y"><span data-page-node-id="Dpwq7MFVMNqcvrVATcgqf1">&#8249; 原神</span><span class="ic" data-page-node-id="WDBDREiMVSUFbHHE6LbQoY"><svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" data-page-node-id="7K2zVyi7awHJMbCOcgF975"><path d="M12 4v16M4 12h16" data-page-node-id="KFCWsUqXiNnuXULm1SFXzQ"/></svg></span></div>
+  <div class="body" data-page-node-id="FUdbHLDqQZYFgTdlC8XUsN">
+    <div class="banner" data-page-node-id="iHQTj3HJcdS8P4GFXDMIH5">
+      <div class="bn" data-page-node-id="7zQNnQE9qYxL1ooL6KVyaw">原神</div>
+      <div class="bs" data-page-node-id="hwOG6dRkuENCFqbzmwRUNm">miHoYo · RPG · 多平台 · 2020-09-28</div>
+      <div class="btns" data-page-node-id="e2pEBBQCBKFiu8Xs9sLvli"><span class="btn" data-page-node-id="up8iun5OoFJMpZI8iEX3TD">看攻略</span><span class="btn ghost" data-page-node-id="l9HW2qVWQwuNUQyIEIuex8">关注游戏</span></div>
+    </div>
+    <div class="stats" data-page-node-id="QGKJ2G4X7b3zyj0K5hr2zm"><div data-page-node-id="s913bj1teUc3N2qtEPt1Ak"><b data-page-node-id="bnctqRl6EKW6ASglwlbSgC">27</b>攻略</div><div data-page-node-id="ap6QwaOBm48v46hwxl9efy"><b data-page-node-id="wiFYubxkMpD2obJfHgeEie">24</b>资讯</div><div data-page-node-id="uZIy3sOxjGpF8zbW6GVYd3"><b data-page-node-id="R69NLtLdNDvaTAzdeiUocD">156</b>活跃玩家</div></div>
+    <div class="tabs2" data-page-node-id="0Di8YevFQePCcrtuDtB7De"><span class="on" data-page-node-id="7ZR0yekHLlvppB8oJp4E70">攻略</span><span data-page-node-id="Du3Lv3FVwqjYn4ydT9Sl9X">资讯</span></div>
+    <div class="card" data-page-node-id="zgMCLkURe55ZhYIE0RYlgv"><div class="thumb g" data-page-node-id="q9tyU6wRj9UmigDftGZeC4">&#9654;</div><div data-page-node-id="w4T908la2Bo6KHLMm1Diok"><div class="ttl" data-page-node-id="shPEmpCHDCZnW7m8C98aLz">原神深渊 12 层平民配队思路，无五星也能满星</div><div class="meta" data-page-node-id="dv8jH1hxVR2rmptR9Qwtmi"><span class="tag p" data-page-node-id="sX1HNOhPfqAXcM25r7HghR">攻略心得</span><span data-page-node-id="XtuoPwVE9uTc0dQvkdhTJy">yumu</span><span data-page-node-id="cTPrNBo3ursvR3cuYnRoZJ">1.8k 阅读</span></div></div></div>
+    <div class="card" data-page-node-id="ALKribk1i7PeG8LovF0avi"><div class="thumb" data-page-node-id="JIKRRAEjTSL68F9XbRRivL">&#9654;</div><div data-page-node-id="Mc3wHcqGdaiZVG7HhCB6nh"><div class="ttl" data-page-node-id="1WprXneJyvbsdVFqIoH633">新角色养成优先级：先练主 C 还是先补辅助</div><div class="meta" data-page-node-id="gBTJfg5NrTNDDVIj0YVD9l"><span class="tag p" data-page-node-id="YWJN0e1ObtsAMVJzzSSu9D">攻略心得</span><span data-page-node-id="FJv1ybpCBUkP8AYwZbcKUz">642 阅读</span></div></div></div>
+    <div class="card" data-page-node-id="qt14VAFocSObFGMy53AJ9K"><div class="thumb" data-page-node-id="Dwv2cfuxJvXDpmuhEAI1i6">&#9654;</div><div data-page-node-id="tkzNBxslJNI10DV95kCuM1"><div class="ttl" data-page-node-id="WL5Lee0nYhYdLnDdTmW7Lv">深境螺旋 11 层速通路线与走位细节</div><div class="meta" data-page-node-id="BlXVH8VbGov0BvluLoLejK"><span class="tag p" data-page-node-id="K18Ggh0en3CflBXfBLV8ok">攻略心得</span><span data-page-node-id="XWRtr29OyQVpYjbk8v1lrM">518 阅读</span></div></div></div>
+  </div>
+  <nav class="tabbar" data-page-node-id="SPnjilrmMKWw0OEkxPw05t">
+    <div class="tab" data-page-node-id="xZEHgU51girqCJw2nRmksJ"><svg viewBox="0 0 24 24" data-page-node-id="USei4uY1Ym93puGm7QEBEF"><path d="M3 10.5 12 3.5l9 7V21H3z" data-page-node-id="pOLx0GtkFgxdiPWwi7ad1Q"/></svg><span data-page-node-id="9e8MdF7pVATuvpDGg40cda">首页</span></div>
+    <div class="tab on" data-page-node-id="mBwS60YX09eB7XrcVJvKHK"><svg viewBox="0 0 24 24" data-page-node-id="2Qbp1IFh27Vt1CgMeALHO6"><rect x="3" y="3" width="7.5" height="7.5" rx="1.5" data-page-node-id="nJInUfO9Y4H6dC695UsZab"/><rect x="13.5" y="3" width="7.5" height="7.5" rx="1.5" data-page-node-id="D5ZpBvw82ZRt0ScibVIHIT"/><rect x="3" y="13.5" width="7.5" height="7.5" rx="1.5" data-page-node-id="G4I97lfUmWxRZeSyOnoWnH"/><rect x="13.5" y="13.5" width="7.5" height="7.5" rx="1.5" data-page-node-id="Fm5vwHYWYeKDK2ezBGWrki"/></svg><span data-page-node-id="IQUneA0XSBTrJ8mm18seaE">游戏库</span></div>
+    <div class="tab" data-page-node-id="FMpL0cq6GgfLb8BDGH0ahg"><svg viewBox="0 0 24 24" data-page-node-id="bmk1nGBH6DYA9QzpcG7nVG"><rect x="4" y="3" width="16" height="18" rx="2" data-page-node-id="iaylbTJl3mrxGRhzOfqcT0"/><path d="M8 8h8M8 12h8M8 16h5" data-page-node-id="tRwMr54wkhYKNKuGglDCq4"/></svg><span data-page-node-id="30psqH8Tr5on9g6RpAZfIs">资讯</span></div>
+    <div class="tab" data-page-node-id="wqYONkRr0JK4Jt8EGRZaog"><svg viewBox="0 0 24 24" data-page-node-id="OIzL1IK0l38Md8wpljk6gy"><circle cx="12" cy="8" r="3.5" data-page-node-id="oidMLmLTRV2R2S1cmJh4o6"/><path d="M5 20c0-3.9 3.1-7 7-7s7 3.1 7 7" data-page-node-id="TVE97QPZXvEXRC8VGKAmNL"/></svg><span data-page-node-id="ZtvFiqBCocYU5zpQEdTuKr">我的</span></div>
+  </nav>
+</div>
+</figure>
+
+<figure data-page-node-id="cgD7O0KeoGB62zGv7kD8dF">
+<figcaption data-page-node-id="HLn83NAS4vEcK0qo40POaS"><i data-page-node-id="Wh9t9JaqcCIL88pOHzhcbX">4</i>攻略详情 · 步骤卡（核心亮点）</figcaption>
+<div class="device" data-page-node-id="8yLwYPfUGGUVbFqMfYUPpN">
+  <div class="status" data-page-node-id="f4UNHYvzDvWJA2rQjHCOKc"><span data-page-node-id="ofgaMA0RasShn6tg1Pkkon">9:41</span><span data-page-node-id="jIx1FG2xA1BaUFInNaODS2">5G &#9632;&#9632;&#9632;</span></div>
+  <div class="back" data-page-node-id="BQrN8kW3KcYgQBL24Y5Ap7">&#8249; 返回</div>
+  <div class="body" data-page-node-id="wdTTTbDRszEmGRGwVH0DEy">
+    <div class="art-t" data-page-node-id="YZCoHDElJ7KQecOgZuE9gf">原神深渊 12 层平民配队思路，无五星也能满星</div>
+    <div class="art-m" data-page-node-id="zR6efLiHSDDWjb4qwHKQDV"><span class="avatar" data-page-node-id="8CAmJ12JMZfdFBjyv3v1b9">y</span><span data-page-node-id="rsI4fFGDPjJzEZoQNOSa0T">yumu</span><span data-page-node-id="k5WBLtYwIJNidzBiGqo77X">·</span><span class="tag p" data-page-node-id="iknI8PmijJyCy4kcbwz5HW">攻略心得</span><span class="tag" data-page-node-id="vgnezQVilZl4sLmKkWcXwJ">原神</span><span data-page-node-id="NmGH4HJ3C1AwDOBVamDdpi">1.8k 阅读</span></div>
+    <div class="art-p" data-page-node-id="mlSsdZ4zSp0446yfVfVfZh">这期深渊其实对练度要求没那么夸张，关键是破盾节奏和输出窗口。一队草行久夜、二队纯水，香菱行秋练度拉满完全能打。</div>
+
+    <div class="steps" data-page-node-id="kLmyFxYb4wcwVLsncP7RBd">
+      <div class="sh" data-page-node-id="ewOIhjVlNlXVRM0wZ0Qmo5">攻略步骤 · 3 步（按小标题自动切分）</div>
+      <div class="step" data-page-node-id="MrkHpElQthx2JXnDGr96Pm"><div class="idx" data-page-node-id="biU3D3eX5TKtaY3WLmp89t">1</div><div data-page-node-id="wguPJVffDJ0NAVuvaBkNrA"><div class="st-t" data-page-node-id="tr3KJSDPj5xot9pIs9TB4H">上半场：先清雷盾</div><div class="st-d" data-page-node-id="vv4iNDB8mWTc0nT7kmfxHS">开场集火雷盾史莱姆，草行久夜先手挂草触发激化，不要提前交大招。</div></div></div>
+      <div class="step" data-page-node-id="c6TQrpa0Yg6HnrJ3sGtAEb"><div class="idx" data-page-node-id="zHbzgcPItrQYzF3qTk43ii">2</div><div data-page-node-id="pesEQfxcI0xB6MWGBBlR09"><div class="st-t" data-page-node-id="xPw3yFHLZhS8NeM0exMFwi">下半场：留爆发打双雷使徒</div><div class="st-d" data-page-node-id="Z9Dz8bILYAwKFjXo4t6H31">双使徒分身阶段走出圈再回身，纯水队把爆发窗口压在破盾后的 6 秒内。</div></div></div>
+      <div class="step" data-page-node-id="DiK1r9vQX2x3WoglRJgXu1"><div class="idx" data-page-node-id="oBPQVMJ4LmP9eOsvVPwcKw">3</div><div data-page-node-id="S6uvMeCQRnAAXFN9gt1Yn9"><div class="st-t" data-page-node-id="beExMG2pYsj4s21sgU4Y9Y">细节：走位与深渊祝福选择</div><div class="st-d" data-page-node-id="NJQ178A88pTNVg1OAXX2LX">贴边打避免被推，祝福优先生命与元素充能，容错更高。</div></div></div>
+    </div>
+
+    <div class="video" data-page-node-id="klMCFiN18c4HgEhNOhKfEG">
+      <div class="play" data-page-node-id="QOlWDFRvG6DWHUAZuCtByq"></div>
+      <div data-page-node-id="FCDDheIlDIWddRWsvnJPUM"><div class="st-t" style="font-size:12.5px;font-weight:500;" data-page-node-id="tAmhtjRH6pwyZUd1quoIF7">实战演示</div><div class="st-d" style="font-size:11px;color:#8b8599;margin-top:3px;" data-page-node-id="27xCQ0oAqBz8HSDAcDhcKF">02:14 · 可选模块</div></div>
+    </div>
+
+    <div class="note" data-page-node-id="HyAFfZV8N6VTwHg3FGtHuc">小程序里 video 组件可播自托管 mp4，但正式发布仍受域名白名单限制，因此它是加分项而非主线。</div>
+  </div>
+  <div class="actions" data-page-node-id="56B3MzEUodu9ozMNhvTPFE">
+    <div class="hl" data-page-node-id="q1dPJmezZrBmwBYGffB0Z0"><svg viewBox="0 0 24 24" data-page-node-id="e4tVLvVopotN3h3Z5qKoFP"><path d="M6 3h12a1 1 0 0 1 1 1v17l-7-4-7 4V4a1 1 0 0 1 1-1z" data-page-node-id="icjq4piJhM9QMHGCfRJqgn"/></svg><span data-page-node-id="W2pfzoTFh9v7EDhCQvbmvF">收藏</span></div>
+    <div data-page-node-id="ln2YqdCvHftQRcFAeyD7qq"><svg viewBox="0 0 24 24" data-page-node-id="IkCuenTk4eBnygdR1cel9A"><path d="M7 10v11H3V10zM7 10l4.5-7a2 2 0 0 1 2 2v4h6a2 2 0 0 1 2 2.4l-1.6 8A2 2 0 0 1 18 21H7" data-page-node-id="3OHykPt7jYFA2N4bKAeA7A"/></svg><span data-page-node-id="5b8jXgP1Tlf2F1MH0kPwaG">4</span></div>
+    <div data-page-node-id="KALoVCDNfMNU5P7rpcMEot"><svg viewBox="0 0 24 24" data-page-node-id="kLJE58uNkuTvpUP1ObtEX7"><circle cx="18" cy="5" r="3" data-page-node-id="HqQo9CoBruaJoDBfP1rins"/><circle cx="6" cy="12" r="3" data-page-node-id="a5uT0R0NpJ67sWYDAVAyeW"/><circle cx="18" cy="19" r="3" data-page-node-id="1Bb1JI8PvqD2bYUeti95bQ"/><path d="M8.6 10.5l6.8-4M8.6 13.5l6.8 4" data-page-node-id="N8BMw3bazQZXMTWusKphsh"/></svg><span data-page-node-id="LXqfgR3gKgT9LNEaYTi9Gj">分享</span></div>
+  </div>
+</div>
+</figure>
+
+<figure data-page-node-id="2fDOR0BvnhHphPoFiEioAN">
+<figcaption data-page-node-id="3f19a34ULrrfA8m2SZWmsj"><i data-page-node-id="wVAy19XdKKfvd9Aoibqr2y">5</i>资讯</figcaption>
+<div class="device" data-page-node-id="iAT7qKGnVZhy1pRMeOEjTQ">
+  <div class="status" data-page-node-id="NX2BlT4EM8ju24DYo2I4EQ"><span data-page-node-id="lKjIV8DuOLIiHHLDaCd7g3">9:41</span><span data-page-node-id="vyrKYyrWYfvryUP2KWnZoK">5G &#9632;&#9632;&#9632;</span></div>
+  <div class="navbar" data-page-node-id="ks3PwgVt7z7JDxFmFtsgfB"><span data-page-node-id="8mckv3wsglPXDayeeDyMVB">资讯</span><span class="ic" data-page-node-id="r8ZNfDWvXYEWCHx5IqUS23"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" data-page-node-id="Xa0Z5bDWAgdBpxKSdMK0im"><path d="M18 8A6 6 0 1 0 6 8c0 7-3 9-3 9h18s-3-2-3-9" data-page-node-id="bwgsmWEJwbgZfmDwXVohpY"/><path d="M13.7 21a2 2 0 0 1-3.4 0" data-page-node-id="ArITaQLrPRRmDWsFuQiXtE"/></svg></span></div>
+  <div class="body" data-page-node-id="e6CfjVrHH412FWeDRZBMOb">
+    <div class="sec" data-page-node-id="1aCOAekgtCVpm0lrIEgf2b"><div class="chips" data-page-node-id="tlFzQtwMSHGQdBOqUudRla"><span class="chip on" data-page-node-id="THkDUxAJZvSanIErKwTK6H">全部</span><span class="chip" data-page-node-id="UCEjstpflyKDlSXvwSjPYS">版本更新</span><span class="chip" data-page-node-id="tcHkmwmhF8Br0HvrdOASbf">赛事</span><span class="chip" data-page-node-id="mQn8t0pVS0esHbcABrGPd9">活动</span><span class="chip" data-page-node-id="KdsXqkVNMPZs7Du93f5AOn">公告</span></div></div>
+    <div class="sec" data-page-node-id="FxIECc4HG0o6jjHThRTG3n">
+      <div class="sec-t" data-page-node-id="BCiUg2YhKjTqnEugxme1nb"><span data-page-node-id="4kbvsYb5p2pxQapxJlXFF7">资讯速递</span><em data-page-node-id="2ed3s0ZfnIEXJjFJzIFmEM">共 24 条</em></div>
+      <div class="card" data-page-node-id="4CbU1WGZJMFrBLkbV72T40"><div class="thumb b" data-page-node-id="dGQ0ScQHLXAVMjGxak7ghs">原</div><div data-page-node-id="bu9fVAqGKyHDwCCYQ6nxRD"><div class="ttl" data-page-node-id="jB6VxKa9oU4AP7EqFDSp8M">原神 5.2 版本前瞻：新角色与地图情报</div><div class="meta" data-page-node-id="A4TsEcuKvn2chCtdAkKr66"><span class="tag" data-page-node-id="PnQXF1VIoFg0W51f40eXCV">原神</span><span data-page-node-id="tOz8YiioN1E73IeYYQjF8W">2 小时前</span></div></div></div>
+      <div class="card" data-page-node-id="msA3c97djVbM4N8x3oT1yn"><div class="thumb o" data-page-node-id="zco6bwZrqRuUtOaoIaQKo5">王</div><div data-page-node-id="PbbXAnq8VfMReO6zbX8uIF"><div class="ttl" data-page-node-id="Fl4WKJiXrizXbm1fT76IUV">王者荣耀新赛季更新时间确定，改动抢先看</div><div class="meta" data-page-node-id="FVfciIa1L408RmiRvQbsEY"><span class="tag" data-page-node-id="rG2chfvVME9uIbUJEEXsGT">王者荣耀</span><span data-page-node-id="EHyzqjRY7TGwHBbHCB2YRa">6 小时前</span></div></div></div>
+      <div class="card" data-page-node-id="qXxRS5AsXGwOPHNROx3tLM"><div class="thumb" data-page-node-id="lkXHOiTM5MpiO6wEXhsODa">黑</div><div data-page-node-id="jVcmbL4ejmbpOnRFH8ypAj"><div class="ttl" data-page-node-id="mcSpfTEv0eRFM4fvsmt2jL">黑神话 DLC 曝光：新场景概念图流出</div><div class="meta" data-page-node-id="j6CKkNnQQvDOw11CpNUtUQ"><span class="tag" data-page-node-id="07XUal7i5fooL1CKwJWlCo">黑神话：悟空</span><span data-page-node-id="BIeLnxosWpaMHB8DuP9kfJ">昨天</span></div></div></div>
+      <div class="card" data-page-node-id="ePdQ1evi1v7YGX45CQbkTJ"><div class="thumb g" data-page-node-id="2NDGk76ntvTxGTW7EG1Rwc">英</div><div data-page-node-id="3Ov2ACDbKfGwMMxN8v3j7i"><div class="ttl" data-page-node-id="9QSh9EbfV1Xu3wfBXXu0sJ">英雄联盟 S14 世界赛赛程与分组出炉</div><div class="meta" data-page-node-id="d8aIA1sg6DrqJm2L9m9M3f"><span class="tag" data-page-node-id="CHPS4Q2OJwaN8BMMNsTN7E">英雄联盟</span><span data-page-node-id="dvz534MG24cGj31EUO9MCX">昨天</span></div></div></div>
+      <div class="card" data-page-node-id="1JAQuFlKPXcWTwc2Bse25O"><div class="thumb b" data-page-node-id="RGSASPn0rvu86zyF0MqZvR">绝</div><div data-page-node-id="FmhX9dewiUlN6gzJj6UmHK"><div class="ttl" data-page-node-id="4fDGrCngJ5Le9DAKkin3iZ">绝区零 1.3 版本活动日历与奖励清单</div><div class="meta" data-page-node-id="PkSANiSj52BLdxduUFfIej"><span class="tag" data-page-node-id="WYMOT24OAOOFfIov4obdVu">绝区零</span><span data-page-node-id="mBU5jNCSMzm2C2Ow6aNTMn">2 天前</span></div></div></div>
+    </div>
+  </div>
+  <nav class="tabbar" data-page-node-id="eLyYJICb5rgbQpCV2yWcVz">
+    <div class="tab" data-page-node-id="0JbQKnqFJ6HrmhXWE3efAv"><svg viewBox="0 0 24 24" data-page-node-id="p7d4XyRV6U27ecUxZYKghL"><path d="M3 10.5 12 3.5l9 7V21H3z" data-page-node-id="zRZiXQeIqtMvSN26i6bDDH"/></svg><span data-page-node-id="kRKC8yqfwnEJ8SB3oWZpPf">首页</span></div>
+    <div class="tab" data-page-node-id="fpDdOfaBBc4SaxpeXeQbDB"><svg viewBox="0 0 24 24" data-page-node-id="czxXPFxFXGbTYiGO7efmde"><rect x="3" y="3" width="7.5" height="7.5" rx="1.5" data-page-node-id="zu0vCFOQQTbPAN5rv4mPIY"/><rect x="13.5" y="3" width="7.5" height="7.5" rx="1.5" data-page-node-id="g7pwGLUfhVBUQPCQh9pwpH"/><rect x="3" y="13.5" width="7.5" height="7.5" rx="1.5" data-page-node-id="J45vu8c5ZIWm1PaUux0QFZ"/><rect x="13.5" y="13.5" width="7.5" height="7.5" rx="1.5" data-page-node-id="iOJwVyj88llf3S6DoH560a"/></svg><span data-page-node-id="J6qT9OfkSyHeDo9xaWH03h">游戏库</span></div>
+    <div class="tab on" data-page-node-id="AGhULyUEbQfJbDp77gkCUU"><svg viewBox="0 0 24 24" data-page-node-id="KGkHsNbMRGIFZDcJdYuCJM"><rect x="4" y="3" width="16" height="18" rx="2" data-page-node-id="4Qg9l7ODjAFRmqop2qq7OH"/><path d="M8 8h8M8 12h8M8 16h5" data-page-node-id="dUOomiJBfMLet6ZaUl51KZ"/></svg><span data-page-node-id="Km0TQkJakHBBsfr1B5grRu">资讯</span></div>
+    <div class="tab" data-page-node-id="6EwA1klwST5IgUwWZJ1XAz"><svg viewBox="0 0 24 24" data-page-node-id="PcRV7b4iqtRL0OK5T5DPyH"><circle cx="12" cy="8" r="3.5" data-page-node-id="eHwNrq0FHGrZ7BrB9qUQ9J"/><path d="M5 20c0-3.9 3.1-7 7-7s7 3.1 7 7" data-page-node-id="5D5OCDhHozxtwlNPtAd02c"/></svg><span data-page-node-id="tABwbJkxlIpnygh1bp9r5P">我的</span></div>
+  </nav>
+</div>
+</figure>
+
+<figure data-page-node-id="CTqbLrpJ5NGJkJxmGfH3yY">
+<figcaption data-page-node-id="y10B4drDY7GiDoFMUhAG29"><i data-page-node-id="4arSgZrF2qcJxKAdeOzyx0">6</i>我的</figcaption>
+<div class="device" data-page-node-id="LJH3PGIB1sY739LhCzT9JH">
+  <div class="status" data-page-node-id="o5p5Srp30Uv0R3DBrlAavI"><span data-page-node-id="dVNRWL4OzpgpREYDv47CM9">9:41</span><span data-page-node-id="gR58SzW3O8aQ22U7WRDLmz">5G &#9632;&#9632;&#9632;</span></div>
+  <div class="navbar" data-page-node-id="7ynB4jwZc2IuuseYRBpNHp"><span data-page-node-id="pqAmuXKxeIOAZXDER9RFCN">我的</span><span class="ic" data-page-node-id="vcHCGnPVesvq41DLvqDQmH"></span></div>
+  <div class="body" data-page-node-id="A4lbGfrzaSyucKo7nd8DP5">
+    <div class="login" data-page-node-id="wZM6OAr0rl0QEhWBVXGLCy">
+      <div class="lg-a" data-page-node-id="NE0sFH0OHKCBBKET8xdszd"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.7" data-page-node-id="RtErhaF4LZVgFCnzFuwkUh"><circle cx="12" cy="8" r="3.5" data-page-node-id="5MMQ9pDPiDVsZh5FHyAIxV"/><path d="M5 20c0-3.9 3.1-7 7-7s7 3.1 7 7" data-page-node-id="2HU6MNvEnCLtFE7zsb4JqU"/></svg></div>
+      <div class="lg-t" data-page-node-id="XmZWdKgZWK2Z9MfysXGn8v">登录后可同步收藏</div>
+      <div class="lg-s" data-page-node-id="Kbv1luNpP78K9Rpc3frK7O">复用社区现有账号，无需重新注册<br data-page-node-id="kNj6jB7Cuzj2WKHUXU7SE8">也可以不登录，收藏存在手机本地</div>
+      <div class="btn" data-page-node-id="KtVjuByBKG2WMxcI4uDtAA">账号登录</div>
+    </div>
+
+    <div class="sec" data-page-node-id="11yW85Abc8Ewyq9cLKpUrl">
+      <div class="sec-t" data-page-node-id="Us6F4aNETQYXoPFPjPaLGH"><span data-page-node-id="9ZtqlU36BsS4xhaNVWlOdu">我的收藏</span><em data-page-node-id="pFLEHw8I6GB3epotWuWlsJ">3 篇</em></div>
+      <div class="card" data-page-node-id="lsOIgIdekynz5AMJqtb4dl"><div class="thumb g" data-page-node-id="5uvpSNClhLIXO7JQIFTTEs">&#9654;</div><div data-page-node-id="mpp4B7Z7ohk8IDI68obSFU"><div class="ttl" data-page-node-id="MCaCOzXaCkgAAWItHguGNd">原神深渊 12 层平民配队思路</div><div class="meta" data-page-node-id="U6vvxFdtkM26J4y9OdZJJQ"><span class="tag p" data-page-node-id="V7D6IGDiTK0bgzZFEZvDGw">攻略心得</span></div></div></div>
+      <div class="card" data-page-node-id="CdxyON6C2JlZDzHe6xZUSO"><div class="thumb b" data-page-node-id="26ALGjtVjUwTlFsDh44qiS">&#9654;</div><div data-page-node-id="1E0VE5y1CrnfhuaBlHS7W9"><div class="ttl" data-page-node-id="YSvk5CXd8Pygdv6YSP7UDw">打野前期节奏与中期带线</div><div class="meta" data-page-node-id="wQNbwccU9IHs3DwHO5NkM3"><span class="tag p" data-page-node-id="1QA45KVehqgRoXlVN2xynH">攻略心得</span></div></div></div>
+    </div>
+
+    <div class="sec" data-page-node-id="ruZYVnb4z8QRGzWiHvCp0G">
+      <div class="sec-t" data-page-node-id="JlJdQaBeY6ANmdwPzkMg1J"><span data-page-node-id="Cx362FRai9iNDwMAixDVpK">浏览历史</span><em data-page-node-id="pXueti0GponOPX1fsZB3kT">清空</em></div>
+      <div class="card" data-page-node-id="XsGPrqOk7UBjDTGyyXinT3"><div class="thumb o" data-page-node-id="QGRNAVSwibG9zNMeuniLFE">黑</div><div data-page-node-id="OyQZYxfweTWWGq6iqZ8UJ3"><div class="ttl" data-page-node-id="06HDCfoXlyH6JCX1JVeDQo">黑神话 DLC 曝光：新场景概念图流出</div><div class="meta" data-page-node-id="brJS5PO61KvylTZ0lOQP4i"><span data-page-node-id="XjH0rowuQRsS7k9aTu8iMC">昨天浏览</span></div></div></div>
+    </div>
+
+    <div class="note" data-page-node-id="go2pGqY6s1odQDyZmLK7kk">数据来源：YUMU 游戏社区（现有后端接口）。浏览历史与匿名收藏保存在本地缓存，不占用服务端。</div>
+  </div>
+  <nav class="tabbar" data-page-node-id="3dEBTpi8PtFrxbCfaJFjcG">
+    <div class="tab" data-page-node-id="ts5nhptreU9r2EduXJx71E"><svg viewBox="0 0 24 24" data-page-node-id="TigYwEL5E1U7QrnlCCsebn"><path d="M3 10.5 12 3.5l9 7V21H3z" data-page-node-id="0wkMcjBoT4LUeGzU9fj7Gm"/></svg><span data-page-node-id="Fjb1HOligKHwPaDy2D3O19">首页</span></div>
+    <div class="tab" data-page-node-id="UftT1hajTij8qRVA16ELlE"><svg viewBox="0 0 24 24" data-page-node-id="xKpAJ5sqnv6F5uXVtUiUR0"><rect x="3" y="3" width="7.5" height="7.5" rx="1.5" data-page-node-id="l1AWtcanPG3ewleBjFyAj9"/><rect x="13.5" y="3" width="7.5" height="7.5" rx="1.5" data-page-node-id="zJT7yHhAHJ0B5VRDE7v5yX"/><rect x="3" y="13.5" width="7.5" height="7.5" rx="1.5" data-page-node-id="k2pKgEuYbfOhEig2AsE1Qc"/><rect x="13.5" y="13.5" width="7.5" height="7.5" rx="1.5" data-page-node-id="ogaU8WTI3fVOid7oIpTJS5"/></svg><span data-page-node-id="CJt6ftGV4iuIgZhz53cnkC">游戏库</span></div>
+    <div class="tab" data-page-node-id="I4o6RZxaDSRexD4B6xPyBl"><svg viewBox="0 0 24 24" data-page-node-id="FwUnEkZ73HqQpxOgTmRawe"><rect x="4" y="3" width="16" height="18" rx="2" data-page-node-id="w6EyLRbSyqXBee4UZPCUuW"/><path d="M8 8h8M8 12h8M8 16h5" data-page-node-id="shwjcDE9EkzIKsexFGCHLl"/></svg><span data-page-node-id="FP4iXijYwGYgGPqSktmeJw">资讯</span></div>
+    <div class="tab on" data-page-node-id="oOtH2k5xkUFZtVhLQuytls"><svg viewBox="0 0 24 24" data-page-node-id="rObMUNWpMQXLEimw4pjEjR"><circle cx="12" cy="8" r="3.5" data-page-node-id="U6HiFCDGP8O7I5pll7uaRb"/><path d="M5 20c0-3.9 3.1-7 7-7s7 3.1 7 7" data-page-node-id="NIM9PmRUf2p9ppf7GXMF9z"/></svg><span data-page-node-id="WVbbOqjK5XKAoki2u8nwKj">我的</span></div>
+  </nav>
+</div>
+</figure>
+
+</div>
+</body>
+</html>
