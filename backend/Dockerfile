@@ -7,10 +7,23 @@ COPY pom.xml .
 # 可用 --build-arg MAVEN_MIRROR=... 覆盖。
 ARG MAVEN_MIRROR=https://maven.aliyun.com/repository/public
 RUN mkdir -p /root/.m2 && printf '<settings xmlns="http://maven.apache.org/SETTINGS/1.0.0"><mirrors><mirror><id>cn-mirror</id><mirrorOf>central</mirrorOf><url>%s</url></mirror></mirrors></settings>' "$MAVEN_MIRROR" > /root/.m2/settings.xml
+# 9-15：JVM 内存护栏，专治「构建到 mvn 这步就不动了」。
+#   · 不设时 Maven 按**宿主机总内存**估算堆。服务器上 mysql/redis/backend/nginx 四个容器
+#     同时在跑，Maven 再抢一大块，内存不够就狂刷 swap —— 表现就是构建长时间零进展
+#     （看着像卡死，其实在硬撑），更严重时直接被内核 OOM Killer 杀掉。
+#   · 固定上限让 Maven 与容器和平共处。机器内存大想放宽：--build-arg MAVEN_OPTS=...
+ARG MAVEN_OPTS="-Xmx768m -XX:MaxMetaspaceSize=320m -Dfile.encoding=UTF-8"
+ENV MAVEN_OPTS=$MAVEN_OPTS
+
 # 先拷 pom 下依赖，利用 Docker 层缓存加速后续构建
-RUN mvn -q dependency:go-offline -DskipTests
+RUN mvn -B dependency:go-offline -DskipTests
 COPY src ./src
-RUN mvn -q package -DskipTests
+# 9-15：原来用 -q，而 Maven 的 quiet 模式**只打 ERROR** —— 整个编译过程在终端上
+#   就是一片空白，网页终端里看上去完全等同于「卡死」。改 -B（batch mode）逐行打
+#   日志，能看到 Compiling / Building jar 的真实进度，是真在跑还是真死了立刻可辨。
+#   -Dmaven.test.skip=true 比 -DskipTests 更彻底：连测试源码都不编译（本项目有单测类），
+#   实打实省掉一次 javac，小机器上提升明显。
+RUN mvn -B package -Dmaven.test.skip=true
 
 FROM eclipse-temurin:21-jre
 # B5：healthcheck 需要 curl；若基础镜像已自带则跳过 apt（避免构建时依赖外网）

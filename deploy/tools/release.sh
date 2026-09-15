@@ -287,8 +287,14 @@ ok "计划重建：$PLAN"
 if [ "$WANT_NGINX" -eq 1 ] || [ "$WANT_BACKEND" -eq 1 ]; then
   step "4/7 构建镜像"
   note "构建日志同时落到 $LOG，可另开会话 grep"
-  note "⚠️ 停在 'transforming...' 是 vite 转译阶段静默，不是卡死，别 Ctrl+C"
-  [ "$WANT_BACKEND" -eq 1 ] && note "后端 Maven 编译 2 核 ECS 约 1~3 分钟（已配阿里云镜像）"
+  note "⚠️ 前端停在 'transforming...' 是 vite 转译阶段静默，不是卡死，别 Ctrl+C"
+  if [ "$WANT_BACKEND" -eq 1 ]; then
+    note "后端 Maven 会逐行打日志（-B），看到 Build Success / DONE 才算完 —— 不再是黑箱"
+    note "  2 核 ECS 通常 1~2 分钟。若超过 5 分钟零输出，另开一个终端跑这两行判断："
+    note "    top -bn1 | head -12    有 java 在吃 CPU = 正在编译，等着即可"
+    note "    free -h                swap 被打满 = 内存不够（见《日常发版手册》情况 6）"
+    note "  构建期中断是安全的：旧容器一直在跑，网站不会挂"
+  fi
 
   if [ "$DRY_RUN" -eq 1 ]; then
     [ "$WANT_BACKEND" -eq 1 ] && note "[dry-run] docker compose build --progress=plain backend"
@@ -301,10 +307,12 @@ if [ "$WANT_NGINX" -eq 1 ] || [ "$WANT_BACKEND" -eq 1 ]; then
         nginx)   [ "$WANT_NGINX" -eq 1 ]   || continue ;;
       esac
       printf '\n  %s── 构建 %s ──%s\n' "$C_B" "$svc" "$C_0"
+      _t0=$(date +%s)
       $DC build --progress=plain "$svc"
       rc=$?
-      [ "$rc" -eq 0 ] || die "$svc 构建失败（退出码 $rc）—— 完整日志：$LOG；失败前不需要回滚，旧容器还在跑"
-      ok "$svc 构建完成"
+      _dur=$(( $(date +%s) - _t0 ))
+      [ "$rc" -eq 0 ] || die "$svc 构建失败（退出码 $rc，耗时 ${_dur}s）—— 完整日志：$LOG；失败前不需要回滚，旧容器还在跑"
+      ok "$svc 构建完成（耗时 ${_dur}s）"
     done
   fi
 else

@@ -1,0 +1,11 @@
+# 9-15：compose 里 backend 的 build context 是 ./backend，所以**根目录那份
+# .dockerignore 对它完全不生效**，必须在 context 目录（也就是本文件所在处）单独放一份。
+# 否则本地构建时 target/(52M)、uploads/(34M)、pre-1.2-backup.sql、run*.log 会全部
+# 被打包进构建上下文上传给 daemon，白等半天（服务器端因为这些东西没进 git，本来没事）。
+target/
+logs/
+uploads/
+*.log
+*.iml
+.idea/
+/pre-1.2-backup.sql
