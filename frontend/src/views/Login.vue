@@ -17,7 +17,8 @@
       <el-form @submit.prevent="submit">
         <!-- 账号输入：实时剔除非法字符（中文 / 空格 / 特殊符号）。
              ⚠️ 特意放行 @ 和 . —— 为将来「邮箱登录」留口子，不做粗暴剔除；
-             真能否用于注册由 submit() 在注册分支按 USERNAME_RULE 判定。 -->
+             真能否用于注册由 submit() 在注册分支按 USERNAME_RULE 判定。
+             提示语必须列出「放行的全部字符」，详见 USERNAME_TYPABLE 上方注释。 -->
         <el-input
           v-model="username"
           placeholder="用户名"
@@ -46,7 +47,14 @@
         </el-checkbox>
       </el-form>
 
-      <p class="hint">账号 3-20 位，仅字母 / 数字 / 下划线；密码 6-32 位</p>
+      <!-- ⚠️ 这句话必须与 USERNAME_TYPABLE 的实际放行范围逐字对应：
+           能输什么、这里就写什么，否则就是「能输 @ . 却只提下划线」那种自相矛盾。
+           💡 用显式 <br> 主动断行：让浏览器自动折行会在「暂未开放」这种词中间断开（实测很难看），
+           这里把「账号可输入哪些字符」和「@/. 的状态 + 密码规则」拆成两条语义完整的短行。 -->
+      <p class="hint">
+        账号 3-20 位：字母 / 数字 / 下划线 / @ / .<br />
+        @ 和 . 暂不能注册；密码 6-32 位
+      </p>
     </div>
   </div>
 </template>
@@ -71,19 +79,27 @@ const agreed = ref(false)
 /** 账号规则：与后端 `RegisterRequest#username` 及「修改账号」完全一致。 */
 const USERNAME_RULE = /^[A-Za-z0-9_]{3,20}$/
 /**
- * 实时过滤时**允许**的字符 —— 除规则内的字母/数字/下划线外，额外放行 `@` 和 `.`。
- * 目的：不把「用户想输邮箱」的字符当场吃掉，为将来支持邮箱登录留口子；
- * 这两个字符当下能否用于注册，由 submit() 里一条专门提示兜住。
+ * 实时过滤的**取反**字符类 —— 即「可以留在输入框里」的字符集：
+ * 字母 / 数字 / 下划线，外加 `@` 和 `.`（为将来「邮箱登录」留口子）。
+ *
+ * 🚨 改这个正则就必须同步改三处文案（曾因此出过 bug）：
+ *   ① 下方 tipUsernameOnce() 的提示语  ② 模板里的 `.hint`  ③ submit() 的 @/. 专门提示
+ *   2026-09-15 用户实测反馈：能输 `@` `.` `_`，提示却只说「字母、数字、下划线」——自相矛盾。
+ *   现决策（用户选定）：**保留 @/. 可输入**，把文案改成与实际放行范围一致。
  */
 const USERNAME_TYPABLE = /[^A-Za-z0-9_@.]/g
+/** 与 USERNAME_TYPABLE 互补，用于回显「刚才被吃掉的字符」。 */
+const USERNAME_DROP = /[^A-Za-z0-9_@.]/g
 
 let lastTipAt = 0
 /** 过滤提示节流：2.5s 内只弹一次，避免连续输入时刷屏。 */
-function tipUsernameOnce() {
+function tipUsernameOnce(dropped) {
   const now = Date.now()
   if (now - lastTipAt < 2500) return
   lastTipAt = now
-  ElMessage.warning('账号只能包含字母、数字和下划线')
+  // 回显被剔除的字符：否则用户只会觉得"字打了却消失"，不知道是自己打了非法字符
+  const shown = dropped?.length ? `（已忽略：${dropped.join(' ')}）` : ''
+  ElMessage.warning(`账号只能输入字母、数字、下划线、@ 和 .${shown}`)
 }
 
 /**
@@ -92,10 +108,15 @@ function tipUsernameOnce() {
  * handleInput —— 所以中文输入能被完整过滤，且不会打断输入法候选框。
  */
 function onUsernameInput(val) {
-  const cleaned = String(val ?? '').replace(USERNAME_TYPABLE, '')
-  if (cleaned === val) return
+  const raw = String(val ?? '')
+  const cleaned = raw.replace(USERNAME_TYPABLE, '')
+  if (cleaned === raw) return
   username.value = cleaned
-  tipUsernameOnce()
+  // 去重后回显（空格用「空格」表示，否则提示里看不见）
+  const dropped = [...new Set(raw.match(USERNAME_DROP) || [])].map((c) =>
+    c === ' ' ? '空格' : c
+  )
+  tipUsernameOnce(dropped)
 }
 
 async function submit() {
@@ -105,7 +126,7 @@ async function submit() {
   // C4：注册才校验账号格式与协议；登录**不校验字符集**（老账号、将来的邮箱登录都不该被卡）
   if (mode.value === 'register') {
     if (/[@.]/.test(u)) {
-      return ElMessage.warning('邮箱注册暂未开放，请使用字母 / 数字 / 下划线的账号')
+      return ElMessage.warning('邮箱注册暂未开放：账号暂不支持 @ 和 .，请改用字母 / 数字 / 下划线')
     }
     if (!USERNAME_RULE.test(u)) {
       return ElMessage.warning('账号需为 3-20 位字母、数字或下划线')
@@ -245,6 +266,7 @@ function enterGuest() {
   font-size: 11.5px;
   color: var(--t3);
   text-align: center;
+  line-height: 1.7;
 }
 /* C3：协议勾选行（置于「游客浏览」下方；注册时未勾选会被拦截）
    ⚠️ el-checkbox 默认 white-space:nowrap —— 这行文案不可收缩，会把 .login-wrap 的

@@ -5,10 +5,12 @@
  *   C 注册未勾选协议被拦截
  *   D 点协议链接不误勾选
  *   E 账号字符过滤（中文 / 特殊符号实时剔除；@ 和 . 放行；非法账号提交被拦）
+ *   E2 提示文案与放行范围一致（能输什么就必须提示什么 —— 2026-09-15 用户实测发现的矛盾）
  *   F 窄屏无横向溢出
  *   G 控制台无硬错误
  * 需要：dev server 或 preview 产物在 5173（WEB_BASE 可覆盖）
- * ⚠️ C4 会真的发一次注册请求，用以证明协议校验已放行 —— 假定后端未启动（请求失败不跳转）。
+ * ⚠️ C3 会真的发一次注册请求，用以证明协议校验已放行；用的是**已存在账号** yumu，
+ *    因此后端在跑（返回 409）或没跑（请求失败）都不会新建数据、也不会跳转。
  */
 const { chromium } = require('playwright-core')
 const EXE = 'C:/Program Files/Google/Chrome/Application/chrome.exe'
@@ -117,7 +119,12 @@ const toLogin = async (page) => {
 
   console.log('--- C. 注册拦截（未勾选不放行）---')
   // 必须先填账号密码：否则会先命中「请输入用户名和密码」，测不到后续分支
-  const probeUser = 'probe_' + Date.now().toString(36)
+  // 🚨 用**已存在的账号**（种子里的 yumu）而不是随机 probe_xxx：
+  //    C3 会真的发一次注册请求以证明协议校验已放行 —— 若拿随机名且本地后端恰好在跑，
+  //    就会在库里落一个测试账号并跳转首页，连带让 D 组找不到元素。
+  //    用已存在账号时后端返回 409「用户名已存在」：既证明请求发出去了，又零写入。
+  //    2026-09-15 实测踩过：上一轮 java 进程没杀干净 → 真建了 1 个 probe_ 账号（已清理）。
+  const probeUser = 'yumu'
   await userField(page).fill(probeUser)
   await passField(page).fill('probe123456')
   await page.click('.submit')
@@ -133,6 +140,8 @@ const toLogin = async (page) => {
   await page.waitForTimeout(1500)
   const m2 = await lastMsg(page)
   ok(!/协议/.test(m2), `C3 勾选后协议校验放行、不再拦协议（"${m2}"）`)
+  // tripwire：一旦真注册成功，说明本次测试污染了数据库，必须立刻暴露而不是静默通过
+  ok(!/注册成功/.test(m2), `C4 未真的建号（后端已存在该账号，应返回冲突而非注册成功）→ "${m2}"`)
 
   console.log('--- D. 协议链接（点链接不应误勾选）---')
   await clearMsgs(page)
@@ -173,13 +182,35 @@ const toLogin = async (page) => {
   const afterUnder = await typeAndRead('abc_def_123')
   ok(afterUnder === 'abc_def_123', `E4 下划线放行（与「修改账号」规则一致）→ "${afterUnder}"`)
 
+  console.log('--- E2. 提示文案必须与放行范围一致（2026-09-15 回归点）---')
+  // 回归来源：能输 @ . _ ，但提示只写「字母、数字、下划线」→ 用户一眼看出自相矛盾。
+  // 这里把「文案」和「行为」绑死：改了放行正则而忘了改文案，本组必红。
+  await clearMsgs(page)
+  await page.waitForTimeout(2600) // 越过 tipUsernameOnce 的 2.5s 节流
+  const afterMix = await typeAndRead('ab@c.d_中')
+  ok(afterMix === 'ab@c.d_', `E7 混合输入只剔中文、@ . _ 全留（"ab@c.d_中" → "${afterMix}"）`)
+  await page.waitForTimeout(300)
+  const tip = await lastMsg(page)
+  // 注意：文案里「下划线」是中文词，不是字面量 `_`；字符类只对 @ 和 . 取字面量
+  const coversAll = (s) =>
+    ['@', '.'].every((c) => s.includes(c)) &&
+    /字母/.test(s) && /数字/.test(s) && /下划线/.test(s)
+  ok(coversAll(tip), `E8 过滤提示列出了全部放行字符（字母/数字/下划线/@/.）→ "${tip}"`)
+  ok(/中/.test(tip), `E9 提示回显被剔除的字符，用户知道哪些字被吃了 → "${tip}"`)
+
+  const hintText = await page.evaluate(
+    () => document.querySelector('.hint')?.textContent.replace(/\s+/g, '') || ''
+  )
+  ok(coversAll(hintText) && /3-20/.test(hintText), `E10 底部说明与实际放行范围一致 → "${hintText}"`)
+  ok(!/仅字母\/数字\/下划线；密码/.test(hintText), 'E11 底部说明不再出现"仅字母/数字/下划线"的旧口径')
+
   await clearMsgs(page)
   await userField(page).fill('abc@def')
   await passField(page).fill('probe123456')
   await page.click('.submit')
   await page.waitForTimeout(700)
   const mAt = await lastMsg(page)
-  ok(/邮箱/.test(mAt), `E5 填邮箱格式提交 → 提示邮箱注册未开放（"${mAt}"）`)
+  ok(/邮箱/.test(mAt) && /@/.test(mAt), `E5 填邮箱格式提交 → 提示邮箱注册未开放（"${mAt}"）`)
 
   await clearMsgs(page)
   await userField(page).fill('ab')
