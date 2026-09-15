@@ -1,8 +1,14 @@
 /**
- * 登录页回归：①「游客浏览」按钮与「登录」按钮对齐（曾经被 Element 的
- * `.el-button + .el-button{margin-left:12px}` 顶右 12px）② 协议勾选框存在、
- * 注册未勾选被拦截、点协议链接不会误勾选。
+ * 登录页回归：
+ *   A 按钮对齐（「游客浏览」曾被 Element 的 `.el-button + .el-button{margin-left:12px}` 顶右 12px）
+ *   B 协议勾选行**只在「注册」Tab 出现**（2026-09-15 新行为：登录不涉及协议签署）
+ *   C 注册未勾选协议被拦截
+ *   D 点协议链接不误勾选
+ *   E 账号字符过滤（中文 / 特殊符号实时剔除；@ 和 . 放行；非法账号提交被拦）
+ *   F 窄屏无横向溢出
+ *   G 控制台无硬错误
  * 需要：dev server 或 preview 产物在 5173（WEB_BASE 可覆盖）
+ * ⚠️ C4 会真的发一次注册请求，用以证明协议校验已放行 —— 假定后端未启动（请求失败不跳转）。
  */
 const { chromium } = require('playwright-core')
 const EXE = 'C:/Program Files/Google/Chrome/Application/chrome.exe'
@@ -19,6 +25,16 @@ const lastMsg = (page) => page.evaluate(() => {
   const last = all[all.length - 1]
   return last ? last.textContent.replace(/\s+/g, ' ').trim() : ''
 })
+const userField = (page) => page.locator('.el-input__inner').nth(0)
+const passField = (page) => page.locator('.el-input__inner').nth(1)
+const toRegister = async (page) => {
+  await page.click('.tabs button:nth-child(2)')
+  await page.waitForTimeout(400)
+}
+const toLogin = async (page) => {
+  await page.click('.tabs button:nth-child(1)')
+  await page.waitForTimeout(400)
+}
 
 ;(async () => {
   const browser = await chromium.launch({ executablePath: EXE, headless: true })
@@ -50,7 +66,6 @@ const lastMsg = (page) => page.evaluate(() => {
       card: box('.login-card'),
       guestML: g ? getComputedStyle(g).marginLeft : null,
       cardPadR: parseFloat(cs.paddingRight),
-      cardPadL: parseFloat(cs.paddingLeft),
       docOver: document.documentElement.scrollWidth - document.documentElement.clientWidth
     }
   })
@@ -63,7 +78,14 @@ const lastMsg = (page) => page.evaluate(() => {
   ok(geo.guest.r <= cardInnerR + 0.5, `A6 未越出卡片内边距（${geo.guest.r} ≤ ${cardInnerR.toFixed(1)}）`)
   ok(geo.docOver <= 0, 'A7 无横向滚动溢出')
 
-  console.log('--- B. 协议勾选行 ---')
+  console.log('--- B. 协议勾选行只在「注册」Tab 出现 ---')
+  const loginTabHasAgree = await page.evaluate(() => !!document.querySelector('.agree'))
+  ok(!loginTabHasAgree, 'B1 登录 Tab 下不渲染勾选行')
+
+  await toRegister(page)
+  const activeTab = await page.evaluate(() => document.querySelector('.tabs button.active')?.textContent.trim())
+  ok(activeTab === '注册', `B2 已切到「注册」Tab（当前 ${activeTab}）`)
+
   const cb = await page.evaluate(() => {
     const el = document.querySelector('.agree')
     if (!el) return { exists: false }
@@ -77,43 +99,40 @@ const lastMsg = (page) => page.evaluate(() => {
       guestBottom: +document.querySelector('.guest').getBoundingClientRect().bottom.toFixed(1)
     }
   })
-  ok(cb.exists, 'B1 协议勾选行已渲染')
-  ok(cb.exists && cb.checked === false, 'B2 默认未勾选')
-  ok(cb.exists && /我已阅读并同意/.test(cb.text), 'B3 文案含「我已阅读并同意」')
-  ok(cb.exists && /用户协议/.test(cb.text) && /隐私政策/.test(cb.text), 'B4 文案含两份协议名')
-  ok(cb.exists && cb.agreement && cb.privacy, 'B5 《用户协议》《隐私政策》链接指向 /agreement、/privacy')
-  ok(cb.exists && cb.boxTop >= cb.guestBottom - 1, `B6 位于「游客浏览」下方（勾选 top ${cb.boxTop} ≥ 按钮 bottom ${cb.guestBottom}）`)
+  ok(cb.exists, 'B3 注册 Tab 下勾选行已渲染')
+  ok(cb.exists && cb.checked === false, 'B4 默认未勾选')
+  ok(cb.exists && /我已阅读并同意/.test(cb.text), 'B5 文案含「我已阅读并同意」')
+  ok(cb.exists && /用户协议/.test(cb.text) && /隐私政策/.test(cb.text), 'B6 文案含两份协议名')
+  ok(cb.exists && cb.agreement && cb.privacy, 'B7 《用户协议》《隐私政策》链接指向 /agreement、/privacy')
+  ok(cb.exists && cb.boxTop >= cb.guestBottom - 1, `B8 位于「游客浏览」下方（勾选 top ${cb.boxTop} ≥ 按钮 bottom ${cb.guestBottom}）`)
   const innerBg = await page.evaluate(() => {
     const el = document.querySelector('.agree .el-checkbox__inner')
     return el ? getComputedStyle(el).backgroundColor : null
   })
-  ok(innerBg && innerBg !== 'rgb(255, 255, 255)', `B7 未勾选框已适配暗色主题，非纯白填充（${innerBg}）`)
+  ok(innerBg && innerBg !== 'rgb(255, 255, 255)', `B9 未勾选框已适配暗色主题，非纯白填充（${innerBg}）`)
+
+  await toLogin(page)
+  ok(!(await page.evaluate(() => !!document.querySelector('.agree'))), 'B10 切回登录 Tab 勾选行再次消失')
+  await toRegister(page)
 
   console.log('--- C. 注册拦截（未勾选不放行）---')
-  await page.click('.tabs button:nth-child(2)')
-  await page.waitForTimeout(400)
-  const activeTab = await page.evaluate(() => document.querySelector('.tabs button.active')?.textContent.trim())
-  ok(activeTab === '注册', `C1 已切到「注册」Tab（当前 ${activeTab}）`)
-  ok(await page.evaluate(() => !!document.querySelector('.agree')), 'C2 注册模式下勾选行仍在')
-
-  // 必须先填账号密码：否则会先命中「请输入用户名和密码」，测不到协议分支
+  // 必须先填账号密码：否则会先命中「请输入用户名和密码」，测不到后续分支
   const probeUser = 'probe_' + Date.now().toString(36)
-  const fields = page.locator('.el-input__inner')
-  await fields.nth(0).fill(probeUser)
-  await fields.nth(1).fill('probe123456')
+  await userField(page).fill(probeUser)
+  await passField(page).fill('probe123456')
   await page.click('.submit')
   await page.waitForTimeout(700)
   const m1 = await lastMsg(page)
-  ok(/协议/.test(m1), `C3 已填账号密码但未勾选 → 被协议拦截（"${m1}"）`)
+  ok(/协议/.test(m1), `C1 已填合法账号密码但未勾选 → 被协议拦截（"${m1}"）`)
 
   await clearMsgs(page)
   await page.click('.agree .el-checkbox__input')
   await page.waitForTimeout(300)
-  ok(await page.evaluate(() => document.querySelector('.agree').classList.contains('is-checked')), 'C4 点击方块可勾选')
+  ok(await page.evaluate(() => document.querySelector('.agree').classList.contains('is-checked')), 'C2 点击方块可勾选')
   await page.click('.submit')
   await page.waitForTimeout(1500)
   const m2 = await lastMsg(page)
-  ok(!/协议/.test(m2), `C5 勾选后协议校验放行、不再拦协议（"${m2}"）`)
+  ok(!/协议/.test(m2), `C3 勾选后协议校验放行、不再拦协议（"${m2}"）`)
 
   console.log('--- D. 协议链接（点链接不应误勾选）---')
   await clearMsgs(page)
@@ -132,9 +151,44 @@ const lastMsg = (page) => page.evaluate(() => {
 
   await page.goto(BASE + '/login', { waitUntil: 'domcontentloaded' }).catch(() => {})
   await page.waitForTimeout(1200)
+  await toRegister(page)
   ok(await page.evaluate(() => !!document.querySelector('a[href="/privacy"]')), 'D3 《隐私政策》链接存在')
 
-  console.log('--- E. 窄屏 ---')
+  console.log('--- E. 账号字符过滤（字母 / 数字 / 下划线，放行 @ 和 .）---')
+  const typeAndRead = async (input) => {
+    await userField(page).fill(input)
+    await page.waitForTimeout(200)
+    return userField(page).inputValue()
+  }
+
+  const afterCn = await typeAndRead('测试abc')
+  ok(afterCn === 'abc', `E1 中文被实时剔除（"测试abc" → "${afterCn}"）`)
+
+  const afterSym = await typeAndRead('ab c#$d')
+  ok(afterSym === 'abcd', `E2 空格与特殊符号被剔除（"ab c#$d" → "${afterSym}"）`)
+
+  const afterAt = await typeAndRead('abc@def.com')
+  ok(afterAt === 'abc@def.com', `E3 @ 与 . 放行、原样保留（为将来邮箱登录铺垫）→ "${afterAt}"`)
+
+  const afterUnder = await typeAndRead('abc_def_123')
+  ok(afterUnder === 'abc_def_123', `E4 下划线放行（与「修改账号」规则一致）→ "${afterUnder}"`)
+
+  await clearMsgs(page)
+  await userField(page).fill('abc@def')
+  await passField(page).fill('probe123456')
+  await page.click('.submit')
+  await page.waitForTimeout(700)
+  const mAt = await lastMsg(page)
+  ok(/邮箱/.test(mAt), `E5 填邮箱格式提交 → 提示邮箱注册未开放（"${mAt}"）`)
+
+  await clearMsgs(page)
+  await userField(page).fill('ab')
+  await page.click('.submit')
+  await page.waitForTimeout(700)
+  const mShort = await lastMsg(page)
+  ok(/3-20/.test(mShort), `E6 账号过短（2 位）提交被拦（"${mShort}"）`)
+
+  console.log('--- F. 窄屏 ---')
   await page.setViewportSize({ width: 360, height: 720 })
   await page.goto(BASE + '/login', { waitUntil: 'domcontentloaded' }).catch(() => {})
   await page.waitForTimeout(1200)
@@ -147,24 +201,34 @@ const lastMsg = (page) => page.evaluate(() => {
     }
     return {
       over: document.documentElement.scrollWidth - document.documentElement.clientWidth,
-      submit: b('.submit'), guest: b('.guest'), agree: b('.agree')
+      submit: b('.submit'), guest: b('.guest')
     }
   })
-  ok(mob.over <= 0, `E1 360px 无横向溢出（溢出 ${mob.over}px）`)
-  ok(mob.submit && mob.guest && Math.abs(mob.guest.l - mob.submit.l) <= 0.5, 'E2 窄屏下两按钮仍左缘对齐')
-  ok(!!mob.agree, 'E3 窄屏下勾选行仍渲染')
+  ok(mob.over <= 0, `F1 360px 无横向溢出（溢出 ${mob.over}px）`)
+  ok(mob.submit && mob.guest && Math.abs(mob.guest.l - mob.submit.l) <= 0.5, 'F2 窄屏下两按钮仍左缘对齐')
+
+  await toRegister(page)
+  const mobAgree = await page.evaluate(() => {
+    const el = document.querySelector('.agree')
+    if (!el) return null
+    const r = el.getBoundingClientRect()
+    return { over: document.documentElement.scrollWidth - document.documentElement.clientWidth, r: +r.right.toFixed(1) }
+  })
+  ok(mobAgree && mobAgree.over <= 0, `F3 窄屏注册 Tab 下勾选行渲染且不溢出（溢出 ${mobAgree ? mobAgree.over : 'n/a'}px）`)
 
   await page.setViewportSize({ width: 1080, height: 620 })
   await page.waitForTimeout(400)
   await page.goto(BASE + '/login', { waitUntil: 'domcontentloaded' }).catch(() => {})
   await page.waitForTimeout(1200)
   await page.screenshot({ path: 'login-desktop.png' })
+  await toRegister(page)
+  await page.screenshot({ path: 'login-register-tab.png' })
 
-  console.log('--- F. 控制台 ---')
-  // C5 会真的发起一次注册请求（用于证明协议校验已放行），后端未启动时必然产生
+  console.log('--- G. 控制台 ---')
+  // C3 会真的发起一次注册请求（用于证明协议校验已放行），后端未启动时必然产生
   // "Failed to load resource" 类 console error —— 属预期噪声，不计入硬错误。
   const hard = errors.filter((e) => !/Failed to load resource/.test(e))
-  ok(hard.length === 0, `F1 无 pageerror / 未注册组件告警（${hard.length} 条硬错误）`)
+  ok(hard.length === 0, `G1 无 pageerror / 未注册组件告警（${hard.length} 条硬错误）`)
   if (errors.length) console.log(`（另有 ${errors.length} 条已记录，含预期的接口失败）`)
   hard.forEach((e) => console.log('  ' + e))
 

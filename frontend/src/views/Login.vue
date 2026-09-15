@@ -15,7 +15,16 @@
       </div>
 
       <el-form @submit.prevent="submit">
-        <el-input v-model="username" placeholder="用户名 / 邮箱" size="large" :prefix-icon="User" />
+        <!-- 账号输入：实时剔除非法字符（中文 / 空格 / 特殊符号）。
+             ⚠️ 特意放行 @ 和 . —— 为将来「邮箱登录」留口子，不做粗暴剔除；
+             真能否用于注册由 submit() 在注册分支按 USERNAME_RULE 判定。 -->
+        <el-input
+          v-model="username"
+          placeholder="用户名"
+          size="large"
+          :prefix-icon="User"
+          @input="onUsernameInput"
+        />
         <el-input
           v-model="password"
           type="password"
@@ -28,7 +37,8 @@
           {{ mode === 'login' ? '登录' : '注册并登录' }}
         </el-button>
         <el-button text size="large" class="guest" @click="enterGuest">游客浏览</el-button>
-        <el-checkbox v-model="agreed" class="agree" size="small">
+        <!-- C3：协议勾选**只在注册 Tab 出现** —— 登录不涉及协议签署，摆在登录表单里是噪音。 -->
+        <el-checkbox v-if="mode === 'register'" v-model="agreed" class="agree" size="small">
           我已阅读并同意
           <router-link to="/agreement" class="agree-link" @click.stop>《用户协议》</router-link>
           与
@@ -36,7 +46,7 @@
         </el-checkbox>
       </el-form>
 
-      <p class="hint">已接入后端：用户名 3-20 位、密码 6-32 位；未注册可直接「注册并登录」</p>
+      <p class="hint">账号 3-20 位，仅字母 / 数字 / 下划线；密码 6-32 位</p>
     </div>
   </div>
 </template>
@@ -55,16 +65,55 @@ const mode = ref('login')
 const username = ref('')
 const password = ref('')
 const loading = ref(false)
-// C3：注册协议勾选状态（仅注册校验，登录不要求）
+// C3：注册协议勾选状态（仅注册校验，登录不要求；勾选行本身也只在注册 Tab 渲染）
 const agreed = ref(false)
+
+/** 账号规则：与后端 `RegisterRequest#username` 及「修改账号」完全一致。 */
+const USERNAME_RULE = /^[A-Za-z0-9_]{3,20}$/
+/**
+ * 实时过滤时**允许**的字符 —— 除规则内的字母/数字/下划线外，额外放行 `@` 和 `.`。
+ * 目的：不把「用户想输邮箱」的字符当场吃掉，为将来支持邮箱登录留口子；
+ * 这两个字符当下能否用于注册，由 submit() 里一条专门提示兜住。
+ */
+const USERNAME_TYPABLE = /[^A-Za-z0-9_@.]/g
+
+let lastTipAt = 0
+/** 过滤提示节流：2.5s 内只弹一次，避免连续输入时刷屏。 */
+function tipUsernameOnce() {
+  const now = Date.now()
+  if (now - lastTipAt < 2500) return
+  lastTipAt = now
+  ElMessage.warning('账号只能包含字母、数字和下划线')
+}
+
+/**
+ * 输入即时清洗。
+ * 💡 Element Plus 在 IME 组合期间（isComposing）**不会**更新 v-model，组合结束才补一次
+ * handleInput —— 所以中文输入能被完整过滤，且不会打断输入法候选框。
+ */
+function onUsernameInput(val) {
+  const cleaned = String(val ?? '').replace(USERNAME_TYPABLE, '')
+  if (cleaned === val) return
+  username.value = cleaned
+  tipUsernameOnce()
+}
 
 async function submit() {
   const u = username.value.trim()
   const p = password.value.trim()
   if (!u || !p) return ElMessage.warning('请输入用户名和密码')
-  // C3：注册必须先勾选协议
-  if (mode.value === 'register' && !agreed.value) {
-    return ElMessage.warning('请先阅读并勾选《用户协议》与《隐私政策》')
+  // C4：注册才校验账号格式与协议；登录**不校验字符集**（老账号、将来的邮箱登录都不该被卡）
+  if (mode.value === 'register') {
+    if (/[@.]/.test(u)) {
+      return ElMessage.warning('邮箱注册暂未开放，请使用字母 / 数字 / 下划线的账号')
+    }
+    if (!USERNAME_RULE.test(u)) {
+      return ElMessage.warning('账号需为 3-20 位字母、数字或下划线')
+    }
+    // C3：注册必须先勾选协议
+    if (!agreed.value) {
+      return ElMessage.warning('请先阅读并勾选《用户协议》与《隐私政策》')
+    }
   }
   loading.value = true
   try {
