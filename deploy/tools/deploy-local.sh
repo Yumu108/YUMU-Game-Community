@@ -52,7 +52,7 @@ BACKEND_JAR="$ROOT_DIR/backend/target/$JAR_NAME"
 FRONTEND_DIST="$ROOT_DIR/frontend/dist"
 MAVEN_BIN="${MAVEN_BIN:-D:\\maven\\apache-maven-3.9.9\\bin\\mvn.cmd}"
 
-MODE=auto; DO_PUSH=1; DRY=0; ALLOW_DIRTY=0; SKIP_BUILD=0
+MODE=auto; DO_PUSH=1; DRY=0; ALLOW_DIRTY=0; SKIP_BUILD=0; FORCE_BUNDLE=0
 
 SSH_OPTS=(-i "$SSH_KEY" -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=accept-new
           -o ConnectTimeout=15 -o ServerAliveInterval=15 -o LogLevel=ERROR)
@@ -90,6 +90,7 @@ while [ $# -gt 0 ]; do
   case "$1" in
     frontend|backend|all) MODE="$1" ;;
     --no-push)     DO_PUSH=0 ;;
+    --bundle)      FORCE_BUNDLE=1 ;;
     --dry-run)     DRY=1 ;;
     --allow-dirty) ALLOW_DIRTY=1 ;;
     --reuse-build) SKIP_BUILD=1 ;;
