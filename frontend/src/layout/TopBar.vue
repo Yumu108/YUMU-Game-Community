@@ -140,6 +140,9 @@ import { Bell, ChatDotRound, Search, Grid, CaretBottom, Close } from '@element-p
 import { useUserStore, useGameStore } from '@/store'
 import { wsManager } from '@/utils/websocket'
 import { isChattingWith, readTick } from '@/utils/chatState'
+// 通知统一走 notifyOnce：屏幕上任何时刻最多 1 条（原先 ElNotification 直接弹，
+// 一次来 4 条私信就叠成 330×336 的一大片白，挡住页面）
+import { notifyOnce, closeNotify } from '@/utils/notify'
 import { getUnreadCount, getUnreadMessageCount, getPointsStatus, signIn, getHotGames, getGames } from '@/api/community'
 
 const route = useRoute()
@@ -274,6 +277,7 @@ async function doSignIn() {
 }
 function logout() {
   userStore.logout()
+  closeNotify() // 清掉还挂着的私信/通知弹窗，别让下一个登录的人看到上一个人的消息
   ElMessage.success('已退出登录')
   router.push('/')
 }
@@ -294,12 +298,18 @@ function setupWs() {
       if (msg.type !== 'message' || !isChattingWith(msg.fromUserId)) refreshUnread()
     }
     if (msg.type === 'notification') {
-      ElNotification({ title: '新通知', message: msg.content || '你有新的通知', type: 'info', duration: 3000 })
+      notifyOnce({ title: '新通知', message: msg.content || '你有新的通知', type: 'info' })
     } else if (msg.type === 'message') {
       // 🚨 正开着与发信人的对话框时不弹通知：消息已经实时进聊天流了，再弹就是重复打扰
       // （9-16 用户反馈：弹窗能实时收到，但正在聊天时被弹窗打断很影响交流）。
       if (!isChattingWith(msg.fromUserId)) {
-        ElNotification({ title: '新私信', message: `${msg.fromName || '某人'}：${msg.content || ''}`, type: 'success', duration: 3000 })
+        notifyOnce({
+          title: '新私信',
+          message: `${msg.fromName || '某人'}：${msg.content || ''}`,
+          type: 'success',
+          // 同一发信人的连续消息合并成一条（新内容替换旧的），不同人则关旧弹新
+          key: `message:${msg.fromUserId || ''}`
+        })
       }
     } else if (msg.type === 'connected') {
       wsConnected.value = true

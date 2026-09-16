@@ -86,3 +86,7 @@ NVIDIA/
 
 # compose 本地/服务器覆盖文件（生产删端口映射等定制写这里，不进仓库以免 git pull 冲突）
 docker-compose.override.yml
+
+# 冒烟脚本在**项目根目录**跑时落下的截图（tests/.pw/*.png 已有单独规则；
+# 这几个是 cwd=根目录 时相对路径写出来的，别让它们把工作区弄脏挡发版）
+/login-*.png
