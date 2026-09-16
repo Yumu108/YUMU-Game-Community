@@ -228,10 +228,17 @@ else
     _t0=$(date +%s)
     # ⚠️ 本机若有 java 进程在跑这个 jar，Maven repackage 会 "Unable to rename" 失败 ——
     #    先停掉本机 8080 再发版（脚本会提示，但不替你杀进程，避免误杀你正在用的实例）
+    # ⚠️ 输出必须**先落文件再 tail**：写成 `mvn … | tail` 会把退出码换成 tail 的 0，
+    #    mvn 失败也会被当成成功，然后拿着旧 jar 去发版（2026-09-16 发现）。
+    MVN_LOG="$(mktemp)"
     if ! (cd "$ROOT_DIR/backend" && JAVA_HOME="${JAVA_HOME:-C:\\Program Files\\Java\\jdk-21}" \
-            "$MAVEN_BIN" -B -DskipTests package 2>&1 | tail -6); then
-      die "后端构建失败 —— 若日志含 Unable to rename，说明本机有 java 正在运行该 jar：先停掉 8080 再重试"
+            "$MAVEN_BIN" -B -DskipTests package > "$MVN_LOG" 2>&1); then
+      tail -20 "$MVN_LOG" | sed 's/^/     /'
+      rm -f "$MVN_LOG"
+      die "后端构建失败 —— 若上面日志含 Unable to rename，说明本机有 java 正在运行该 jar：先停掉 8080 再重试"
     fi
+    tail -4 "$MVN_LOG" | sed 's/^/     /'
+    rm -f "$MVN_LOG"
     [ -f "$BACKEND_JAR" ] || die "构建结束但没找到 jar：$BACKEND_JAR"
     ok "后端构建完成（耗时 $(( $(date +%s) - _t0 ))s，jar $(du -h "$BACKEND_JAR" | cut -f1)）"
   fi
@@ -239,9 +246,31 @@ else
   if [ "$WANT_NGINX" -eq 1 ]; then
     printf '\n  %s── 前端：npm run build ──%s\n' "$C_B" "$C_0"
     _t0=$(date +%s)
-    if ! (cd "$ROOT_DIR/frontend" && npm run build 2>&1 | tail -3); then
-      die "前端构建失败（完整输出重跑一次 npm run build 看）"
+    FE_LOG="$(mktemp)"
+    if ! (cd "$ROOT_DIR/frontend" && npm run build > "$FE_LOG" 2>&1); then
+      # 已知坑（2026-09-16 实测）：vite 构建前要清空 dist，Windows 上 dist 里某个文件被
+      # 资源管理器 / 杀软 / 索引短暂占用时，prepareOutDir 会 EBUSY 失败，而且是**间歇性**的。
+      # 解法：把 dist 整体改名挪走（改名不受批量删除守卫限制），再原地重试一次。
+      err "前端构建失败 —— 完整日志：$FE_LOG"
+      tail -12 "$FE_LOG" | sed 's/^/     /'
+      if grep -q "prepareOutDir" "$FE_LOG" && [ -d "$FRONTEND_DIST" ]; then
+        _bak="dist.bak"
+        [ -e "$ROOT_DIR/frontend/$_bak" ] && _bak="dist.bak.$(date +%Y%m%d%H%M%S)"
+        warn "疑似 dist 目录被占用（prepareOutDir）→ 移走 dist 后重试一次"
+        if mv "$FRONTEND_DIST" "$ROOT_DIR/frontend/$_bak" 2>/dev/null; then
+          note "旧 dist 已备份为 frontend/$_bak（确认新版没问题后可手工删）"
+          if ! (cd "$ROOT_DIR/frontend" && npm run build > "$FE_LOG" 2>&1); then
+            tail -20 "$FE_LOG" | sed 's/^/     /'
+            die "移走 dist 后重试仍然失败 —— 看上面日志"
+          fi
+        else
+          die "dist 改名也失败（目录被占用）—— 关掉可能占用它的程序（资源管理器/杀软）后重试"
+        fi
+      else
+        die "前端构建失败（不是 dist 占用问题）—— 看上面日志"
+      fi
     fi
+    rm -f "$FE_LOG"
     [ -f "$FRONTEND_DIST/index.html" ] || die "构建结束但没找到 $FRONTEND_DIST/index.html"
     ok "前端构建完成（耗时 $(( $(date +%s) - _t0 ))s，产物 $(du -sh "$FRONTEND_DIST" | cut -f1)）"
   fi

@@ -17,6 +17,7 @@ node_modules
 
 # 只保留 frontend/dist，排掉构建备份与前端其它中间产物
 frontend/dist_*/
+frontend/dist.bak*/
 frontend/.vite
 frontend/node_modules
 
