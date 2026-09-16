@@ -20,7 +20,13 @@
 #   bash deploy/tools/deploy-local.sh --dry-run       # 只打印计划，不构建不推送
 #   bash deploy/tools/deploy-local.sh --reuse-build   # 不重新编译，直接推现有产物
 #   bash deploy/tools/deploy-local.sh --no-push       # 跳过 git push + 服务器 pull
+#   bash deploy/tools/deploy-local.sh --bundle        # 强制走 git bundle 直传（GitHub 不可达时）
 #   bash deploy/tools/deploy-local.sh --allow-dirty   # 工作区有未提交改动也继续（不推荐）
+#
+# 关于 GitHub：本机访问 github.com:443 常被墙（需要开着 Clash）。push 失败时脚本会
+#   **自动回退**到 `git bundle` 直传 —— 把增量提交打成 bundle 走 SSH 送到服务器再 pull，
+#   完全不经过 GitHub。代价是 GitHub 上的仓库会落后，等代理恢复时记得补一次：
+#       git push origin master
 #
 # 前置条件（一次性）：
 #   1) 本机已装好 SSH 公钥到服务器：
@@ -250,22 +256,76 @@ fi
 step "4/7 同步代码到服务器"
 
 if [ "$DRY" -eq 1 ]; then
-  note "[dry-run] git push origin master"
-  note "[dry-run] ssh $DEPLOY_USER@$DEPLOY_HOST 'cd $DEPLOY_DIR && git pull --ff-only origin master'"
+  note "[dry-run] git push origin master（GitHub 不可达时自动回退到 git bundle 直传）"
+  note "[dry-run] ssh $DEPLOY_USER@$DEPLOY_HOST 'cd $DEPLOY_DIR && git pull --ff-only …'"
 elif [ "$DO_PUSH" -eq 0 ]; then
-  warn "--no-push：跳过 git push 与服务器 pull"
-  note "⚠️ 若本次**改过 Dockerfile / compose / nginx 配置**，服务器上还是旧版，构建结果可能不符预期"
+  warn "--no-push：跳过代码同步"
+  note "⚠️ 本次**改过 Dockerfile / compose / nginx 配置**的话，服务器上还是旧版，构建结果可能不符预期"
 else
-  git push origin master 2>&1 | tail -3 || die "git push 失败（网络不通时见 memory：本项目 .git/config 已配 Clash 代理 7897）"
-  REMOTE_SHA="$(R "cd $DEPLOY_DIR && git fetch -q origin master && git rev-parse origin/master" 2>/dev/null | tail -1)"
-  if [ "$REMOTE_SHA" != "$HEAD_SHA" ]; then
-    warn "远端仓库最新提交是 ${REMOTE_SHA:0:8}，本地 HEAD 是 ${HEAD_SHA:0:8} —— 确认 push 真的成功了吗"
+  USED_BUNDLE=0
+
+  if [ "$FORCE_BUNDLE" -eq 1 ]; then
+    note "--bundle：跳过 GitHub，直接用 git bundle 直传"
+    USED_BUNDLE=1
+  else
+    PUSH_OUT="$(git push origin master 2>&1)"; PUSH_RC=$?
+    printf '%s\n' "$PUSH_OUT" | tail -3 | sed 's/^/     /'
+    if [ "$PUSH_RC" -ne 0 ]; then
+      warn "git push 失败（本机访问 github.com 被墙，或 Clash 代理未开）"
+      warn "→ 自动回退到 git bundle 直传：不经过 GitHub，走 SSH 把增量提交送到服务器"
+      USED_BUNDLE=1
+    else
+      # 退出码 0 也不可信（历史上出现过「打印 Everything up-to-date、其实没推上去」），
+      # 所以照旧核验远端 sha
+      REMOTE_SHA="$(R "cd $DEPLOY_DIR && git fetch -q origin master && git rev-parse origin/master" 2>/dev/null | tail -1)"
+      if [ "$REMOTE_SHA" != "$HEAD_SHA" ]; then
+        warn "GitHub 上最新提交是 ${REMOTE_SHA:0:8}、本地是 ${HEAD_SHA:0:8} —— push 可能没真成功，改走 bundle"
+        USED_BUNDLE=1
+      fi
+    fi
   fi
-  R "cd $DEPLOY_DIR && git pull --ff-only origin master 2>&1 | tail -4"
-  # --ff-only 在服务器有手改时会失败，这里复核结果而不是只看退出码
+
+  if [ "$USED_BUNDLE" -eq 1 ]; then
+    # ---- 旁路：git bundle 增量直传（服务器能访问 GitHub 也无所谓，这条路更可靠）----
+    SERVER_SHA="$(R "cd $DEPLOY_DIR && git rev-parse HEAD" 2>/dev/null | tail -1)"
+    note "服务器当前 HEAD：${SERVER_SHA:0:8}    本地 HEAD：$(printf '%s' "$HEAD_SHA" | cut -c1-8)"
+
+    BUNDLE="$ROOT_DIR/.git/yumu-deploy.bundle"   # 放 .git 里，天然不会被提交
+    rm -f "$BUNDLE"
+    if [ -n "$SERVER_SHA" ] && git cat-file -e "${SERVER_SHA}^{commit}" 2>/dev/null; then
+      note "打包增量对象：${SERVER_SHA:0:8}..master"
+      git bundle create "$BUNDLE" "${SERVER_SHA}..master" 2>&1 | tail -2 | sed 's/^/     /' \
+        || die "git bundle 打包失败"
+    else
+      warn "服务器上的提交 ${SERVER_SHA:0:8} 不在本机仓库里（历史被重写？）→ 打包完整分支"
+      git bundle create "$BUNDLE" master 2>&1 | tail -2 | sed 's/^/     /' \
+        || die "git bundle 打包失败"
+    fi
+    [ -f "$BUNDLE" ] || die "bundle 没生成出来：$BUNDLE"
+    note "bundle 体积：$(du -h "$BUNDLE" | cut -f1)"
+
+    scp "${SCP_OPTS[@]}" -q "$BUNDLE" "$DEPLOY_USER@$DEPLOY_HOST:/tmp/yumu-deploy.bundle" \
+      || die "bundle 传输失败"
+    PULL_OUT="$(R "cd $DEPLOY_DIR && git pull --ff-only /tmp/yumu-deploy.bundle master 2>&1; rm -f /tmp/yumu-deploy.bundle" 2>&1)"
+    printf '%s\n' "$PULL_OUT" | tail -5 | sed 's/^/     /'
+    rm -f "$BUNDLE"
+  else
+    R "cd $DEPLOY_DIR && git pull --ff-only origin master 2>&1 | tail -4"
+  fi
+
+  # 同步结果复核：只看退出码不够，必须比对 sha
   DEPLOYED_SHA="$(R "cd $DEPLOY_DIR && git rev-parse HEAD" 2>/dev/null | tail -1)"
-  [ "$DEPLOYED_SHA" = "$HEAD_SHA" ] || die "服务器代码未同步到 $HEAD_SHA（当前 $DEPLOYED_SHA）—— 检查服务器工作区是否被手改"
-  ok "服务器代码已同步到 $(printf '%s' "$HEAD_SHA" | cut -c1-8)"
+  if [ "$DEPLOYED_SHA" = "$HEAD_SHA" ]; then
+    if [ "$USED_BUNDLE" -eq 1 ]; then
+      ok "服务器代码已同步到 $(printf '%s' "$HEAD_SHA" | cut -c1-8)（bundle 直传）"
+      [ "$FORCE_BUNDLE" -eq 0 ] && note "ⓘ GitHub 上的仓库仍停在旧提交 —— Clash 开起来后补一次 git push origin master 即可"
+    else
+      ok "服务器代码已同步到 $(printf '%s' "$HEAD_SHA" | cut -c1-8)"
+    fi
+  else
+    die "服务器代码没同步到 $(printf '%s' "$HEAD_SHA" | cut -c1-8)（当前 ${DEPLOYED_SHA:-未知}）——
+       常见原因：服务器上有手改的已跟踪文件挡住了 --ff-only。上去看：cd $DEPLOY_DIR && git status"
+  fi
 fi
 
 # ---------------------------------------------------------------------------
