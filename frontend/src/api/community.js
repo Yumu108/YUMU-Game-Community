@@ -754,6 +754,29 @@ export async function markMessagesRead(userId) {
   return true
 }
 
+/** 毫秒时间戳 → 'YYYY-MM-DD HH:mm'（与后端 createdAt 的展示格式保持一致）。 */
+export function fmtDateTime(ms) {
+  const d = ms ? new Date(ms) : new Date()
+  const p = (n) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`
+}
+
+/**
+ * 把 WebSocket 推送的私信帧转成与 getMessages 相同形状的消息对象，
+ * 以便不经二次拉取直接推进聊天流（推送只带 messageId/fromUserId/fromName/content/at）。
+ */
+export function messageFromPush(msg) {
+  return {
+    id: msg.messageId,
+    fromUserId: msg.fromUserId,
+    toUserId: null,
+    fromName: msg.fromName || '未知用户',
+    content: msg.content || '',
+    isRead: 0,
+    createdAt: fmtDateTime(msg.at)
+  }
+}
+
 // 私信未读总数：后端暂无聚合端点，由会话列表的 unread 累加
 export async function getUnreadMessageCount() {
   const res = await request.get('/messages/conversations')

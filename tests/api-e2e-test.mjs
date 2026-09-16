@@ -1,11 +1,18 @@
 // YUMU 游戏社区 · 后端接口端到端回归测试
 // 运行：node api-e2e-test.mjs
+//      API_BASE=http://localhost:8081/api node api-e2e-test.mjs   ← 推荐（见下）
 // 依赖：本机后端已在 http://localhost:8080/api 运行（JDK21 + MySQL8 yumu_community）
+// 🚨 环境要求：本脚本注册的测试账号**不带邮箱**（走的是 9-15 邮箱化时留的
+//      `MAIL_TEST_CODE` 测试通道豁免）⇒ **必须在开了测试通道的实例上跑**：
+//        MAIL_ENABLED=false MAIL_TEST_CODE=123456 MAIL_CODE_COOLDOWN=3 MAIL_CODE_IP_PER_HOUR=100 \
+//          java -jar backend/target/yumu-community-1.0.0.jar --server.port=8081
+//      在只读 .env（真实 SMTP、MAIL_TEST_CODE 为空）的 8080 上跑，注册会因「邮箱必填」失败，
+//      表现为**后续大面积 401**（拿不到 token），看起来像严重回归、其实只是环境不对。
 // 覆盖：鉴权/未授权/校验、板块、帖子(列表/详情/发帖/点赞/收藏/标签)、回帖楼中楼、
 //       关注、标签、搜索、统计、用户主页、私信、通知；含越权与非法输入用例。
 import crypto from 'node:crypto'
 
-const BASE = 'http://localhost:8080/api'
+const BASE = (process.env.API_BASE || 'http://localhost:8080/api').replace(/\/$/, '')
 let pass = 0, fail = 0
 const fails = []
 const T = (n) => console.log(`\n=== ${n} ===`)

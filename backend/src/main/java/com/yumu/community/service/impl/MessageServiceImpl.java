@@ -46,10 +46,13 @@ public class MessageServiceImpl implements MessageService {
                 c.setNickname(u != null ? (u.getNickname() != null ? u.getNickname() : u.getUsername()) : "未知用户");
                 c.setAvatar(u != null ? u.getAvatar() : null);
                 c.setUnread(0L);
+                // 🚨 列表已按 createdAt DESC 排序 ⇒ 每个会话**第一次**遇到的就是最新一条，
+                //    必须在新建时就赋值。若放到循环外层无条件覆盖，后面更旧的消息会把它
+                //    覆盖成「最早一条」（9-16 修：会话列表一直显示的是第一次对话的内容）。
+                c.setLastMessage(m.getContent());
+                c.setLastTime(m.getCreatedAt());
                 map.put(other, c);
             }
-            c.setLastMessage(m.getContent());
-            c.setLastTime(m.getCreatedAt());
             if (m.getToUserId().equals(userId) && (m.getIsRead() == null || m.getIsRead() == 0)) {
                 c.setUnread(c.getUnread() + 1);
             }

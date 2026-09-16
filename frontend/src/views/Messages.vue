@@ -40,15 +40,19 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, watch, nextTick } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount, watch, nextTick } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import AppLayout from '@/layout/AppLayout.vue'
 import {
   getConversations,
   getMessages,
   sendMessage,
-  markMessagesRead
+  markMessagesRead,
+  messageFromPush,
+  fmtDateTime
 } from '@/api/community'
+import { wsManager } from '@/utils/websocket'
+import { activePeerId, bumpReadTick } from '@/utils/chatState'
 import { useUserStore } from '@/store'
 
 const route = useRoute()
@@ -62,6 +66,7 @@ const conversations = ref([])
 const messages = ref([])
 const draft = ref('')
 const bodyEl = ref(null)
+let wsUnsub = null
 
 async function loadConversations() {
   conversations.value = await getConversations()
@@ -72,11 +77,65 @@ async function loadChat() {
   messages.value = page.records.slice().reverse() // 正序展示（旧→新）
   const conv = conversations.value.find((c) => c.userId === peerId.value)
   peerName.value = conv?.name || '用户'
-  await markMessagesRead(peerId.value)
-  await nextTick(() => {
+  await markReadNow()
+  await scrollToBottom()
+}
+/** 标记当前会话已读，并通知 TopBar 刷新私信未读（否则会出现「进了会话红点还在」）。 */
+async function markReadNow() {
+  if (!peerId.value) return
+  try {
+    await markMessagesRead(peerId.value)
+    bumpReadTick()
+  } catch (e) { /* 已读失败不影响聊天本身 */ }
+}
+function scrollToBottom() {
+  return nextTick(() => {
     if (bodyEl.value) bodyEl.value.scrollTop = bodyEl.value.scrollHeight
   })
 }
+/** 是否已在聊天流底部附近（决定收到新消息时要不要自动滚动，避免打断回看历史）。 */
+function isNearBottom() {
+  const el = bodyEl.value
+  if (!el) return true
+  return el.scrollHeight - el.scrollTop - el.clientHeight < 80
+}
+/**
+ * 把一条消息并入聊天流。
+ * @param {object} vo 形状同 getMessages 的记录（id 必填，用于去重）
+ * @param {boolean} force 是否强制滚到底（自己刚发出去的消息用 true）
+ * @returns {boolean} 是否真的插入了（id 为空/已存在 → false，调用方需回退为整体重拉）
+ */
+function appendMessage(vo, force = false) {
+  if (!vo || vo.id == null) return false
+  if (messages.value.some((m) => m.id === vo.id)) return false
+  const atBottom = isNearBottom()
+  messages.value.push(vo)
+  if (force || atBottom) scrollToBottom()
+  return true
+}
+
+/**
+ * WebSocket 订阅：私信实时进聊天流。
+ *
+ * ⚠️ 9-16 修：原先只有 TopBar 订阅（弹通知 + 刷红点），聊天页从不订阅 ⇒
+ *    对方发来的消息必须「返回列表再点进来」才会出现（用户反馈的原话）。
+ * 按「是否正开着发信人的会话」分两条路：
+ *   - 是 → 直接推进聊天流（按 messageId 去重）并立刻清未读；
+ *   - 否 → 重拉会话列表，更新「最新一条 + 未读徽标」，必要时冒出新会话。
+ */
+function onWsMessage(msg) {
+  if (!msg || msg.type !== 'message') return
+  if (peerId.value && Number(msg.fromUserId) === Number(peerId.value)) {
+    if (appendMessage(messageFromPush(msg))) markReadNow()
+    return
+  }
+  loadConversations().catch(() => {})
+}
+function setupWs() {
+  if (wsUnsub) return
+  wsUnsub = wsManager.onMessage(onWsMessage)
+}
+
 function open(id) {
   router.push(`/messages/${id}`)
 }
@@ -87,9 +146,26 @@ async function send() {
   const text = draft.value.trim()
   if (!text) return
   if (!peerId.value) return ElMessage.warning('请先选择一个会话')
-  await sendMessage({ toUserId: peerId.value, content: text })
+  const peer = peerId.value
+  const r = await sendMessage({ toUserId: peer, content: text })
   draft.value = ''
-  await loadChat()
+  // 本地立即入流（不等重拉）：拿得到 id 就自己拼一条，拿不到才回退整体重拉
+  const inserted = appendMessage({
+    id: r?.id,
+    fromUserId: myId.value,
+    toUserId: peer,
+    fromName: '',
+    content: text,
+    isRead: 1,
+    createdAt: fmtDateTime()
+  }, true)
+  if (!inserted) await loadChat()
+  // 顺手更新会话列表里的「最新一条」，返回列表时不用等重拉
+  const conv = conversations.value.find((c) => c.userId === peer)
+  if (conv) {
+    conv.lastMessage = text
+    conv.lastTime = fmtDateTime()
+  }
 }
 
 onMounted(async () => {
@@ -98,9 +174,16 @@ onMounted(async () => {
     router.push('/login')
     return
   }
+  setupWs()
   await loadConversations()
   if (peerId.value) await loadChat()
 })
+onBeforeUnmount(() => {
+  if (wsUnsub) { wsUnsub(); wsUnsub = null }
+  activePeerId.value = null
+})
+// 当前会话焦点：TopBar 用它决定「正在和这个人聊天时不要再弹新私信通知」
+watch(peerId, (id) => { activePeerId.value = id || null }, { immediate: true })
 watch(
   () => route.params.userId,
   async () => {

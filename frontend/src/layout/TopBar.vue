@@ -139,6 +139,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { Bell, ChatDotRound, Search, Grid, CaretBottom, Close } from '@element-plus/icons-vue'
 import { useUserStore, useGameStore } from '@/store'
 import { wsManager } from '@/utils/websocket'
+import { isChattingWith, readTick } from '@/utils/chatState'
 import { getUnreadCount, getUnreadMessageCount, getPointsStatus, signIn, getHotGames, getGames } from '@/api/community'
 
 const route = useRoute()
@@ -288,12 +289,18 @@ function setupWs() {
     if (!msg) return
     // 任意通知/私信到达 → 立即重拉未读数，铃铛/私信红点实时更新
     if (msg.type === 'notification' || msg.type === 'message') {
-      refreshUnread()
+      // 正在与该发信人聊天则跳过：这条消息马上会被标为已读，先拉一次只会闪一下红点
+      // （Messages.vue 标完已读会 bumpReadTick，那时再拉就是准确的 0）
+      if (msg.type !== 'message' || !isChattingWith(msg.fromUserId)) refreshUnread()
     }
     if (msg.type === 'notification') {
       ElNotification({ title: '新通知', message: msg.content || '你有新的通知', type: 'info', duration: 3000 })
     } else if (msg.type === 'message') {
-      ElNotification({ title: '新私信', message: `${msg.fromName || '某人'}：${msg.content || ''}`, type: 'success', duration: 3000 })
+      // 🚨 正开着与发信人的对话框时不弹通知：消息已经实时进聊天流了，再弹就是重复打扰
+      // （9-16 用户反馈：弹窗能实时收到，但正在聊天时被弹窗打断很影响交流）。
+      if (!isChattingWith(msg.fromUserId)) {
+        ElNotification({ title: '新私信', message: `${msg.fromName || '某人'}：${msg.content || ''}`, type: 'success', duration: 3000 })
+      }
     } else if (msg.type === 'connected') {
       wsConnected.value = true
     } else if (msg.type === 'status') {
@@ -325,6 +332,8 @@ watch(() => userStore.token, (tok) => {
 })
 // 路由变化时刷新未读（关注/被回复等产生通知后，回到其它页红点会更新）
 watch(() => route.fullPath, refreshUnread)
+// 聊天页标完已读 → 立刻把私信红点纠正为准确值（否则会出现"进了会话红点还在"）
+watch(readTick, refreshUnread)
 </script>
 
 <style scoped>
