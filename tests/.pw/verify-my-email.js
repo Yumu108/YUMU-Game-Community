@@ -1,10 +1,11 @@
 /**
- * 个人中心「📧 绑定邮箱」区块回归（9-15 新增功能）
+ * 个人中心「📧 绑定邮箱 / 邮箱换绑」区块回归（9-15 新增功能，9-16 按反馈微调）
  *
  *   非破坏性：**只验证「拦得住」，不做任何真实绑定/更换**（admin 那种账号一旦被改邮箱，
  *   后续其它测试脚本的登录假设就全废了）。唯一会真发出去的是几封 mock 验证码（只打后端日志）。
  *
- *   A 区块渲染（标题 / 当前邮箱 / 新邮箱 / 验证码 / 提交按钮）
+ *   A 区块渲染（标题随绑定状态变 / 当前邮箱 / 新邮箱 / 验证码 / 提交按钮）+
+ *       「当前账号」不带 @ 前缀 + **设置页全部 label 单行不换行**（9-16 新增的回归点）
  *   B 未绑定账号的分支：显示「尚未绑定」+ 提交按钮为「绑定邮箱」+ 无「原邮箱验证码」
  *   C 前端拦截：缺新邮箱 / 邮箱格式错 / 缺 6 位验证码 / 验证码错（且**不得**改掉当前邮箱）
  *   D 已绑定账号的分支（脱敏邮箱 + 「原邮箱验证码」+ 提交按钮为「确认更换」+ 缺原邮箱码被拦）
@@ -37,12 +38,16 @@ const lastMsg = (page) => page.evaluate(() => {
   const last = all[all.length - 1]
   return last ? last.textContent.replace(/\s+/g, ' ').trim() : ''
 })
-/** 「📧 绑定邮箱」那块表单（它是 .settings 里的最后一个 .set-form 之外独有的那段） */
-const emailBlock = (page) => page.locator('.pc-title:has-text("绑定邮箱")')
+/**
+ * 邮箱区块是设置页里唯一「标题含『邮箱』」的那块表单。
+ * ⚠️ 标题 9-16 起随绑定状态变：已绑定 = 「📧 邮箱换绑」，未绑定 = 「📧 绑定邮箱」
+ * —— 下面所有 page.evaluate 里都用 `/邮箱换绑|绑定邮箱/` 定位，别写死其中一个。
+ */
+const emailBlock = (page) => page.locator('.pc-title:has-text("邮箱")')
 /** 邮箱区块内的输入框：已绑定时 = [原邮箱码, 新邮箱, 新邮箱码]；未绑定时 = [新邮箱, 新邮箱码] */
 const emailInputs = (page) =>
   page.evaluate(() => {
-    const title = [...document.querySelectorAll('.pc-title')].find((h) => /绑定邮箱/.test(h.textContent))
+    const title = [...document.querySelectorAll('.pc-title')].find((h) => /邮箱换绑|绑定邮箱/.test(h.textContent))
     if (!title) return []
     const form = title.closest('.el-form')
     if (!form) return []
@@ -50,7 +55,7 @@ const emailInputs = (page) =>
   })
 const clickEmailBtn = async (page, label) => {
   await page.evaluate((lb) => {
-    const title = [...document.querySelectorAll('.pc-title')].find((h) => /绑定邮箱/.test(h.textContent))
+    const title = [...document.querySelectorAll('.pc-title')].find((h) => /邮箱换绑|绑定邮箱/.test(h.textContent))
     const form = title.closest('.el-form')
     const btn = [...form.querySelectorAll('button')].find((b) => b.textContent.trim().includes(lb))
     if (btn) btn.click()
@@ -59,7 +64,7 @@ const clickEmailBtn = async (page, label) => {
 }
 const fillEmailInput = async (page, idx, val) => {
   const handle = await page.evaluateHandle((i) => {
-    const title = [...document.querySelectorAll('.pc-title')].find((h) => /绑定邮箱/.test(h.textContent))
+    const title = [...document.querySelectorAll('.pc-title')].find((h) => /邮箱换绑|绑定邮箱/.test(h.textContent))
     const form = title.closest('.el-form')
     return form.querySelectorAll('.el-input__inner')[i]
   }, idx)
@@ -67,6 +72,30 @@ const fillEmailInput = async (page, idx, val) => {
   await el.fill(val)
   await page.waitForTimeout(150)
 }
+
+/**
+ * 量出设置页所有 label 的「实际渲染行数」与「溢出量」。
+ *
+ * ⚠️ 必须用 Range#getClientRects 数行，**不能**用 offsetHeight —— El-Plus 的 label 带固定
+ *    line-height，换行时高度未必翻倍，量高度会漏判（这正是 9-16 那个「新邮箱验证码」被挤成
+ *    「新邮箱验证」+「码」两行却没被发现的原因）。
+ * 传给 page.evaluate 的函数体里不能引用外层变量，故写成自包含的常量。
+ */
+const LABEL_PROBE = () => {
+  const out = []
+  document.querySelectorAll('.settings .el-form-item__label').forEach((l) => {
+    const t = l.textContent.replace(/\s+/g, '')
+    if (!t) return
+    const r = document.createRange()
+    r.selectNodeContents(l)
+    const tops = new Set([...r.getClientRects()].map((x) => Math.round(x.top)))
+    out.push({ t, lines: tops.size, over: Math.round(l.scrollWidth - l.clientWidth) })
+  })
+  return out
+}
+/** 把探针结果格式化成「异常 label 明细」，正常时为空串 */
+const badLabels = (list) => list.filter((x) => x.lines > 1 || x.over > 1)
+const fmtBad = (bad) => (bad.length ? '：' + bad.map((w) => `${w.t}(${w.lines} 行/溢 ${w.over}px)`).join('、') : '')
 
 async function api(method, path, body, token) {
   const r = await fetch(API + path, {
@@ -128,28 +157,55 @@ async function api(method, path, body, token) {
   }
   await openSettings()
 
-  ok(await emailBlock(page).count() === 1, 'A1 「📧 绑定邮箱」区块已渲染')
+  const adminMail = await myEmailInStore()
+  ok(await emailBlock(page).count() === 1, 'A1 邮箱区块已渲染（标题含「邮箱」的表单恰好一块）')
+
+  // 9-16：标题随绑定状态变 —— 已绑定叫「邮箱换绑」，没绑过才叫「绑定邮箱」
+  const titleText = await page.evaluate(() => {
+    const h = [...document.querySelectorAll('.pc-title')].find((x) => /邮箱/.test(x.textContent))
+    return h ? h.textContent.replace(/\s+/g, '') : ''
+  })
+  ok(adminMail ? /邮箱换绑/.test(titleText) : /绑定邮箱/.test(titleText),
+    `A1b 标题与绑定状态一致 → "${titleText}"（当前${adminMail ? '已' : '未'}绑定）`)
+
+  // 9-16：账号行去掉 @ 前缀（原先显示「@sao_bi」，容易被读成账号id 本身就含 @）
+  const accText = await page.evaluate(() => {
+    const it = [...document.querySelectorAll('.el-form-item')]
+      .find((el) => /当前账号/.test(el.querySelector('.el-form-item__label')?.textContent || ''))
+    return it ? (it.querySelector('.acc-now')?.textContent || '').trim() : ''
+  })
+  ok(accText.length > 0 && !accText.startsWith('@'), `A1c 「当前账号」不带 @ 前缀 → "${accText}"`)
+
   const blockText = await page.evaluate(() => {
-    const title = [...document.querySelectorAll('.pc-title')].find((h) => /绑定邮箱/.test(h.textContent))
+    const title = [...document.querySelectorAll('.pc-title')].find((h) => /邮箱换绑|绑定邮箱/.test(h.textContent))
     return title.closest('.el-form').textContent.replace(/\s+/g, '')
   })
   ok(/当前邮箱/.test(blockText), `A2 有「当前邮箱」一项 → "${blockText.slice(0, 60)}…"`)
   ok(/新邮箱验证码/.test(blockText), 'A3 有「新邮箱验证码」一项')
   ok(/不支持解绑/.test(blockText), 'A4 说明里写明「邮箱只支持更换，不支持解绑」')
 
-  const adminMail = await myEmailInStore()
+  // 9-16：设置页所有 label 必须单行且不溢出（原先 label-width=84px 装不下 7 个汉字的
+  // 「新邮箱验证码」，被挤成两行，与右对齐的其它 label 参差不齐）。此处是**未绑定**状态。
+  const labelBox = await page.evaluate(LABEL_PROBE)
+  const badA = badLabels(labelBox)
+  ok(labelBox.length > 0 && badA.length === 0,
+    `A5 设置页 ${labelBox.length} 个 label 全部单行且不溢出（异常 ${badA.length} 个${fmtBad(badA)}）`)
+
   const phs = await emailInputs(page)
   if (!adminMail) {
     ok(/尚未绑定/.test(blockText), `B1 未绑定账号显示「尚未绑定」提示 → "${(blockText.match(/尚未绑定[^。]*。/) || [''])[0]}"`)
     ok(/绑定邮箱/.test(blockText), 'B2 提交按钮文案为「绑定邮箱」')
     ok(!/原邮箱验证码/.test(blockText), 'B3 未绑定时不出现「原邮箱验证码」（没有原邮箱可验）')
-    ok(phs.length === 2 && phs[0].includes('要绑定'), `B4 只有「新邮箱 + 新邮箱验证码」两个输入 → [${phs}]`)
+    ok(phs.length === 2, `B4 只有「新邮箱 + 新邮箱验证码」两个输入 → [${phs}]`)
+    ok(phs[0] === '' && phs[1] === '6 位数字',
+      `B5 新邮箱框无提示词、验证码框仍保留「6 位数字」（9-16 按反馈去掉）→ [${phs}]`)
   } else {
     ok(/\*\*\*/.test(blockText), `B1 已绑定账号展示**脱敏**邮箱（不露全量）→ "${blockText.slice(0, 40)}…"`)
     ok(/原邮箱验证码/.test(blockText), 'B2 已绑定时出现「原邮箱验证码」')
     ok(/确认更换/.test(blockText), 'B3 提交按钮文案为「确认更换」')
     ok(phs.length === 3, `B4 已绑定时为「原邮箱码 / 新邮箱 / 新邮箱码」三个输入 → [${phs}]`)
-    ok(/两个验证码都通过才生效/.test(blockText), 'B5 说明里讲清「两个验证码都通过才生效」')
+    ok(phs[1] === '', `B5 新邮箱框无提示词（9-16 按反馈去掉）→ [${phs}]`)
+    ok(/两个验证码都通过才生效/.test(blockText), 'B6 说明里讲清「两个验证码都通过才生效」')
   }
   const adminMailBefore = adminMail
 
@@ -209,8 +265,21 @@ async function api(method, path, body, token) {
     ok(!!regR.data?.token, `D1 测试账号已就绪（${U} + ${M}，发码 ${sendR.code}）`)
     await loginAs(U, PW)
     await openSettings()
+
+    // 9-16：**已绑定**状态才是新文案的用武之地 —— 标题叫「邮箱换绑」，且多出一个 6 字的
+    // 「原邮箱验证码」label（未绑定状态下根本不渲染，A5 覆盖不到），一并量一次。
+    const dTitle = await page.evaluate(() => {
+      const h = [...document.querySelectorAll('.pc-title')].find((x) => /邮箱/.test(x.textContent))
+      return h ? h.textContent.replace(/\s+/g, '') : ''
+    })
+    ok(/邮箱换绑/.test(dTitle), `D1b 已绑定账号标题为「📧 邮箱换绑」（未绑定才叫「绑定邮箱」）→ "${dTitle}"`)
+    const dLabels = await page.evaluate(LABEL_PROBE)
+    const badD = badLabels(dLabels)
+    ok(badD.length === 0,
+      `D1c 已绑定状态 ${dLabels.length} 个 label 仍单行且不溢出（含「原邮箱验证码」）（异常 ${badD.length} 个${fmtBad(badD)}）`)
+
     const dBlock = await page.evaluate(() => {
-      const title = [...document.querySelectorAll('.pc-title')].find((h) => /绑定邮箱/.test(h.textContent))
+      const title = [...document.querySelectorAll('.pc-title')].find((h) => /邮箱换绑|绑定邮箱/.test(h.textContent))
       return title ? title.closest('.el-form').textContent.replace(/\s+/g, '') : ''
     })
     const dPhs = await emailInputs(page)

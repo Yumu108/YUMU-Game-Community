@@ -305,7 +305,8 @@ const placeholders = (page) =>
   const btn0 = await page.evaluate(() => document.querySelector('.code-row .code-btn')?.textContent.trim())
   ok(btn0 === '发送验证码', `J5 发码按钮初始文案为「发送验证码」→ "${btn0}"`)
   ok(await page.evaluate(() => document.querySelector('.forgot-row') === null), 'J6 注册态不显示「忘记密码？」')
-  // 真发一次（mock 模式只打日志）。用随机未注册邮箱避免 409。
+  // 真发一次（后端走日志降级时只打日志；配了真实 SMTP 时这个随机地址会被 QQ 拒收，见下方 else 分支）。
+  // 用随机未注册邮箱避免 409。
   const jMail = `pw_${Date.now().toString(36)}@qq.com`
   await emailField(page).fill(jMail)
   await page.click('.code-row .code-btn')
@@ -315,8 +316,11 @@ const placeholders = (page) =>
   if (/验证码已发送/.test(jMsg)) {
     ok(/^\d+s$/.test(btn1), `J7 发码成功 → 按钮进入 60s 冷却倒计时（实测 "${btn1}"）`)
   } else {
-    // 本地被 IP 发码上限挡住时会走这里：属环境噪声，不作为功能缺陷
-    ok(/过于频繁|稍后再试|已注册|尚未配置/.test(jMsg), `J7 未走到冷却（环境受限，非缺陷）："${jMsg}"`)
+    // 未走到冷却都属环境噪声，不是功能缺陷，分两类：
+    //   ① 后端配了真实 SMTP（MAIL_ENABLED=true）时，随机 @qq.com 地址**根本不存在**，
+    //      QQ 直接 550 拒收 → 后端 9-16 起改报 400「该邮箱地址不存在或已停用」（原先笼统报 500）；
+    //   ② 被同 IP 发码上限挡住 → 429；邮箱已被注册 → 409；后端没起 → 连不上。
+    ok(/过于频繁|稍后再试|已注册|尚未配置|不存在或已停用/.test(jMsg), `J7 未走到冷却（环境受限，非缺陷）："${jMsg}"`)
   }
 
   console.log('--- K. 窄屏 ---')

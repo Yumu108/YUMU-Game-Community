@@ -229,7 +229,7 @@
       <!-- 账号设置 -->
       <template v-else-if="tab === 'settings'">
         <div class="settings">
-          <el-form :model="profileForm" label-width="84px" class="set-form">
+          <el-form :model="profileForm" label-width="116px" class="set-form">
             <h3 class="pc-title">👤 基本资料</h3>
             <el-form-item label="昵称">
               <el-input v-model="profileForm.nickname" maxlength="50" placeholder="你的昵称" />
@@ -295,10 +295,10 @@
             <el-button type="primary" :loading="saving" @click="saveProfile">保存资料</el-button>
           </el-form>
 
-          <el-form :model="accountForm" label-width="84px" class="set-form">
+          <el-form :model="accountForm" label-width="116px" class="set-form">
             <h3 class="pc-title">🔑 登录账号</h3>
             <el-form-item label="当前账号">
-              <span class="acc-now">@{{ userStore.userInfo?.username }}</span>
+              <span class="acc-now">{{ userStore.userInfo?.username }}</span>
             </el-form-item>
             <template v-if="userStore.userInfo?.canChangeUsername">
               <el-form-item label="新账号">
@@ -306,13 +306,13 @@
                   <el-input
                     v-model="accountForm.newUsername"
                     maxlength="20"
-                    placeholder="3-20 位，仅字母/数字/下划线"
+                    placeholder="3-20 位"
                   />
                   <el-button type="primary" :loading="savingUser" @click="saveUsername">修改账号</el-button>
                 </div>
               </el-form-item>
               <el-form-item label="">
-                <span class="acc-tip">账号每年仅可修改一次，修改后下次登录请使用新账号。</span>
+                <span class="acc-tip">仅限字母、数字、下划线，长度 3-20 位；账号每年仅可修改一次，修改后下次登录请使用新账号。</span>
               </el-form-item>
             </template>
             <el-alert
@@ -327,8 +327,10 @@
 
           <!-- 9-15 邮箱：绑定 / 更换。
                只做「更换」不提供「解绑」—— 让账号永远有个可找回密码的通道。 -->
-          <el-form :model="emailForm" label-width="84px" class="set-form">
-            <h3 class="pc-title">📧 绑定邮箱</h3>
+          <el-form :model="emailForm" label-width="116px" class="set-form">
+            <!-- 标题随状态变：已绑定才叫「换绑」，还没绑过就叫「绑定」——
+                 对没绑过邮箱的人写「换绑」会让人以为系统认为他已经绑过了。 -->
+            <h3 class="pc-title">{{ hasEmail ? '📧 邮箱换绑' : '📧 绑定邮箱' }}</h3>
             <el-form-item label="当前邮箱">
               <span v-if="hasEmail" class="acc-now">{{ maskedEmail }}</span>
               <span v-else class="acc-tip">尚未绑定。绑定后即可用邮箱登录，也能自助找回密码。</span>
@@ -346,7 +348,7 @@
 
             <el-form-item label="新邮箱">
               <div class="acc-change">
-                <el-input v-model="emailForm.newEmail" placeholder="要绑定 / 更换到的邮箱" />
+                <el-input v-model="emailForm.newEmail" />
                 <el-button :disabled="newCooling > 0" :loading="newSending" @click="sendNewCode">
                   {{ newCooling > 0 ? `${newCooling}s` : '发送验证码' }}
                 </el-button>
@@ -367,7 +369,7 @@
             </el-button>
           </el-form>
 
-          <el-form :model="pwdForm" label-width="84px" class="set-form">
+          <el-form :model="pwdForm" label-width="116px" class="set-form">
             <h3 class="pc-title">🔒 修改密码</h3>
             <el-form-item label="原密码">
               <el-input v-model="pwdForm.oldPassword" type="password" show-password />
