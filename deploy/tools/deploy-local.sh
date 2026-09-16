@@ -352,9 +352,10 @@ else
 
   if [ "$WANT_NGINX" -eq 1 ]; then
     _t0=$(date +%s)
-    # 先把旧 dist 挪到 dist.prev（保留一份可回滚），再原地解包 —— 避免旧哈希资源残留
+    # 先把旧 dist 挪到 dist.prev（保留一份可回滚），再原地解包 —— 避免旧哈希资源残留。
+    # ⚠️ 别用 `[ -d dist ] && mv …`：首次发版没有 dist 时它返回 1，会撞上远端的 set -e 直接退出。
     tar -czf - -C "$ROOT_DIR/frontend" dist \
-      | R "set -e; cd $DEPLOY_DIR/frontend; [ -d dist ] && mv dist dist.prev; tar -xzf -; test -f dist/index.html && echo UNPACK_OK" \
+      | R "set -e; cd $DEPLOY_DIR/frontend; if [ -d dist ]; then rm -rf dist.prev; mv dist dist.prev; fi; tar -xzf -; test -f dist/index.html && echo UNPACK_OK" \
       | tail -2 | grep -q UNPACK_OK || die "dist 传输/解包失败"
     REMOTE_BUNDLE="$(R "grep -o 'assets/index-[A-Za-z0-9_-]*\.js' $DEPLOY_DIR/frontend/dist/index.html 2>/dev/null" | head -1)"
     if [ -n "$LOCAL_BUNDLE" ] && [ "$REMOTE_BUNDLE" != "$LOCAL_BUNDLE" ]; then
