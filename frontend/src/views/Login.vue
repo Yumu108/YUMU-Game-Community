@@ -251,13 +251,23 @@ async function submit() {
             email: email.value.trim(),
             emailCode: emailCode.value.trim()
           })
-    // 后端返回 nickname，组件统一用 userInfo.name 展示，这里做一次映射
+    // 🚨 账号（username）与昵称（nickname）是**两个东西**，必须都写进 store：
+    //   · 账号 username = 唯一标识（uk_username），用来登录，每年只能改一次
+    //   · 昵称 nickname = 展示名，可重名、可随时改，帖子里显示的是它
+    //   只存昵称的后果（9-16 实测踩到）：个人中心左栏变成「账号id:—」、
+    //   「当前账号」空白，且 canChangeUsername 缺失会被当成「不可修改」，
+    //   把改账号入口错误地锁成「账号每年可修改一次」。
     userStore.setToken(data.token)
     userStore.setUserInfo({
       id: data.user.id,
-      name: data.user.nickname,
+      username: data.user.username,
+      nickname: data.user.nickname,
+      // name = 展示名，与后端 nickname 同义（TopBar / 个人中心左栏等沿用此字段）
+      name: data.user.nickname || data.user.username,
       avatar: data.user.avatar || '🙂',
-      roles: data.user.roles
+      roles: data.user.roles,
+      canChangeUsername: data.user.canChangeUsername ?? true,
+      nextUsernameChangeAt: data.user.nextUsernameChangeAt ?? null
     })
     ElMessage.success(mode.value === 'login' ? '登录成功' : '注册成功，已自动登录')
     router.push('/')

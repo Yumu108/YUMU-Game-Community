@@ -346,16 +346,19 @@
               </div>
             </el-form-item>
 
+            <!-- 9-16 反馈：「发送验证码」按钮原先挂在新邮箱输入框右侧，把输入框挤得只剩半截，
+                 看不清自己到底输没输错邮箱 → 按钮下移到「新邮箱验证码」行，
+                 新邮箱独占整行（按行成组：验证码行右侧的按钮只作用于本行 label 对应的邮箱）。 -->
             <el-form-item label="新邮箱">
+              <el-input v-model="emailForm.newEmail" />
+            </el-form-item>
+            <el-form-item label="新邮箱验证码">
               <div class="acc-change">
-                <el-input v-model="emailForm.newEmail" />
+                <el-input v-model="emailForm.newCode" maxlength="6" placeholder="6 位数字" />
                 <el-button :disabled="newCooling > 0" :loading="newSending" @click="sendNewCode">
                   {{ newCooling > 0 ? `${newCooling}s` : '发送验证码' }}
                 </el-button>
               </div>
-            </el-form-item>
-            <el-form-item label="新邮箱验证码">
-              <el-input v-model="emailForm.newCode" maxlength="6" placeholder="6 位数字" />
             </el-form-item>
             <el-form-item label="">
               <span class="acc-tip">
@@ -811,11 +814,13 @@ async function saveUsername() {
     userStore.setUserInfo({
       ...base,
       username: info.username ?? name,
-      canChangeUsername: info.canChangeUsername ?? false,
+      // 兜底给 true：改完账号确实进入一年冷却（后端会返回 false），
+      // 但「后端没返回」不该被当成「不能改」而把入口锁死。
+      canChangeUsername: info.canChangeUsername ?? true,
       nextUsernameChangeAt: info.nextUsernameChangeAt ?? null
     })
     accountForm.value.newUsername = ''
-    ElMessage.success('账号修改成功，下次登录请使用新账号 @' + (info.username ?? name))
+    ElMessage.success('账号修改成功，下次登录请使用新账号：' + (info.username ?? name))
   } catch (e) {
     // 拦截器已提示（含「每年一次」限制、账号被占用等）
   } finally {

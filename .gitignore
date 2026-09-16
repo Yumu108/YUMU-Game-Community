@@ -13,6 +13,8 @@ dist_new/
 # `npm run build` 清 dist 会被宿主的批量删除守卫拦（SAFE_DELETE_BULK_CONFIRM_REQUIRED），
 # 惯例做法是先 Move-Item dist dist_bak —— 那是本地临时产物，一律不入库
 dist_bak*/
+# 备份也可能被临时改名成 dist_916bak 之类（避开与上一次备份重名），一并忽略
+dist_*/
 *.jar
 
 # ============================================================

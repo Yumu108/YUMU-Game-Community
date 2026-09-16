@@ -97,6 +97,33 @@ const LABEL_PROBE = () => {
 const badLabels = (list) => list.filter((x) => x.lines > 1 || x.over > 1)
 const fmtBad = (bad) => (bad.length ? '：' + bad.map((w) => `${w.t}(${w.lines} 行/溢 ${w.over}px)`).join('、') : '')
 
+/**
+ * 量邮箱表单每一行「有几个按钮 + 输入框多宽」。
+ *
+ * ⚠️ 9-16 反馈：发码按钮原先挂在新邮箱输入框右侧，把输入框挤掉一半，输错了也看不清；
+ *    修正后按钮应下移到「新邮箱验证码」行 —— 即**新邮箱行 button 数 = 0 且输入框吃满整行**。
+ * 同样必须自包含，不能引用外层变量。
+ */
+const EMAIL_ROW_PROBE = () => {
+  const title = [...document.querySelectorAll('.pc-title')].find((h) => /邮箱换绑|绑定邮箱/.test(h.textContent))
+  if (!title) return null
+  const form = title.closest('.el-form')
+  if (!form) return null
+  const rows = [...form.querySelectorAll('.el-form-item')]
+  const probe = (label) => {
+    const row = rows.find((r) => (r.querySelector('.el-form-item__label')?.textContent || '').replace(/\s+/g, '') === label)
+    if (!row) return null
+    const content = row.querySelector('.el-form-item__content')
+    const inp = row.querySelector('.el-input')
+    return {
+      btns: row.querySelectorAll('button').length,
+      inp: inp ? Math.round(inp.getBoundingClientRect().width) : 0,
+      content: content ? Math.round(content.getBoundingClientRect().width) : 0
+    }
+  }
+  return { newEmail: probe('新邮箱'), newCode: probe('新邮箱验证码'), oldCode: probe('原邮箱验证码') }
+}
+
 async function api(method, path, body, token) {
   const r = await fetch(API + path, {
     method,
@@ -175,6 +202,15 @@ async function api(method, path, body, token) {
     return it ? (it.querySelector('.acc-now')?.textContent || '').trim() : ''
   })
   ok(accText.length > 0 && !accText.startsWith('@'), `A1c 「当前账号」不带 @ 前缀 → "${accText}"`)
+  // 9-16：账号（登录名）与昵称是两个东西。这里断言「当前账号」拿到的确实是登录名本身，
+  // 而不是被昵称顶替，也不是空白 —— 根因曾是登录写 store 时只存了 name(昵称)、
+  // username 从未写入，只有切到设置页才由 syncMe() 异步补回。
+  ok(accText === ADMIN_USER,
+    `A1d 「当前账号」= 登录名「${accText}」（期望 ${ADMIN_USER}；账号 ≠ 昵称）`)
+  const sideAcc = await page.evaluate(() =>
+    (document.querySelector('.u-account')?.textContent || '').replace(/\s+/g, ''))
+  ok(/^账号id:.+/.test(sideAcc) && !sideAcc.includes('—'),
+    `A1e 左栏「${sideAcc}」拿到真实账号（修复前会显示「账号id:—」）`)
 
   const blockText = await page.evaluate(() => {
     const title = [...document.querySelectorAll('.pc-title')].find((h) => /邮箱换绑|绑定邮箱/.test(h.textContent))
@@ -190,6 +226,16 @@ async function api(method, path, body, token) {
   const badA = badLabels(labelBox)
   ok(labelBox.length > 0 && badA.length === 0,
     `A5 设置页 ${labelBox.length} 个 label 全部单行且不溢出（异常 ${badA.length} 个${fmtBad(badA)}）`)
+
+  // 9-16 反馈：新邮箱框不能被「发送验证码」挤残 —— 按钮必须已下移到「新邮箱验证码」行。
+  const rows = await page.evaluate(EMAIL_ROW_PROBE)
+  ok(rows && rows.newEmail && rows.newEmail.btns === 0 && rows.newEmail.inp >= rows.newEmail.content - 2,
+    `A6 新邮箱框独占整行、本行无按钮 → ${rows?.newEmail ? `${rows.newEmail.inp}px / 内容区 ${rows.newEmail.content}px / 按钮 ${rows.newEmail.btns} 个` : '未定位到'}`)
+  ok(rows && rows.newCode && rows.newCode.btns === 1,
+    `A7 「发送验证码」已下移到「新邮箱验证码」行右侧（按钮 ${rows?.newCode?.btns ?? '?'} 个）`)
+  if (rows && rows.oldCode) {
+    ok(rows.oldCode.btns === 1, `A8 「原邮箱验证码」行右侧同样有 1 个发码按钮（按钮 ${rows.oldCode.btns} 个）`)
+  }
 
   const phs = await emailInputs(page)
   if (!adminMail) {
@@ -211,7 +257,7 @@ async function api(method, path, body, token) {
 
   console.log('--- C. 前端拦截（未绑定账号路径）---')
   await clearMsgs(page)
-  await clickEmailBtn(page, '发送验证码') // 新邮箱那一行的按钮
+  await clickEmailBtn(page, '发送验证码') // 9-16 后该按钮属于「新邮箱验证码」行（未绑定时区块内仅此一个，find 取到它）
   ok(/请先填写新邮箱/.test(await lastMsg(page)), `C1 未填新邮箱就点发码 → 被拦（"${await lastMsg(page)}"）`)
 
   await clearMsgs(page)
@@ -277,6 +323,13 @@ async function api(method, path, body, token) {
     const badD = badLabels(dLabels)
     ok(badD.length === 0,
       `D1c 已绑定状态 ${dLabels.length} 个 label 仍单行且不溢出（含「原邮箱验证码」）（异常 ${badD.length} 个${fmtBad(badD)}）`)
+
+    // 已绑定态才有「原邮箱验证码」行 —— 此时两行验证码各带 1 个发码按钮、新邮箱行仍无按钮，
+    // 正好覆盖 A6/A7 在未绑定态量不到的那一半（A 组只有 1 个按钮存在）。
+    const dRows = await page.evaluate(EMAIL_ROW_PROBE)
+    ok(dRows?.oldCode?.btns === 1 && dRows?.newCode?.btns === 1 && dRows?.newEmail?.btns === 0
+      && dRows.newEmail.inp >= dRows.newEmail.content - 2,
+      `D1d 两行验证码各 1 个发码按钮、新邮箱行 0 个且独占整行 → 原${dRows?.oldCode?.btns ?? '?'} / 新${dRows?.newCode?.btns ?? '?'} / 邮箱${dRows?.newEmail?.btns ?? '?'}，${dRows?.newEmail?.inp}px`)
 
     const dBlock = await page.evaluate(() => {
       const title = [...document.querySelectorAll('.pc-title')].find((h) => /邮箱换绑|绑定邮箱/.test(h.textContent))
