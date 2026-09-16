@@ -1,8 +1,15 @@
 # 9-15：compose 里 backend 的 build context 是 ./backend，所以**根目录那份
 # .dockerignore 对它完全不生效**，必须在 context 目录（也就是本文件所在处）单独放一份。
-# 否则本地构建时 target/(52M)、uploads/(34M)、pre-1.2-backup.sql、run*.log 会全部
-# 被打包进构建上下文上传给 daemon，白等半天（服务器端因为这些东西没进 git，本来没事）。
-target/
+#
+# C 方案（2026-09-16）：编译改在本机做，镜像只 `COPY target/yumu-community-1.0.0.jar`，
+# 所以这里的写法很关键：
+#   · 只排 target/ 下的**中间产物**（classes、test-classes 等，共 53MB），
+#   · 用 `!` 反选**保留那个 jar**（52MB，必须进上下文，否则构建直接失败）。
+# ⚠️ 千万别写回整目录的 `target/` —— 那会把 jar 一起排掉，构建报
+#    "target/yumu-community-1.0.0.jar: not found"。
+# uploads/(34M)、run*.log、pre-1.2-backup.sql(1.2M) 与 nginx 构建无关，照旧排除。
+target/*
+!target/yumu-community-1.0.0.jar
 logs/
 uploads/
 *.log

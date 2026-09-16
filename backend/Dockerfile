@@ -1,31 +1,29 @@
-# B2：后端镜像 —— 多阶段构建（Maven 编译 → JRE 运行）
-FROM maven:3.9-eclipse-temurin-21 AS build
-WORKDIR /src
-COPY pom.xml .
-# 国内加速（9-13）：dependency:go-offline 直连 Maven Central 在国内 ECS 上常需 5~15 分钟，
-# 默认改用阿里云公共镜像（settings.xml 只镜像 central，不影响其他仓库）。
-# 可用 --build-arg MAVEN_MIRROR=... 覆盖。
-ARG MAVEN_MIRROR=https://maven.aliyun.com/repository/public
-RUN mkdir -p /root/.m2 && printf '<settings xmlns="http://maven.apache.org/SETTINGS/1.0.0"><mirrors><mirror><id>cn-mirror</id><mirrorOf>central</mirrorOf><url>%s</url></mirror></mirrors></settings>' "$MAVEN_MIRROR" > /root/.m2/settings.xml
-# 9-15：JVM 内存护栏，专治「构建到 mvn 这步就不动了」。
-#   · 不设时 Maven 按**宿主机总内存**估算堆。服务器上 mysql/redis/backend/nginx 四个容器
-#     同时在跑，Maven 再抢一大块，内存不够就狂刷 swap —— 表现就是构建长时间零进展
-#     （看着像卡死，其实在硬撑），更严重时直接被内核 OOM Killer 杀掉。
-#   · 固定上限让 Maven 与容器和平共处。机器内存大想放宽：--build-arg MAVEN_OPTS=...
-ARG MAVEN_OPTS="-Xmx768m -XX:MaxMetaspaceSize=320m -Dfile.encoding=UTF-8"
-ENV MAVEN_OPTS=$MAVEN_OPTS
-
-# 先拷 pom 下依赖，利用 Docker 层缓存加速后续构建
-RUN mvn -B dependency:go-offline -DskipTests
-COPY src ./src
-# 9-15：原来用 -q，而 Maven 的 quiet 模式**只打 ERROR** —— 整个编译过程在终端上
-#   就是一片空白，网页终端里看上去完全等同于「卡死」。改 -B（batch mode）逐行打
-#   日志，能看到 Compiling / Building jar 的真实进度，是真在跑还是真死了立刻可辨。
-#   -Dmaven.test.skip=true 比 -DskipTests 更彻底：连测试源码都不编译（本项目有单测类），
-#   实打实省掉一次 javac，小机器上提升明显。
-RUN mvn -B package -Dmaven.test.skip=true
-
+# =============================================================================
+# 后端镜像 —— **只组装，不编译**（C 方案，2026-09-16）
+# -----------------------------------------------------------------------------
+# 为什么改成纯 COPY（原先是 maven:3.9-eclipse-temurin-21 多阶段编译）：
+#
+#   线上服务器是 2 核 / **可用内存只有 1.6Gi**，而常驻进程（mysql 368M + java 245M
+#   + 宝塔面板 105M + dockerd/containerd/阿里云盾 ≈ 110M）已经吃掉约 820M。
+#   在这台机器上再跑一次 Maven（-Xmx768m + Metaspace 320m）必然把内存打爆 → 狂刷
+#   swap → 整机假死。2026-09-16 实测：/api 连续 90 秒不响应、连 nginx 都抢不到 CPU、
+#   最后整个站点无应答，多次发版全部卡死在这一步（前端 vite 同理）。
+#
+#   ⇒ 编译挪到本机（实测 mvn package 全量 17s、npm run build 8s，比服务器快一个数量级），
+#     服务器只承担「把产物装进镜像 + 跑起来」。
+#
+# 约定：构建上下文（./backend）里必须存在
+#           target/yumu-community-1.0.0.jar
+#       由本机 `bash deploy/tools/deploy-local.sh` 构建并推送。
+#   ⚠️ 因此 backend/.dockerignore 里**不能**把 target/ 整目录排掉（原先排了），
+#      只能 `target/*` + 反选 jar —— 否则 jar 进不了上下文，构建报
+#      "target/yumu-community-1.0.0.jar: not found"。
+#
+# 应急：若必须让服务器自己编译（内存吃紧时请勿），用 git 取回旧版 Dockerfile：
+#       git show 98b6820:backend/Dockerfile > backend/Dockerfile && docker compose build backend
+# =============================================================================
 FROM eclipse-temurin:21-jre
+
 # B5：healthcheck 需要 curl；若基础镜像已自带则跳过 apt（避免构建时依赖外网）
 RUN command -v curl || (apt-get update && apt-get install -y --no-install-recommends curl && rm -rf /var/lib/apt/lists/*)
 
@@ -48,7 +46,8 @@ RUN if getent passwd 1000 >/dev/null 2>&1; then userdel -r "$(getent passwd 1000
 USER 1000:1000
 
 WORKDIR /app
-COPY --from=build /src/target/yumu-community-1.0.0.jar app.jar
+# 唯一一行「真正跟代码有关」的指令：把本机构建好的可执行 jar 装进来。
+COPY target/yumu-community-1.0.0.jar app.jar
 
 # D6：JVM 内存护栏。容器被 compose 的 mem_limit 限制时，堆按容器上限的 75% 估算；
 # 不设的话 JVM 会按**宿主机总内存**估算堆，容器很容易被 OOM Killer 杀掉。

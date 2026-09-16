@@ -281,7 +281,8 @@ if [ -z "$PLAN" ] && [ "$MODE" = "auto" ]; then
   [ -n "$SQL_MIGRATIONS" ] && {
     warn "但有 SQL 迁移文件变更，需手动执行："
     printf '%s\n' "$SQL_MIGRATIONS" | sed 's/^/     /'
-    note "执行方式见《上线部署操作手册》§十 表格最后一行（脚本不自动改库，避免误伤数据）"
+    note "执行方式：手动导入（脚本不自动改库，避免误伤数据），例如："
+    note "    mysql -uroot -p\"\$DB_PASSWORD\" \"\$DB_NAME\" < <上面列出的文件>"
   }
   exit 0
 fi
@@ -336,19 +337,56 @@ if [ "$WANT_NGINX" -eq 1 ] && [ "$DRY_RUN" -eq 0 ]; then
 fi
 
 # ---------------------------------------------------------------------------
+# 3.6 构建产物预检（C 方案必需：镜像只 COPY，产物必须先在服务器上就位）
+# ---------------------------------------------------------------------------
+# 🚨 Dockerfile 已退化为纯 COPY —— 产物不在时 docker 只会甩一句
+#    "COPY failed: file not found in build context"，完全看不出该怎么办。
+#    这里提前拦，顺带打印产物的体积/时间/前端 bundle 哈希，
+#    让你能确认「要发的确实是刚构建的那一份」，而不是三天前的旧产物。
+if [ "$DRY_RUN" -eq 0 ]; then
+  MISSING=""
+
+  if [ "$WANT_BACKEND" -eq 1 ]; then
+    BJ="$ROOT_DIR/backend/target/yumu-community-1.0.0.jar"
+    if [ -f "$BJ" ]; then
+      ok "后端产物就位：$(du -h "$BJ" | cut -f1) / $(stat -c %y "$BJ" 2>/dev/null | cut -c1-16)"
+    else
+      MISSING="$MISSING backend(jar)"
+    fi
+  fi
+
+  if [ "$WANT_NGINX" -eq 1 ]; then
+    FD="$ROOT_DIR/frontend/dist"
+    if [ -f "$FD/index.html" ]; then
+      BUNDLE="$(grep -o 'assets/index-[A-Za-z0-9_-]*\.js' "$FD/index.html" 2>/dev/null | head -1)"
+      ok "前端产物就位：$(du -sh "$FD" | cut -f1) / bundle ${BUNDLE:-未知}"
+    else
+      MISSING="$MISSING frontend(dist)"
+    fi
+  fi
+
+  if [ -n "$MISSING" ]; then
+    err "缺构建产物：$MISSING —— 镜像只做 COPY，没有产物就无法构建"
+    echo
+    note "正确做法：**在本机**跑一键发版（自动编译 + 推产物 + 回调本脚本）："
+    note "    bash deploy/tools/deploy-local.sh"
+    note "若产物已在别处构建好，手动放到位即可："
+    note "    $ROOT_DIR/backend/target/yumu-community-1.0.0.jar   （本机 mvn -B -DskipTests package）"
+    note "    $ROOT_DIR/frontend/dist/index.html                  （本机 npm run build）"
+    note "⚠️ 不要退回「在服务器上编译」—— 本机 2 核 / 1.6Gi，跑 Maven 或 vite 会拖死整站"
+    die "构建产物缺失，拒绝继续"
+  fi
+fi
+
+# ---------------------------------------------------------------------------
 # 4. 构建
 # ---------------------------------------------------------------------------
 if [ "$WANT_NGINX" -eq 1 ] || [ "$WANT_BACKEND" -eq 1 ]; then
   step "4/7 构建镜像"
   note "构建日志同时落到 $LOG，可另开会话 grep"
-  note "⚠️ 前端停在 'transforming...' 是 vite 转译阶段静默，不是卡死，别 Ctrl+C"
-  if [ "$WANT_BACKEND" -eq 1 ]; then
-    note "后端 Maven 会逐行打日志（-B），看到 Build Success / DONE 才算完 —— 不再是黑箱"
-    note "  2 核 ECS 通常 1~2 分钟。若超过 5 分钟零输出，另开一个终端跑这两行判断："
-    note "    top -bn1 | head -12    有 java 在吃 CPU = 正在编译，等着即可"
-    note "    free -h                swap 被打满 = 内存不够（见《日常发版手册》情况 6）"
-    note "  构建期中断是安全的：旧容器一直在跑，网站不会挂"
-  fi
+  note "C 方案：本步只把本机编译好的产物 COPY 进镜像，**不再编译** —— 通常几秒钟"
+  note "  若这里开始出现 Compiling / vite transforming，说明 Dockerfile 被换回旧版了，"
+  note "  立刻 Ctrl+C：那等于把 1.6Gi 的机器重新推回假死（正确版本见本脚本头部说明）"
 
   if [ "$DRY_RUN" -eq 1 ]; then
     [ "$WANT_BACKEND" -eq 1 ] && note "[dry-run] docker compose build --progress=plain backend"
@@ -480,7 +518,7 @@ else
     fi
     if [ "$st" != "running" ]; then
       $DC logs --tail=20 nginx | sed 's/^/     /'
-      die "nginx 起不来（$st）—— 若日志含 host not found in upstream，见《上线部署操作手册》附录 B"
+      die "nginx 起不来（$st）—— 若日志含 host not found in upstream，说明 compose 的 depends_on 没等 backend healthy，见 docker-compose.yml 里 yumu-nginx 的注释"
     fi
     ok "yumu-nginx 运行中"
   fi

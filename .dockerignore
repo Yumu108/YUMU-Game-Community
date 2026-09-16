@@ -1,12 +1,34 @@
-# B2：构建镜像时排除无关文件（前端镜像上下文是仓库根目录）
+# B2：构建镜像时排除无关文件（nginx 镜像的构建上下文是**仓库根目录**）
+# -----------------------------------------------------------------------------
+# C 方案（2026-09-16）：前端改为**本机编译**，所以 `frontend/dist` 必须留在上下文里
+#   —— 原先那行 `**/dist` 会把它一起排掉，构建出来的镜像里没有前端产物。
+#
+# 同时把历史上白传的大目录排掉（实测：上下文 158MB → 约 5MB，每次发版少传 150MB）：
+#   backend/（含 uploads 34M、target 52M、图片资源）、frontend/dist_*（6 份构建备份）、
+#   db-backup/、tests/、docs/、logs/。nginx 镜像真正需要的只有三样：
+#   deploy/nginx/yumu.conf、deploy/nginx/security-headers.conf、frontend/dist/**。
+# ⚠️ 排除项一律用 ASCII 路径，避免 .dockerignore 在非 UTF-8 环境下匹配不到中文目录。
 .git
+.gitignore
 .workbuddy
+.deploy-state
 node_modules
 **/node_modules
-**/dist
-backend/target
-backend/*.log
+
+# 只保留 frontend/dist，排掉构建备份与前端其它中间产物
+frontend/dist_*/
+frontend/.vite
+frontend/node_modules
+
+# 与 nginx 镜像无关的整个后端 / 文档 / 测试 / 备份目录
+backend
+db-backup
 deploy/backup/backups
+docs
+logs
+tests
 uploads
+
+*.log
 *.md
 !README.md
