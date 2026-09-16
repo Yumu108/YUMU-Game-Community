@@ -1,5 +1,7 @@
 import { defineStore } from 'pinia'
 import request from '../api/request'
+import { isExpired } from '../utils/tokenAuth'
+import { silenceAuthToast } from '../utils/authToast'
 
 export { useGameStore } from './game'
 
@@ -11,16 +13,31 @@ export { useGameStore } from './game'
 let refreshPromise = null
 
 export const useUserStore = defineStore('user', {
-  state: () => ({
-    token: localStorage.getItem('token') || '',
-    userInfo: JSON.parse(localStorage.getItem('userInfo') || 'null'),
-    // 积分 / 签到：TopBar（💎 + 签到按钮）与 My.vue（积分卡片）共享同一份状态，
-    // 一边签到成功立刻反映到另一边，无需路由切换刷新。
-    points: 0,
-    signedToday: false,
-    // 通知未读数：TopBar 铃铛与 Notifications.vue 共享，标记已读后即时减数/清零。
-    unreadCount: 0
-  }),
+  state: () => {
+    // 🚨 9-16「进站即检」：上一次会话留下的 token 若**已经过期**（隔天再打开网站是最常见的场景，
+    //    access token 只有 2h），直接按"未登录"处理并把残留清掉，**不弹任何提示**。
+    //
+    //    修复前：死 token 一直躺在 localStorage 里，首屏那批并发请求（板块 / 帖子 / 未读数…）
+    //    全部带着它去撞 401 → 每个都弹一条「登录已过期，请重新登录」→
+    //    用户看到的就是"每次进网站都飘红，还一次飘好几条"。
+    //    用户并没有"被踢出"，只是上次会话早结束了 —— 这种情况不该报错，安静地回到未登录态即可。
+    const storedToken = localStorage.getItem('token') || ''
+    if (storedToken && isExpired(storedToken)) {
+      localStorage.removeItem('token')
+      localStorage.removeItem('userInfo')
+      return { token: '', userInfo: null, points: 0, signedToday: false, unreadCount: 0 }
+    }
+    return {
+      token: storedToken,
+      userInfo: JSON.parse(localStorage.getItem('userInfo') || 'null'),
+      // 积分 / 签到：TopBar（💎 + 签到按钮）与 My.vue（积分卡片）共享同一份状态，
+      // 一边签到成功立刻反映到另一边，无需路由切换刷新。
+      points: 0,
+      signedToday: false,
+      // 通知未读数：TopBar 铃铛与 Notifications.vue 共享，标记已读后即时减数/清零。
+      unreadCount: 0
+    }
+  },
   getters: {
     isLoggedIn: (state) => !!state.token,
     isAdmin: (state) =>
@@ -59,6 +76,10 @@ export const useUserStore = defineStore('user', {
       // A3：先通知服务端把当前 jti 加入黑名单（即便 token 2h 内过期，黑名单也强制立即失效）；
       // 调用失败（断网/已过期）不影响本地清理，避免影响用户退出体验。
       // _skipRenew：登出请求不走"临期续签 / 401 重试"逻辑，否则会与续签互相递归。
+      // 🚨 9-16：进静默窗口 —— 用户是**自己**点的退出，此刻仍在途的请求（未读数 / 通知 / 积分…）
+      //    还带着刚被拉黑的 token，回来必然是 401。若不静默，用户会在"已退出登录"的绿条旁边
+      //    又看到几条「登录已过期，请重新登录」的红条，像是被系统指责。
+      silenceAuthToast()
       try {
         await request.post('/auth/logout', null, { _skipRenew: true })
       } catch (_) {

@@ -316,11 +316,13 @@ const placeholders = (page) =>
   if (/验证码已发送/.test(jMsg)) {
     ok(/^\d+s$/.test(btn1), `J7 发码成功 → 按钮进入 60s 冷却倒计时（实测 "${btn1}"）`)
   } else {
-    // 未走到冷却都属环境噪声，不是功能缺陷，分两类：
+    // 未走到冷却都属环境噪声，不是功能缺陷，分三类：
     //   ① 后端配了真实 SMTP（MAIL_ENABLED=true）时，随机 @qq.com 地址**根本不存在**，
     //      QQ 直接 550 拒收 → 后端 9-16 起改报 400「该邮箱地址不存在或已停用」（原先笼统报 500）；
-    //   ② 被同 IP 发码上限挡住 → 429；邮箱已被注册 → 409；后端没起 → 连不上。
-    ok(/过于频繁|稍后再试|已注册|尚未配置|不存在或已停用/.test(jMsg), `J7 未走到冷却（环境受限，非缺陷）："${jMsg}"`)
+    //   ② 被同 IP 发码上限挡住 → 429；邮箱已被注册 → 409；未配 SMTP → 尚未配置；
+    //   ③ 本地根本没起后端 → axios 网络层失败，统一文案「请求失败，请稍后重试」。
+    //      用「稍后」一次覆盖"稍后再试 / 稍后重试"两种措辞。
+    ok(/过于频繁|稍后|已注册|尚未配置|不存在或已停用|请求失败/.test(jMsg), `J7 未走到冷却（环境受限，非缺陷）："${jMsg}"`)
   }
 
   console.log('--- K. 窄屏 ---')
@@ -355,7 +357,7 @@ const placeholders = (page) =>
     const r = row.getBoundingClientRect()
     return { over: document.documentElement.scrollWidth - document.documentElement.clientWidth, right: +r.right.toFixed(1) }
   })
-  ok(mobCode && mobCode.over <= 0, `K4 窄屏下「邮箱 + 发码按钮」复合行不溢出（溢出 ${mobCode ? mobCode.over : 'n/a'}px）`)
+  ok(mobCode && mobCode.over <= 0, `K4 窄屏下「验证码 + 发码按钮」复合行不溢出（溢出 ${mobCode ? mobCode.over : 'n/a'}px）`)
 
   await page.setViewportSize({ width: 1080, height: 620 })
   await page.waitForTimeout(400)

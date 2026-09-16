@@ -17,9 +17,16 @@
         </div>
 
         <el-form @submit.prevent="submitForgot">
+          <!-- 9-16 反馈：按钮原先挂在「绑定邮箱」输入框右侧，把输入框挤得只剩半截，
+               看不清自己到底输没输错邮箱 → 邮箱独占整行，按钮下移到「邮箱验证码」行
+               （与 My.vue 邮箱换绑同一套视觉：按行成组，按钮只服务于本行的邮箱）。 -->
+          <el-input v-model="fpEmail" placeholder="绑定邮箱" size="large">
+            <template #prefix><span class="ic">📧</span></template>
+          </el-input>
+
           <div class="code-row">
-            <el-input v-model="fpEmail" placeholder="绑定邮箱" size="large">
-              <template #prefix><span class="ic">📧</span></template>
+            <el-input v-model="fpCode" placeholder="邮箱验证码（6 位）" size="large" maxlength="6">
+              <template #prefix><span class="ic">🔢</span></template>
             </el-input>
             <el-button
               class="code-btn"
@@ -32,9 +39,6 @@
             </el-button>
           </div>
 
-          <el-input v-model="fpCode" placeholder="邮箱验证码（6 位）" size="large" maxlength="6">
-            <template #prefix><span class="ic">🔢</span></template>
-          </el-input>
           <el-input v-model="fpPwd" type="password" placeholder="新密码 6-32 位" size="large" show-password>
             <template #prefix><span class="ic">🔒</span></template>
           </el-input>
@@ -80,9 +84,14 @@
 
           <!-- 注册态字段顺序（按产品要求固定）：账号id → 密码 → 邮箱 → 验证码 -->
           <template v-if="mode === 'register'">
+            <!-- 9-16：与「忘记密码」/ My.vue 邮箱换绑统一视觉 —— 邮箱独占整行（能被完整看清），
+                 「发送验证码」下移到验证码行右侧（按钮紧挨它服务的那个输入框，引导更直白）。 -->
+            <el-input v-model="email" placeholder="邮箱" size="large">
+              <template #prefix><span class="ic">📧</span></template>
+            </el-input>
             <div class="code-row">
-              <el-input v-model="email" placeholder="邮箱" size="large">
-                <template #prefix><span class="ic">📧</span></template>
+              <el-input v-model="emailCode" placeholder="邮箱验证码（6 位）" size="large" maxlength="6">
+                <template #prefix><span class="ic">🔢</span></template>
               </el-input>
               <el-button
                 class="code-btn"
@@ -94,9 +103,6 @@
                 {{ regCooling > 0 ? `${regCooling}s` : '发送验证码' }}
               </el-button>
             </div>
-            <el-input v-model="emailCode" placeholder="邮箱验证码（6 位）" size="large" maxlength="6">
-              <template #prefix><span class="ic">🔢</span></template>
-            </el-input>
           </template>
 
           <div v-if="mode === 'login'" class="forgot-row">
