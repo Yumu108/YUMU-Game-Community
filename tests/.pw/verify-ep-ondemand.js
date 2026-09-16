@@ -16,8 +16,9 @@ const EXE = 'C:/Program Files/Google/Chrome/Application/chrome.exe'
 const API = 'http://127.0.0.1:8080/api'
 const BASE = process.env.WEB_BASE || 'http://localhost:5173'
 
+// 帖子路由用占位符，真实 id 运行时取：库里 id 会随数据重灌整体漂移，硬编码会一直假红
 const ROUTES = [
-  '/', '/games', '/game/2', '/board/1', '/post/3019', '/search?keyword=原神',
+  '/', '/games', '/game/2', '/board/1', '__POST__', '/search?keyword=原神',
   '/user/2', '/tag/1', '/announcements', '/agreement', '/privacy',
   '/login', '/editor', '/my', '/subscribe', '/messages', '/notifications', '/my-reports', '/admin'
 ]
@@ -33,7 +34,15 @@ const SOFT = /Vue warn|is not defined/
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ username: 'admin', password: (process.env.TEST_ADMIN_PASSWORD || 'REPLACE-ME') })
   }).then((r) => r.json())
+  if (!login?.data?.token) {
+    console.error(`❌ 管理员登录失败（${login?.message || login?.code}）—— 先 export TEST_ADMIN_PASSWORD=<本机 admin 口令>（本机为 admin123456）`)
+    process.exit(1)
+  }
   const token = login.data.token
+  const latest = await fetch(`${API}/posts?size=1&sort=latest`).then((r) => r.json())
+  const PID = latest?.data?.records?.[0]?.id
+  if (!PID) { console.error('❌ 库里取不到帖子'); process.exit(1) }
+  const routes = ROUTES.map((r) => (r === '__POST__' ? `/post/${PID}` : r))
 
   const b = await chromium.launch({ executablePath: EXE, headless: true })
   const c = await b.newContext({ viewport: { width: 1440, height: 900 } })
@@ -72,7 +81,7 @@ const SOFT = /Vue warn|is not defined/
 
   // ---------- A. 全站路由巡检 ----------
   console.log('\nA. 全站路由巡检（抓未注册组件 / 指令）')
-  for (const r of ROUTES) {
+  for (const r of routes) {
     const n0 = hard.length
     await p.goto(`${BASE}${r}`, { waitUntil: 'domcontentloaded' }).catch(() => {})
     await p.waitForTimeout(1500)
@@ -81,11 +90,11 @@ const SOFT = /Vue warn|is not defined/
     console.log(`  ${added === 0 ? '✅' : '❌'} ${r}${added ? ' —— ' + added + ' 条问题' : ''}`)
   }
   check('全站无「未注册组件 / 指令」告警', hard.length === 0,
-    hard.length ? hard.slice(0, 3).join(' || ') : `${ROUTES.length} 个路由全干净`)
+    hard.length ? hard.slice(0, 3).join(' || ') : `${routes.length} 个路由全干净`)
 
   // ---------- B. Element 基础样式是否在 ----------
   console.log('\nB. Element 样式供给')
-  await p.goto(`${BASE}/post/3019`, { waitUntil: 'domcontentloaded' }).catch(() => {})
+  await p.goto(`${BASE}/post/${PID}`, { waitUntil: 'domcontentloaded' }).catch(() => {})
   await p.waitForTimeout(1500)
   await dismissAnno()
 

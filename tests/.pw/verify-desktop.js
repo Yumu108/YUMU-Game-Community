@@ -4,13 +4,23 @@
  */
 const { chromium } = require('playwright-core')
 const EXE = 'C:/Program Files/Google/Chrome/Application/chrome.exe'
+const API = process.env.API_BASE || 'http://127.0.0.1:8080/api'
+const WEB = process.env.WEB_BASE || 'http://localhost:5173'
 
 ;(async () => {
-  const login = await fetch('http://127.0.0.1:8080/api/auth/login', {
+  const login = await fetch(`${API}/auth/login`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ username: 'admin', password: (process.env.TEST_ADMIN_PASSWORD || 'REPLACE-ME') })
   }).then((r) => r.json())
+  if (!login?.data?.token) {
+    console.error(`❌ 管理员登录失败（${login?.message || login?.code}）—— 先 export TEST_ADMIN_PASSWORD=<本机 admin 口令>（本机为 admin123456）`)
+    process.exit(1)
+  }
+  // 帖子 id 动态取：库里数据重灌后 id 会整体漂移（曾硬编码 3019，库变成 5001+ 后长期假红）
+  const latest = await fetch(`${API}/posts?size=1&sort=latest`).then((r) => r.json())
+  const PID = latest?.data?.records?.[0]?.id
+  if (!PID) { console.error('❌ 库里取不到帖子，无法验证详情页'); process.exit(1) }
   const b = await chromium.launch({ executablePath: EXE, headless: true })
   const c = await b.newContext({ viewport: { width: 1440, height: 900 } })
   await c.addInitScript(
@@ -27,7 +37,7 @@ const EXE = 'C:/Program Files/Google/Chrome/Application/chrome.exe'
   p.on('console', (m) => { if (m.type() === 'error') errs.push(m.text()) })
   p.on('pageerror', (e) => errs.push('PAGEERR ' + e.message))
 
-  await p.goto('http://localhost:5173/post/3019', { waitUntil: 'domcontentloaded' }).catch(() => {})
+  await p.goto(`${WEB}/post/${PID}`, { waitUntil: 'domcontentloaded' }).catch(() => {})
   await p.waitForTimeout(3000)
 
   const r = await p.evaluate(() => {
@@ -54,6 +64,7 @@ const EXE = 'C:/Program Files/Google/Chrome/Application/chrome.exe'
       })()
     }
   })
+  console.log(`（探针帖子 id=${PID}）`)
   console.log(JSON.stringify(r, null, 1))
 
   const checks = [
