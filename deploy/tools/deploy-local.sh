@@ -215,6 +215,11 @@ note "对应服务：$([ "$WANT_BACKEND" -eq 1 ] && printf 'backend ')$([ "$WANT
 # ---------------------------------------------------------------------------
 step "3/7 本机编译"
 
+# 产物指纹：前端入口 bundle 哈希（后面用它证明「线上真的换成了这一版」）。
+# ⚠️ 必须先声明：--reuse-build 走的是下面的 elif 分支，不会执行 else 里的赋值，
+#    而 `set -u` 下引用未定义变量会直接中止发版（2026-09-16 实测 line 391 unbound）。
+LOCAL_BUNDLE=""
+
 if [ "$DRY" -eq 1 ]; then
   [ "$WANT_BACKEND" -eq 1 ] && note "[dry-run] cd backend && mvn -B -DskipTests package"
   [ "$WANT_NGINX" -eq 1 ]   && note "[dry-run] cd frontend && npm run build"
@@ -275,10 +280,11 @@ else
     ok "前端构建完成（耗时 $(( $(date +%s) - _t0 ))s，产物 $(du -sh "$FRONTEND_DIST" | cut -f1)）"
   fi
 
-  # 产物指纹：前端 bundle 哈希 —— 后面用它证明「线上真的换成了这一版」
-  LOCAL_BUNDLE="$(grep -o 'assets/index-[A-Za-z0-9_-]*\.js' "$FRONTEND_DIST/index.html" 2>/dev/null | head -1)"
-  [ -n "$LOCAL_BUNDLE" ] && note "前端入口 bundle：$LOCAL_BUNDLE"
 fi
+
+# 产物指纹统一在这里算（**移到 if/elif/else 之外**）⇒ --reuse-build 复用现有 dist 时同样有值。
+LOCAL_BUNDLE="$(grep -o 'assets/index-[A-Za-z0-9_-]*\.js' "$FRONTEND_DIST/index.html" 2>/dev/null | head -1)"
+[ -n "$LOCAL_BUNDLE" ] && note "前端入口 bundle：$LOCAL_BUNDLE"
 
 # ---------------------------------------------------------------------------
 # 4. 代码同步（先让服务器拿到新 Dockerfile，再推产物）
