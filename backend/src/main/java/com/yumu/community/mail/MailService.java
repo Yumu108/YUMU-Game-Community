@@ -117,9 +117,32 @@ public class MailService {
             log.info("[mail] 验证码已发送 to={}, scene={}", mask(to), scene.code());
             return true;
         } catch (Exception e) {
-            log.error("[mail] 验证码发送失败 to={}, scene={}, err={}", mask(to), scene.code(), e.getMessage());
+            String raw = String.valueOf(e.getMessage());
+            log.error("[mail] 验证码发送失败 to={}, scene={}, err={}", mask(to), scene.code(), raw);
+            // 收件人地址本身有问题（打错字、域名不存在、邮箱已停用）与「服务端抽风」要分开提示：
+            // 前者让用户「稍后重试」是白等 —— 他得改地址。QQ/163 这类服务端拒收时回的是
+            // SMTP 550，异常消息里带 "non-existent / Mailbox not found / User unknown" 等字样。
+            if (isRecipientRejected(raw)) {
+                log.warn("[mail] 收件人地址被服务端拒收（多为地址不存在或已停用），to={}", mask(to));
+                throw new BusinessException(400, "该邮箱地址不存在或已停用，请检查后重试");
+            }
             throw new BusinessException(500, "验证码邮件发送失败，请稍后重试");
         }
+    }
+
+    /** 判断 SMTP 异常是否属于「收件人地址不可达」——这类错误重试无用，得让用户改地址。 */
+    private boolean isRecipientRejected(String raw) {
+        if (raw == null) {
+            return false;
+        }
+        String s = raw.toLowerCase();
+        return s.contains("non-existent")
+                || s.contains("mailbox not found")
+                || s.contains("user unknown")
+                || s.contains("recipient rejected")
+                || s.contains("invalid address")
+                || s.contains("no such user")
+                || s.contains("550 ");
     }
 
     /** 发件人地址：MAIL_FROM 优先，留空则用发件邮箱本身。 */

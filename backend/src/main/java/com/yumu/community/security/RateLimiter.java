@@ -83,6 +83,27 @@ public class RateLimiter {
         return tryAcquireLocal(key, maxRequests, windowSec);
     }
 
+    /**
+     * 撤销某个 key 的限频计数（该 key 整窗口清零）。
+     *
+     * <p>🚨 <b>只用于「本次请求注定失败、本就不该占用配额」的场景</b>，别拿它当"重试券"。
+     * 典型例子：发验证码邮件时 SMTP 拒收（收件人不存在）—— 若不平账，用户把邮箱改对之后
+     * 会被<b>上一次失败请求</b>留下的冷却窗口挡在门外，收到「请 60 秒后再试」，
+     * 而那次请求压根没送出任何东西。</p>
+     */
+    public void reset(String key) {
+        if (!enabled || key == null || key.isBlank()) return;
+        try {
+            if (cache.isRedis()) {
+                redisTemplate.delete("rl:" + key);
+                return;
+            }
+        } catch (Exception e) {
+            log.warn("rate-limit reset redis fail, fallback to local: key={}, err={}", key, e.getMessage());
+        }
+        localWindows.remove(key);
+    }
+
     /** Redis 版滑动窗口。返回 true 表示「本次未超限」。 */
     private boolean tryAcquireRedis(String key, int maxRequests, int windowSec) {
         String redisKey = "rl:" + key;

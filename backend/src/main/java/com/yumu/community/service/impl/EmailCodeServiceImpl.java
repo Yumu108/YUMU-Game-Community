@@ -76,7 +76,19 @@ public class EmailCodeServiceImpl implements EmailCodeService {
         // 换新码就清掉旧码的错误计数，否则上一次的输错会「继承」过来
         cache.delete(failKey(email, scene));
 
-        mailService.sendVerificationCode(email, code, scene);
+        try {
+            mailService.sendVerificationCode(email, code, scene);
+        } catch (RuntimeException e) {
+            // 🚨 发信失败必须平账（9-16 实测踩到）：这次请求什么都没送达，却已经扣掉了
+            //    邮箱冷却、还在 Redis 里留了一枚永远收不到的「幽灵码」。用户发现邮箱打错了、
+            //    改成对的再提交，会被上一次失败请求的冷却挡在门外 —— 收到「请 60 秒后再试」，
+            //    却完全不知道是那次失败在挡他。
+            //    IP 上限刻意**不回滚**：那是防刷维度，失败请求同样消耗了真实 SMTP 连接，
+            //    不该白送配额（且 10 次/时的额度足够容忍用户改对地址）。
+            cache.delete(codeKey(email, scene));
+            rateLimiter.reset("emailcode:email:" + email);
+            throw e;
+        }
         log.info("[emailcode] 已下发 scene={}, to={}", scene.code(), MailService.mask(email));
     }
 
