@@ -60,7 +60,14 @@ export const fetchReplies = async (postId, { current = 1, size = 100 } = {}) => 
   return { records, total }
 }
 
-/** 帖子标签 */
+/**
+ * 帖子标签 —— ⚠️ **陷阱：当前无页面使用，真要用也别调它**。
+ *
+ * 🚨 `GET /posts/{id}/tags` 后端**只注册了 PUT**（发帖人改标签），没有 GET
+ *   ⇒ 调用必报 405「请求方法不支持：GET」（2026-09-17 实测，详情页曾因此每次进帖都弹此提示）。
+ *   帖子标签的正确来源：**详情接口 `GET /posts/{id}` 的返回自带 `tags`**（PostVO#tags）。
+ *   本封装保留仅作接口事实记录；若后端将来补了 GET，这里才可启用。
+ */
 export const fetchPostTags = (postId) => get(`/posts/${postId}/tags`)
 
 /* ==================== 板块 / 标签 ==================== */

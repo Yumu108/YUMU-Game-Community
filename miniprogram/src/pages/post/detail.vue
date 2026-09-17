@@ -164,7 +164,7 @@
 <script setup>
 import { ref, computed } from 'vue'
 import { onLoad, onShareAppMessage } from '@dcloudio/uni-app'
-import { fetchPostDetail, fetchPostTags } from '../../api/community'
+import { fetchPostDetail } from '../../api/community'
 import { ASSET_BASE } from '../../api/config'
 import { resolveImage, formatTime, platformLabel } from '../../utils/format'
 import { contentBlocks } from '../../utils/content'
@@ -285,6 +285,10 @@ async function load() {
   try {
     const d = await fetchPostDetail(id)
     post.value = d
+    // 🚨 标签直接取详情返回的 `d.tags`（PostVO 自带）——
+    //   **不要**调 `GET /posts/{id}/tags`：后端该路径只注册了 PUT（发帖人改标签），
+    //   GET 会 405「请求方法不支持：GET」（2026-09-17 实测踩坑）。
+    tags.value = (d && Array.isArray(d.tags)) ? d.tags : []
     faved.value = isFavorite(id)
     liked.value = isLiked(id)
     if (d) addHistory(d) // 记录浏览历史（本地）
@@ -294,8 +298,7 @@ async function load() {
     return
   }
 
-  // 标签与相关推荐都只是**补充内容**，任一失败都不影响正文阅读
-  loadTags(id)
+  // 相关推荐是**补充内容**，失败不影响正文阅读
   loadRelated()
 }
 
@@ -329,15 +332,6 @@ async function loadRelated(force = false) {
   } catch (e) {
     related.value = []
     relatedFailed.value = true
-  }
-}
-
-async function loadTags(id) {
-  try {
-    const t = await fetchPostTags(id)
-    tags.value = Array.isArray(t) ? t : []
-  } catch (e) {
-    /* 标签失败不影响阅读 */
   }
 }
 

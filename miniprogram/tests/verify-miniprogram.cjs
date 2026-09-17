@@ -254,6 +254,24 @@ const LABEL_TO_VALUE = { 手游: '手机', 多平台: '多平台', PC: 'PC', 主
   })
   assert('B0 从接口取到候选帖子 id', candIds.length >= 3, candIds.join(','))
 
+  // 🚨 B0a/B0b（2026-09-17 修「每进一帖必弹 请求方法不支持：GET」后新增）：
+  //    根因是详情页曾调 `GET /posts/{id}/tags`，而后端该路径**只注册了 PUT** ⇒ 必 405。
+  //    修法 = 标签改读详情返回自带的 `d.tags`。这两条断言把「不再发那个请求」与
+  //    「标签真的渲染出来」都锁死 —— 只断 DOM 看不出请求消失，只断请求看不出渲染。
+  const tagReqs = []
+  const onTagReq = (r) => { if (/\/posts\/\d+\/tags(\?|$)/.test(r.url())) tagReqs.push(r.url()) }
+  page.on('request', onTagReq)
+  await goto('/pages/post/detail?id=' + candIds[0])
+  await new Promise((r) => setTimeout(r, 1800))
+  page.off('request', onTagReq)
+  assert('B0a 详情页不再调 GET /posts/{id}/tags（后端只有 PUT，调了必 405）', tagReqs.length === 0, tagReqs.length ? tagReqs.join(',') : '未发出 tags 请求')
+  const tagApiN = await page.evaluate(async (id) => {
+    const d = await fetch('/api/posts/' + id).then((x) => x.json())
+    return ((d && d.data && d.data.tags) || []).length
+  }, candIds[0])
+  const tagDomN = await count('.tags .mp-tag')
+  assert('B0b 标签渲染数 = 详情接口自带的 tags 数', tagDomN === tagApiN && tagDomN > 0, `DOM=${tagDomN} 接口=${tagApiN}`)
+
   let hit = null
   for (const id of candIds) {
     await goto('/pages/post/detail?id=' + id)
