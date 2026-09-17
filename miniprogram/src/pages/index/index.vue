@@ -16,20 +16,35 @@
       </view>
     </view>
 
-    <!-- 统计条 -->
+    <!-- 整页拉取失败：只给失败态 + 重试，不伪装成「暂无内容」 -->
+    <ErrorState
+      v-if="failed"
+      icon="📡"
+      text="没能连上服务器"
+      sub="检查网络后重试，或下拉刷新"
+      @retry="load"
+    />
+
+    <template v-else>
+    <!--
+      统计条
+      ⚠️ 这里三个数字**都必须是「库里的真实总量」**（接口返回的 total），
+         不能拿「本页取了几条」冒充 —— 原来「热门游戏」显示的是 hotGames.length（固定 8），
+         与真实 40+ 款游戏对不上，属于一眼可查的虚标。
+    -->
     <view class="stats">
       <view class="stats__item">
-        <text class="stats__num">{{ hotGames.length }}</text>
-        <text class="stats__label">热门游戏</text>
+        <text class="stats__num">{{ statText(gameTotal) }}</text>
+        <text class="stats__label">收录游戏</text>
       </view>
       <view class="stats__divider" />
       <view class="stats__item">
-        <text class="stats__num">{{ guideTotal }}</text>
+        <text class="stats__num">{{ statText(guideTotal) }}</text>
         <text class="stats__label">攻略篇数</text>
       </view>
       <view class="stats__divider" />
       <view class="stats__item">
-        <text class="stats__num">{{ newsTotal }}</text>
+        <text class="stats__num">{{ statText(newsTotal) }}</text>
         <text class="stats__label">资讯动态</text>
       </view>
     </view>
@@ -74,36 +89,47 @@
       <PostCard v-for="p in guides" :key="p.id" :post="p" />
       <EmptyState v-if="!guides.length" icon="🧭" text="暂无攻略" />
     </template>
+    </template>
   </view>
 </template>
 
 <script setup>
 import { ref } from 'vue'
 import { onLoad, onPullDownRefresh } from '@dcloudio/uni-app'
-import { fetchHotGames, homeSources } from '../../api/community'
+import { fetchHotGames, fetchGames, homeSources } from '../../api/community'
 import GameTile from '../../components/GameTile.vue'
 import PostCard from '../../components/PostCard.vue'
 import Skeleton from '../../components/Skeleton.vue'
 import EmptyState from '../../components/EmptyState.vue'
+import ErrorState from '../../components/ErrorState.vue'
 
 const loading = ref(true)
+const failed = ref(false)
 const hotGames = ref([])
 const news = ref([])
 const guides = ref([])
+const gameTotal = ref(0)
 const newsTotal = ref(0)
 const guideTotal = ref(0)
 
+/** 数字拿不到时给「—」，别显示 0 假装是真实数据 */
+const statText = (n) => (n > 0 ? String(n) : '—')
+
 async function load() {
   loading.value = true
-  // 三个请求并发；用 allSettled —— 任一模块失败不应拖垮整页
-  const [g, n, d] = await Promise.allSettled([
+  failed.value = false
+  // 四个请求并发；用 allSettled —— 任一模块失败不应拖垮整页
+  const [g, t, n, d] = await Promise.allSettled([
     fetchHotGames(8),
+    // size 取 1 只为了拿 total（真实收录总量）；列表内容用 hot 接口
+    fetchGames({ current: 1, size: 1 }),
     homeSources.news(5),
     homeSources.guides(5)
   ])
 
   // `/games/hot` 的 data 是纯数组，不是分页体，这里要区分对待
   if (g.status === 'fulfilled') hotGames.value = g.value || []
+  if (t.status === 'fulfilled') gameTotal.value = (t.value && t.value.total) || 0
   if (n.status === 'fulfilled') {
     news.value = (n.value && n.value.records) || []
     newsTotal.value = (n.value && n.value.total) || 0
@@ -112,6 +138,8 @@ async function load() {
     guides.value = (d.value && d.value.records) || []
     guideTotal.value = (d.value && d.value.total) || 0
   }
+  // 三个主体模块全挂 = 真的连不上，给失败态；只要有一个回来就正常渲染
+  failed.value = [g, t, n, d].every((r) => r.status === 'rejected')
   loading.value = false
 }
 

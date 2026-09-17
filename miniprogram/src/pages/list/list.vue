@@ -17,8 +17,15 @@
     <Skeleton v-if="loading" :rows="3" />
     <template v-else>
       <PostCard v-for="p in list" :key="p.id" :post="p" />
-      <EmptyState v-if="!list.length" icon="📄" text="这个分类还没有内容" />
-      <view v-if="list.length" class="footer">{{ footerText }}</view>
+      <ErrorState
+        v-if="failed"
+        icon="📡"
+        text="内容加载失败"
+        sub="检查网络后重试，或下拉刷新"
+        @retry="reload"
+      />
+      <EmptyState v-else-if="!list.length" icon="📄" text="这个分类还没有内容" />
+      <view v-if="list.length" class="footer" @click="retryMore">{{ footerText }}</view>
     </template>
   </view>
 </template>
@@ -30,15 +37,15 @@
  *
  * 用法：/pages/list/list?boardId=1&title=攻略心得&sort=hot
  */
-import { ref, computed } from 'vue'
+import { ref } from 'vue'
 import { onLoad, onReachBottom, onPullDownRefresh } from '@dcloudio/uni-app'
 import { fetchPosts } from '../../api/community'
 import { SORT } from '../../api/config'
+import { usePagedList } from '../../utils/usePagedList'
 import PostCard from '../../components/PostCard.vue'
 import Skeleton from '../../components/Skeleton.vue'
 import EmptyState from '../../components/EmptyState.vue'
-
-const PAGE_SIZE = 10
+import ErrorState from '../../components/ErrorState.vue'
 
 const sorts = [
   { label: '最新', value: SORT.LATEST },
@@ -51,43 +58,22 @@ const sorts = [
 const boardId = ref(null)
 const gameId = ref(null)
 const sort = ref(SORT.LATEST)
-const list = ref([])
-const loading = ref(true)
-const current = ref(1)
-const total = ref(0)
-const noMore = ref(false)
 
-const footerText = computed(() => (noMore.value ? `已加载全部 ${total.value} 条` : '上拉加载更多'))
-
-async function load(reset = false) {
-  if (reset) {
-    current.value = 1
-    noMore.value = false
-  }
-  loading.value = reset
-  try {
-    const res = await fetchPosts({
+const { list, loading, failed, footerText, reload, loadMore, retryMore } = usePagedList(
+  ({ current, size }) =>
+    fetchPosts({
       boardId: boardId.value || undefined,
       gameId: gameId.value || undefined,
       sort: sort.value,
-      current: current.value,
-      size: PAGE_SIZE
+      current,
+      size
     })
-    const records = (res && res.records) || []
-    total.value = (res && res.total) || 0
-    list.value = reset ? records : list.value.concat(records)
-    if (list.value.length >= total.value || !records.length) noMore.value = true
-  } catch (e) {
-    if (reset) list.value = []
-  } finally {
-    loading.value = false
-  }
-}
+)
 
 function pickSort(v) {
   if (sort.value === v) return
   sort.value = v
-  load(true)
+  reload()
 }
 
 onLoad((q = {}) => {
@@ -97,17 +83,13 @@ onLoad((q = {}) => {
   if (q.title) {
     uni.setNavigationBarTitle({ title: decodeURIComponent(q.title) })
   }
-  load(true)
+  reload()
 })
 
-onReachBottom(() => {
-  if (noMore.value || loading.value) return
-  current.value += 1
-  load(false)
-})
+onReachBottom(loadMore)
 
 onPullDownRefresh(async () => {
-  await load(true)
+  await reload()
   uni.stopPullDownRefresh()
 })
 </script>

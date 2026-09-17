@@ -37,7 +37,7 @@
         <GameTile :game="g" size="md" />
         <view class="gitem__body">
           <text class="gitem__name">{{ g.name }}</text>
-          <text class="gitem__desc mp-ellipsis">{{ g.description || g.developer || '暂无简介' }}</text>
+          <text class="gitem__desc mp-clamp-2">{{ g.description || g.developer || '暂无简介' }}</text>
           <view class="gitem__tags">
             <text v-if="g.platform" class="mp-tag mp-tag--purple">{{ g.platform }}</text>
             <text v-if="g.genre" class="mp-tag">{{ g.genre }}</text>
@@ -48,10 +48,23 @@
         </view>
       </view>
 
-      <EmptyState v-if="!list.length" icon="🔍" text="没有找到匹配的游戏" sub="换个关键词或清掉筛选试试" />
+      <!-- 🚨 失败态优先于空态：连不上后端时绝不能显示「没有找到匹配的游戏」 -->
+      <ErrorState
+        v-if="failed"
+        icon="📡"
+        text="游戏库加载失败"
+        sub="检查网络后重试，或下拉刷新"
+        @retry="reload"
+      />
+      <EmptyState
+        v-else-if="!list.length"
+        icon="🔍"
+        text="没有找到匹配的游戏"
+        sub="换个关键词或清掉筛选试试"
+      />
 
       <!-- 上拉加载状态 -->
-      <view v-if="list.length" class="footer">{{ footerText }}</view>
+      <view v-if="list.length" class="footer" @click="onFooterTap">{{ footerText }}</view>
     </template>
   </view>
 </template>
@@ -63,6 +76,7 @@ import { fetchGames } from '../../api/community'
 import GameTile from '../../components/GameTile.vue'
 import Skeleton from '../../components/Skeleton.vue'
 import EmptyState from '../../components/EmptyState.vue'
+import ErrorState from '../../components/ErrorState.vue'
 
 const PAGE_SIZE = 12
 
@@ -82,8 +96,11 @@ const loading = ref(true)
 const current = ref(1)
 const total = ref(0)
 const noMore = ref(false)
+const failed = ref(false) // 首屏/刷新失败
+const moreFailed = ref(false) // 上拉这一页失败
 
 const footerText = computed(() => {
+  if (moreFailed.value) return '加载失败，点此重试'
   if (noMore.value) return `已加载全部 ${total.value} 款`
   return '上拉加载更多'
 })
@@ -96,6 +113,8 @@ async function load(reset = false) {
   if (reset) {
     current.value = 1
     noMore.value = false
+    failed.value = false
+    moreFailed.value = false
   }
   loading.value = reset
   try {
@@ -108,9 +127,18 @@ async function load(reset = false) {
     const records = (res && res.records) || []
     total.value = (res && res.total) || 0
     list.value = reset ? records : list.value.concat(records)
+    moreFailed.value = false
     if (list.value.length >= total.value || !records.length) noMore.value = true
   } catch (e) {
-    if (reset) list.value = []
+    if (reset) {
+      // 失败 ≠ 空数据：清掉旧数据，标记失败，由 ErrorState 接管渲染
+      list.value = []
+      failed.value = true
+    } else {
+      // 页码回退，否则重试会直接跳过这一页
+      current.value = Math.max(1, current.value - 1)
+      moreFailed.value = true
+    }
   } finally {
     loading.value = false
   }
@@ -118,6 +146,14 @@ async function load(reset = false) {
 
 function reload() {
   load(true)
+}
+
+/** 底部「加载失败，点此重试」 */
+function onFooterTap() {
+  if (!moreFailed.value) return
+  current.value += 1
+  moreFailed.value = false
+  load(false)
 }
 
 function clearKeyword() {
@@ -134,7 +170,8 @@ function pickPlatform(v) {
 onLoad(() => load(true))
 
 onReachBottom(() => {
-  if (noMore.value || loading.value) return
+  // 上一页失败时不自动重试：否则会在触底处疯狂重连，用户只能手动点底部重试
+  if (noMore.value || loading.value || moreFailed.value) return
   current.value += 1
   load(false)
 })

@@ -50,6 +50,45 @@ export function toParagraphs(raw) {
     .filter(Boolean)
 }
 
+/* ==================== 正文图片 ==================== */
+
+/** 富文本里的 `<img>`，取 src（单双引号都认） */
+const IMG_TAG = /<img\b[^>]*?\bsrc\s*=\s*["']([^"']+)["'][^>]*>/gi
+
+/**
+ * 正文 → 有序区块数组，**保留图片位置**。
+ *
+ * 为什么需要：富文本编辑器（Web 端发帖）产出的正文天然是 HTML，里面可能夹着 `<img>`。
+ * 之前详情页走的是「HTML 全转纯文本」（`stripHtml`），`<img>` 被当普通标签丢掉 ——
+ * 结果就是**作者精心配的图在客户端彻底消失**，而设计文档里写的是「支持图片浏览」。
+ *
+ * 返回顺序与原文一致，形如：
+ *   [{ type:'text', text:'第一段' }, { type:'image', src:'/api/files/x.jpg' }, ...]
+ *
+ * @param {string} raw
+ * @returns {Array<{type:'text',text:string}|{type:'image',src:string}>}
+ */
+export function contentBlocks(raw) {
+  if (!raw || typeof raw !== 'string') return []
+  const blocks = []
+  const pushText = (s) => {
+    toParagraphs(s).forEach((t) => blocks.push({ type: 'text', text: t }))
+  }
+
+  // ⚠️ 每次新建实例：带 g 的正则 lastIndex 是跨调用共享的，复用会让第二次调用从中间开始
+  const re = new RegExp(IMG_TAG.source, 'gi')
+  let last = 0
+  let m
+  while ((m = re.exec(raw)) !== null) {
+    pushText(raw.slice(last, m.index))
+    const src = String(m[1] || '').trim()
+    if (src) blocks.push({ type: 'image', src })
+    last = m.index + m[0].length
+  }
+  pushText(raw.slice(last))
+  return blocks
+}
+
 /**
  * 摘要：优先用后端给的 `summary`，否则从正文截取。
  * @param {object} post

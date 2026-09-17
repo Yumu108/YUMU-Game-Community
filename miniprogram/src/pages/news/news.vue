@@ -26,22 +26,29 @@
     <Skeleton v-if="loading" :rows="3" />
     <template v-else>
       <PostCard v-for="p in list" :key="p.id" :post="p" />
-      <EmptyState v-if="!list.length" icon="📰" text="暂无资讯" sub="稍后再来看看" />
-      <view v-if="list.length" class="footer">{{ footerText }}</view>
+      <ErrorState
+        v-if="failed"
+        icon="📡"
+        text="资讯加载失败"
+        sub="检查网络后重试，或下拉刷新"
+        @retry="reload"
+      />
+      <EmptyState v-else-if="!list.length" icon="📰" text="暂无资讯" sub="稍后再来看看" />
+      <view v-if="list.length" class="footer" @click="retryMore">{{ footerText }}</view>
     </template>
   </view>
 </template>
 
 <script setup>
-import { ref, computed } from 'vue'
+import { ref } from 'vue'
 import { onLoad, onReachBottom, onPullDownRefresh } from '@dcloudio/uni-app'
 import { fetchPosts, fetchAnnouncements } from '../../api/community'
 import { BOARD, SORT } from '../../api/config'
+import { usePagedList } from '../../utils/usePagedList'
 import PostCard from '../../components/PostCard.vue'
 import Skeleton from '../../components/Skeleton.vue'
 import EmptyState from '../../components/EmptyState.vue'
-
-const PAGE_SIZE = 10
+import ErrorState from '../../components/ErrorState.vue'
 
 const sorts = [
   { label: '最新', value: SORT.LATEST },
@@ -51,47 +58,21 @@ const sorts = [
 ]
 
 const sort = ref(SORT.LATEST)
-const list = ref([])
-const loading = ref(true)
-const current = ref(1)
-const total = ref(0)
-const noMore = ref(false)
 const announcements = ref([])
 
-const footerText = computed(() => (noMore.value ? `已加载全部 ${total.value} 条` : '上拉加载更多'))
-
-async function load(reset = false) {
-  if (reset) {
-    current.value = 1
-    noMore.value = false
-  }
-  loading.value = reset
-  try {
-    const res = await fetchPosts({
-      boardId: BOARD.NEWS,
-      sort: sort.value,
-      current: current.value,
-      size: PAGE_SIZE
-    })
-    const records = (res && res.records) || []
-    total.value = (res && res.total) || 0
-    list.value = reset ? records : list.value.concat(records)
-    if (list.value.length >= total.value || !records.length) noMore.value = true
-  } catch (e) {
-    if (reset) list.value = []
-  } finally {
-    loading.value = false
-  }
-}
+// fetcher 里读的是 sort.value 的**当前值**，所以切排序后 reload 即生效
+const { list, loading, failed, footerText, reload, loadMore, retryMore } = usePagedList(
+  ({ current, size }) => fetchPosts({ boardId: BOARD.NEWS, sort: sort.value, current, size })
+)
 
 function pickSort(v) {
   if (sort.value === v) return
   sort.value = v
-  load(true)
+  reload()
 }
 
 onLoad(async () => {
-  await load(true)
+  await reload()
   // 公告可能为空 → 静默获取，失败或空数组都不影响资讯流
   try {
     const a = await fetchAnnouncements()
@@ -101,14 +82,10 @@ onLoad(async () => {
   }
 })
 
-onReachBottom(() => {
-  if (noMore.value || loading.value) return
-  current.value += 1
-  load(false)
-})
+onReachBottom(loadMore)
 
 onPullDownRefresh(async () => {
-  await load(true)
+  await reload()
   uni.stopPullDownRefresh()
 })
 </script>

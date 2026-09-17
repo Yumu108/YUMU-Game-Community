@@ -1,5 +1,15 @@
 <template>
   <view v-if="post" class="mp-page">
+    <!--
+      非公开帖（status=1 隐藏 / 2 待审）横幅。
+      🚨 说明：小程序端**不登录**，后端对匿名访问这类帖直接 404（可见性矩阵见 PostServiceImpl#getDetail），
+        所以正常拿不到；这里按 `status/previewOnly` 兜底，是为了万一将来接入登录后
+        不会把「审核中」的帖子当成正常帖渲染 —— 按主站规则它应当**完全只读**。
+    -->
+    <view v-if="flagText" class="flag">
+      <text class="flag__text">{{ flagText }}</text>
+    </view>
+
     <!-- 标题 -->
     <text class="title">{{ post.title }}</text>
     <view class="meta">
@@ -11,13 +21,13 @@
 
     <!-- 作者 -->
     <view class="author">
-      <image v-if="avatar" class="author__avatar" :src="avatar" mode="aspectFill" />
+      <image v-if="avatar" class="author__avatar" :src="avatar" mode="aspectFill" @error="avatarOk = false" />
       <view v-else class="author__ph">{{ authorLetter }}</view>
       <view class="author__info">
         <text class="author__name">{{ post.authorName || '匿名玩家' }}</text>
         <text v-if="post.authorLevelTitle" class="author__level">{{ post.authorLevelTitle }}</text>
       </view>
-      <text class="author__views">{{ post.viewCount || 0 }} 阅读</text>
+      <text class="author__views">{{ post.viewCount || 0 }} 阅读 · {{ post.likeCount || 0 }} 赞</text>
     </view>
 
     <!-- 模式切换：仅当正文能被拆解时出现 -->
@@ -40,10 +50,19 @@
       </view>
     </view>
 
-    <!-- 正文 -->
+    <!-- 正文：按区块渲染，**保留正文里的配图**（原来 HTML 全转纯文本，图会被整段丢掉） -->
     <view v-else class="content">
-      <text v-for="(p, i) in paragraphs" :key="i" class="content__p">{{ p }}</text>
-      <EmptyState v-if="!paragraphs.length" icon="📄" text="正文为空" />
+      <template v-for="(b, i) in blocks" :key="i">
+        <text v-if="b.type === 'text'" class="content__p">{{ b.text }}</text>
+        <image
+          v-else-if="!badImgs[i]"
+          class="content__img"
+          :src="resolveImage(b.src)"
+          mode="widthFix"
+          @error="onImgError(i)"
+        />
+      </template>
+      <EmptyState v-if="!blocks.length" icon="📄" text="正文为空" />
     </view>
 
     <!-- 标签 -->
@@ -64,14 +83,23 @@
     </view>
     <EmptyState v-if="!replies.length" icon="💬" text="还没有回复" />
 
-    <!-- 底部操作条 -->
-    <view class="fab">
-      <view class="fab__btn" @click="onLike">👍 {{ post.likeCount || 0 }}</view>
+    <!--
+      底部操作条
+      🚨 只保留「本端真的能做」的动作。原来那个点赞按钮点了会弹
+        「点赞需登录，第二期开放」—— 等于当面告诉评审「这功能没做完」；
+        本端不登录，点赞本来也无从谈起，所以把点赞数放到作者行做只读展示，按钮撤掉。
+    -->
+    <view v-if="!isNonPublic" class="fab">
       <view class="fab__btn" :class="{ 'fab__btn--on': faved }" @click="onFav">
         {{ faved ? '★ 已收藏' : '☆ 收藏' }}
       </view>
       <view class="fab__btn fab__btn--primary" @click="onShare">分享</view>
     </view>
+  </view>
+
+  <!-- 失败：给原因 + 重试，绝不停在骨架屏（原来是 `catch → return`，页面永远转圈） -->
+  <view v-else-if="failed" class="mp-page">
+    <ErrorState icon="📡" text="帖子加载失败" :sub="errMsg" @retry="load" />
   </view>
 
   <view v-else class="mp-page">
@@ -84,12 +112,13 @@ import { ref, computed } from 'vue'
 import { onLoad, onShareAppMessage } from '@dcloudio/uni-app'
 import { fetchPostDetail, fetchReplies, fetchPostTags } from '../../api/community'
 import { resolveImage, formatTime } from '../../utils/format'
-import { toParagraphs } from '../../utils/content'
+import { contentBlocks } from '../../utils/content'
 import { parseReading } from '../../utils/stepParser'
 import { addHistory, isFavorite, toggleFavorite } from '../../utils/store'
 import StepCard from '../../components/StepCard.vue'
 import Skeleton from '../../components/Skeleton.vue'
 import EmptyState from '../../components/EmptyState.vue'
+import ErrorState from '../../components/ErrorState.vue'
 
 const post = ref(null)
 const replies = ref([])
@@ -97,14 +126,34 @@ const tags = ref([])
 const replyTotal = ref(0)
 const mode = ref('card')
 const faved = ref(false)
+const failed = ref(false)
+const errMsg = ref('')
+const avatarOk = ref(true)
+const badImgs = ref({})
+const postId = ref(0)
 
-const avatar = computed(() => resolveImage(post.value && post.value.authorAvatar))
+const avatar = computed(() => (avatarOk.value ? resolveImage(post.value && post.value.authorAvatar) : ''))
 const authorLetter = computed(() => {
   const n = (post.value && post.value.authorName) || '?'
   return n.charAt(0)
 })
 const timeText = computed(() => formatTime(post.value && post.value.createdAt))
-const paragraphs = computed(() => toParagraphs(post.value && post.value.content))
+const blocks = computed(() => contentBlocks(post.value && post.value.content))
+
+/** status=0 才是公开帖；预览态同样按只读处理 */
+const isNonPublic = computed(() => {
+  const p = post.value
+  if (!p) return false
+  return (p.status != null && p.status !== 0) || p.previewOnly === true
+})
+const flagText = computed(() => {
+  const p = post.value
+  if (!p) return ''
+  if (p.previewOnly === true) return '👀 预览模式：该帖未公开，内容仅供审核查看，互动已禁用'
+  if (p.status === 2) return '⏳ 该帖正在审核中，仅作者与管理员可见'
+  if (p.status === 1) return '🚫 该帖已被隐藏，仅作者与管理员可见'
+  return ''
+})
 
 /**
  * 拆解放在前端：后端零改动，现有内容零迁移成本。
@@ -117,15 +166,32 @@ const kindLabel = computed(() => (reading.value && reading.value.kind === 'step'
 
 const timeOf = (v) => formatTime(v)
 
-onLoad(async (q = {}) => {
-  const id = Number(q.id)
+function onImgError(i) {
+  // 图挂了就整块移除，不留破图占位
+  badImgs.value[i] = true
+}
+
+/** 把异常转成一句人话：404 与断网要说清楚区别 */
+function describeError(e) {
+  const raw = (e && (e.message || e.errMsg)) || ''
+  if (/不存在|404/.test(raw)) return '帖子可能已被删除或隐藏'
+  if (/timeout|fail|网络/.test(raw)) return '网络异常，请检查网络后重试'
+  return raw || '请稍后重试'
+}
+
+async function load() {
+  const id = postId.value
   if (!id) return
+  failed.value = false
+  errMsg.value = ''
   try {
     const d = await fetchPostDetail(id)
     post.value = d
     faved.value = isFavorite(id)
     if (d) addHistory(d) // 记录浏览历史（本地）
   } catch (e) {
+    failed.value = true
+    errMsg.value = describeError(e)
     return
   }
 
@@ -143,16 +209,17 @@ onLoad(async (q = {}) => {
   } catch (e) {
     /* ignore */
   }
+}
+
+onLoad((q = {}) => {
+  postId.value = Number(q.id) || 0
+  load()
 })
 
 function onFav() {
   if (!post.value) return
   faved.value = toggleFavorite(post.value)
   uni.showToast({ title: faved.value ? '已加入收藏' : '已取消收藏', icon: 'none', duration: 1500 })
-}
-
-function onLike() {
-  uni.showToast({ title: '点赞需登录，第二期开放', icon: 'none', duration: 1800 })
 }
 
 function onShare() {
@@ -178,6 +245,19 @@ onShareAppMessage(() => ({
 <style scoped>
 .mp-page {
   padding-bottom: 160rpx;
+}
+/* 非公开帖横幅 */
+.flag {
+  background: rgba(240, 159, 39, 0.14);
+  border: 1rpx solid rgba(240, 159, 39, 0.4);
+  border-radius: 16rpx;
+  padding: 18rpx 22rpx;
+  margin-bottom: 22rpx;
+}
+.flag__text {
+  font-size: 23rpx;
+  color: #f0b45f;
+  line-height: 1.6;
 }
 .title {
   display: block;
@@ -286,6 +366,14 @@ onShareAppMessage(() => ({
   color: #cfcade;
   line-height: 1.85;
   margin-bottom: 20rpx;
+}
+/* 正文配图：widthFix 按原图比例撑高，圆角与卡片一致 */
+.content__img {
+  display: block;
+  width: 100%;
+  border-radius: 16rpx;
+  margin: 8rpx 0 22rpx;
+  background: #231f31;
 }
 
 .tags {

@@ -31,70 +31,51 @@
     <Skeleton v-if="loading" :rows="3" />
     <template v-else>
       <PostCard v-for="p in list" :key="p.id" :post="p" />
+      <ErrorState
+        v-if="failed"
+        icon="📡"
+        text="帖子加载失败"
+        sub="检查网络后重试，或下拉刷新"
+        @retry="reload"
+      />
       <EmptyState
-        v-if="!list.length"
+        v-else-if="!list.length"
         :icon="tab === 'guide' ? '🧭' : '📰'"
         :text="tab === 'guide' ? '这款游戏还没有攻略' : '这款游戏还没有资讯'"
       />
-      <view v-if="list.length" class="footer">{{ footerText }}</view>
+      <view v-if="list.length" class="footer" @click="retryMore">{{ footerText }}</view>
     </template>
   </view>
 </template>
 
 <script setup>
-import { ref, computed } from 'vue'
+import { ref } from 'vue'
 import { onLoad, onReachBottom, onPullDownRefresh } from '@dcloudio/uni-app'
 import { fetchGameDetail, fetchGamePosts } from '../../api/community'
 import { BOARD, SORT } from '../../api/config'
+import { usePagedList } from '../../utils/usePagedList'
 import GameTile from '../../components/GameTile.vue'
 import PostCard from '../../components/PostCard.vue'
 import Skeleton from '../../components/Skeleton.vue'
 import EmptyState from '../../components/EmptyState.vue'
-
-const PAGE_SIZE = 10
+import ErrorState from '../../components/ErrorState.vue'
 
 const gameId = ref(0)
 const name = ref('')
 const game = ref(null)
 const tab = ref('guide')
-const list = ref([])
-const loading = ref(true)
-const current = ref(1)
-const total = ref(0)
-const noMore = ref(false)
 
 const boardIdOfTab = () => (tab.value === 'guide' ? BOARD.GUIDE : BOARD.NEWS)
-const footerText = computed(() => (noMore.value ? `已加载全部 ${total.value} 条` : '上拉加载更多'))
 
-async function loadPosts(reset = false) {
-  if (reset) {
-    current.value = 1
-    noMore.value = false
-  }
-  loading.value = reset
-  try {
-    const res = await fetchGamePosts(gameId.value, {
-      boardId: boardIdOfTab(),
-      sort: SORT.LATEST,
-      current: current.value,
-      size: PAGE_SIZE
-    })
-    const records = (res && res.records) || []
-    total.value = (res && res.total) || 0
-    list.value = reset ? records : list.value.concat(records)
-    if (list.value.length >= total.value || !records.length) noMore.value = true
-  } catch (e) {
-    if (reset) list.value = []
-  } finally {
-    loading.value = false
-  }
-}
+const { list, loading, failed, footerText, reload, loadMore, retryMore } = usePagedList(
+  ({ current, size }) =>
+    fetchGamePosts(gameId.value, { boardId: boardIdOfTab(), sort: SORT.LATEST, current, size })
+)
 
 function switchTab(t) {
   if (tab.value === t) return
   tab.value = t
-  list.value = []
-  loadPosts(true)
+  reload()
 }
 
 onLoad(async (q = {}) => {
@@ -113,17 +94,13 @@ onLoad(async (q = {}) => {
       /* 详情失败仍可看帖子 */
     }
   }
-  await loadPosts(true)
+  await reload()
 })
 
-onReachBottom(() => {
-  if (noMore.value || loading.value) return
-  current.value += 1
-  loadPosts(false)
-})
+onReachBottom(loadMore)
 
 onPullDownRefresh(async () => {
-  await loadPosts(true)
+  await reload()
   uni.stopPullDownRefresh()
 })
 </script>

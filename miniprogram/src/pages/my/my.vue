@@ -1,11 +1,15 @@
 <template>
   <view class="mp-page">
-    <!-- 账号区（第一期不做登录，收藏/历史存本地） -->
+    <!--
+      账号区：本端定位是**内容浏览端**，不做登录（社交动作在 Web 端完成）。
+      🚨 文案注意：不要写「未登录」——那看起来像登录功能坏了；
+        写成「访客模式」才是如实描述设计选择。
+    -->
     <view class="user">
       <view class="user__avatar">游</view>
       <view class="user__info">
-        <text class="user__name">未登录</text>
-        <text class="user__tip">收藏与历史保存在本机，换设备不保留</text>
+        <text class="user__name">访客模式</text>
+        <text class="user__tip">收藏与浏览记录保存在本机</text>
       </view>
     </view>
 

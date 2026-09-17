@@ -69,10 +69,30 @@
     "backgroundColor": "#16131f",
     "borderStyle": "black",
     "list": [
-      { "pagePath": "pages/index/index", "text": "首页" },
-      { "pagePath": "pages/games/games", "text": "游戏库" },
-      { "pagePath": "pages/news/news", "text": "资讯" },
-      { "pagePath": "pages/my/my", "text": "我的" }
+      {
+        "pagePath": "pages/index/index",
+        "text": "首页",
+        "iconPath": "static/tabbar/home.png",
+        "selectedIconPath": "static/tabbar/home-on.png"
+      },
+      {
+        "pagePath": "pages/games/games",
+        "text": "游戏库",
+        "iconPath": "static/tabbar/games.png",
+        "selectedIconPath": "static/tabbar/games-on.png"
+      },
+      {
+        "pagePath": "pages/news/news",
+        "text": "资讯",
+        "iconPath": "static/tabbar/news.png",
+        "selectedIconPath": "static/tabbar/news-on.png"
+      },
+      {
+        "pagePath": "pages/my/my",
+        "text": "我的",
+        "iconPath": "static/tabbar/mine.png",
+        "selectedIconPath": "static/tabbar/mine-on.png"
+      }
     ]
   }
 }
