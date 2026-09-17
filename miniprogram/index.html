@@ -2,18 +2,23 @@
 <html lang="zh-CN">
   <head>
     <meta charset="UTF-8" />
-    <script>
-      // 适配 iPhone 刘海屏：支持 env() 时才加 viewport-fit=cover
-      var coverSupport =
-        'CSS' in window &&
-        typeof CSS.supports === 'function' &&
-        (CSS.supports('top: env(a)') || CSS.supports('top: constant(a)'))
-      document.write(
-        '<meta name="viewport" content="width=device-width,initial-scale=1.0,minimum-scale=1.0,maximum-scale=1.0,user-scalable=no' +
-          (coverSupport ? ',viewport-fit=cover' : '') +
-          '" />'
-      )
-    </script>
+    <!--
+      ⚠️ 这里**必须**是静态 viewport meta，不能沿用 uni-app 模板默认的那段内联脚本
+      （用 `document.write` 动态生成 viewport 的那版）。
+
+      原因：生产 nginx 带 CSP `script-src 'self'`（见 deploy/nginx/security-headers.conf），
+      内联脚本会被浏览器直接拒绝执行 —— 而 viewport 完全由那段脚本生成，脚本被拦 ⇒
+      页面上**一个 viewport meta 都没有** ⇒ 真机浏览器按 980px 桌面宽度渲染、移动端布局全乱。
+
+      （2026-09-17 上线实测发现：本地测试服务器没有安全头，所以这个坑只会在线上暴露。
+        现已给 tests/serve-h5.mjs 补上同款 CSP，本地就能复现。）
+
+      viewport-fit=cover 直接写死：iOS 11.2+ 支持，更旧的浏览器会忽略该属性，无副作用。
+    -->
+    <meta
+      name="viewport"
+      content="width=device-width,initial-scale=1.0,minimum-scale=1.0,maximum-scale=1.0,user-scalable=no,viewport-fit=cover"
+    />
     <title>YUMU 游戏助手</title>
     <!--preload-links-->
     <!--app-context-->

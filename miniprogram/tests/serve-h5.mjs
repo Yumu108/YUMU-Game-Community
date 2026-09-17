@@ -34,6 +34,25 @@ const MIME = {
   '.ttf': 'font/ttf'
 }
 
+/**
+ * 🚨 复刻**生产 nginx 的安全响应头**（与 deploy/nginx/security-headers.conf 保持一致）。
+ *
+ * 为什么本地必须带上：CSP `script-src 'self'` 会**拒绝内联脚本**。本地若不加这层约束，
+ * 产物里的内联脚本在本地全绿、一上线就被拦 —— 2026-09-17 正是这样漏掉了 uni-app H5
+ * 模板里的内联 viewport 脚本，后果是**真机上没有 viewport meta、移动端按桌面宽度渲染**。
+ * 此类「只在生产暴露」的差异，就该在本地复现，而不是等上线后才发现。
+ *
+ * ⚠️ 改了 deploy/nginx/security-headers.conf 时，这里要同步改（两份必须一致）。
+ */
+const SECURITY_HEADERS = {
+  'x-content-type-options': 'nosniff',
+  'x-frame-options': 'SAMEORIGIN',
+  'referrer-policy': 'strict-origin-when-cross-origin',
+  'permissions-policy': 'geolocation=(), microphone=(), camera=(), payment=()',
+  'content-security-policy':
+    "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com; img-src 'self' data: blob: https:; connect-src 'self' ws: wss:; media-src 'self' blob: https:; object-src 'none'; frame-ancestors 'self'; base-uri 'self'; form-action 'self'"
+}
+
 if (!fs.existsSync(ROOT)) {
   console.error(`❌ 产物不存在：${ROOT}\n   先跑 npm run build:h5`)
   process.exit(1)
@@ -52,11 +71,12 @@ const server = http.createServer(async (req, res) => {
         signal: AbortSignal.timeout(25000)
       })
       res.writeHead(r.status, {
+        ...SECURITY_HEADERS,
         'content-type': r.headers.get('content-type') || 'application/json; charset=utf-8'
       })
       res.end(Buffer.from(await r.arrayBuffer()))
     } catch (e) {
-      res.writeHead(502, { 'content-type': 'application/json; charset=utf-8' })
+      res.writeHead(502, { ...SECURITY_HEADERS, 'content-type': 'application/json; charset=utf-8' })
       res.end(JSON.stringify({ code: 502, message: 'proxy error: ' + e.message }))
     }
     return
@@ -66,7 +86,7 @@ const server = http.createServer(async (req, res) => {
   let p = url.pathname
   if (p === BASE || p === BASE + '/') p = `${BASE}/index.html`
   if (!p.startsWith(`${BASE}/`)) {
-    res.writeHead(404, { 'content-type': 'text/plain; charset=utf-8' })
+    res.writeHead(404, { ...SECURITY_HEADERS, 'content-type': 'text/plain; charset=utf-8' })
     res.end('not found (only /m/ is served)')
     return
   }
@@ -74,12 +94,15 @@ const server = http.createServer(async (req, res) => {
   const rel = decodeURIComponent(p.slice(BASE.length + 1))
   const file = path.join(ROOT, rel)
   if (!file.startsWith(ROOT) || !fs.existsSync(file) || fs.statSync(file).isDirectory()) {
-    res.writeHead(404, { 'content-type': 'text/plain; charset=utf-8' })
+    res.writeHead(404, { ...SECURITY_HEADERS, 'content-type': 'text/plain; charset=utf-8' })
     res.end('not found')
     return
   }
 
-  res.writeHead(200, { 'content-type': MIME[path.extname(file).toLowerCase()] || 'application/octet-stream' })
+  res.writeHead(200, {
+    ...SECURITY_HEADERS,
+    'content-type': MIME[path.extname(file).toLowerCase()] || 'application/octet-stream'
+  })
   res.end(fs.readFileSync(file))
 })
 
