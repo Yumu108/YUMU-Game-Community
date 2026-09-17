@@ -10,7 +10,7 @@
 
 > **「我在玩什么 → 怎么过 → 最近更新了什么」**
 
-因此砍掉全部社交互动与 UGC 发布，只保留**内容消费**：游览游戏库、看攻略（结构化步骤卡）、看资讯。
+因此砍掉全部社交互动与 UGC 发布，只保留**内容消费**：游览游戏库、看攻略（结构化拆解卡）、看资讯。
 
 ## 技术形态
 
@@ -38,33 +38,69 @@
 ## 目录结构
 
 ```
-miniprogram/
-├── docs/                     # 文档
-│   ├── 方案设计.md            # 定位 / 范围 / 页面结构 / 接口映射 / 开发计划
-│   └── 开发日志.md            # 小程序侧流水（与社区主日志分开记）
-├── prototype/                # 视觉原型（纯 HTML，浏览器直接打开）
-│   └── index.html            # 6 屏移动端原型：首页 / 游戏库 / 游戏主页 / 攻略详情 / 资讯 / 我的
-├── src/                      # uni-app 工程源码（待建，见方案 §九）
-└── README.md                 # ← 本文档
+miniprogram/                  ← 独立子项目，与 backend/ frontend/ 平级
+├── package.json              uni-app CLI 工程（工程根在这里，源码在 src/）
+├── vite.config.js            H5 开发期把 /api 代理到线上后端
+├── index.html
+├── docs/
+│   ├── 方案设计.md            定位 / 范围 / 页面结构 / 接口映射 / 开发计划
+│   └── 开发日志.md            小程序侧流水（与社区主日志分开记）
+├── prototype/index.html      6 屏移动端原型（纯 HTML，浏览器直接打开）
+├── src/                      uni-app 源码
+│   ├── main.js  App.vue  pages.json  manifest.json
+│   ├── api/                  config.js（端点单一来源）/ request.js / community.js
+│   ├── utils/                format.js / content.js / stepParser.js / storage.js
+│   ├── components/           GameTile / PostCard / StepCard / EmptyState / Skeleton
+│   └── pages/                index / games / game·detail / post·detail / news / my / search / list
+├── tests/                    单测 + 浏览器回归 + 产物验证服务器
+└── README.md                 ← 本文档
 ```
 
 ## 快速开始
 
-### 看原型（现在就能看）
+### 看原型（无需环境）
 
-用浏览器直接打开 `prototype/index.html`，无需任何环境。原型内数据均为线上真实内容。
+浏览器直接打开 `prototype/index.html`。原型内数据取自线上真实内容。
 
-### 跑源码（工程搭建后）
+### 跑源码
 
 ```bash
-cd miniprogram/src
+cd miniprogram
 npm install
-npm run dev:mp-weixin     # 产物在 dist/dev/mp-weixin，用微信开发者工具导入
-npm run dev:h5            # H5 预览（浏览器 / 手机）
+
+# 微信小程序：产物 dist/dev/mp-weixin（或 build 版 dist/build/mp-weixin），用开发者工具导入
+npm run dev:mp-weixin
+
+# H5：开发预览（/api 经 vite 代理到线上后端）
+npm run dev:h5
+
+# 出正式产物
+npm run build:h5            # → dist/build/h5，部署时挂到服务器 /m/ 下
+npm run build:mp-weixin     # → dist/build/mp-weixin
 ```
 
 微信开发者工具里需勾选 **「不校验合法域名、web-view（业务域名）、TLS 版本以及 HTTPS 证书」**，
 这样才能直连 `http://8.133.255.202/api`（后端无需改动）。
+
+### 回归验证（改完必跑）
+
+```bash
+cd miniprogram
+
+# ① 解析器单测 20 项（直接 import 被测源码）
+node --experimental-default-type=module tests/stepParser.test.mjs
+
+# ② 浏览器回归 27 项（打在**真实构建产物**上）
+npm run build:h5
+node tests/serve-h5.mjs &                       # 起在 http://localhost:5199/m/
+NODE_PATH="<repo>/tests/.pw/node_modules" node tests/verify-miniprogram.cjs
+```
+
+- `tests/serve-h5.mjs` 把 `dist/build/h5` 挂在 `/m/` 并把 `/api` 代理到线上 —— **必需**，
+  否则产物里的相对路径 `/api` 找不到后端，页面会全是空数据。
+- `NODE_PATH` 复用社区项目已装的 `playwright-core`，不重复安装。
+- 诊断工具：`tests/probe-scroll.cjs`（打印 H5 真实滚动容器与触发条件）。
+  遇到「上拉加载不生效」先跑它，**别直接改业务代码**。
 
 ## 四条硬约束（踩过坑，别再踩）
 
@@ -76,6 +112,12 @@ npm run dev:h5            # H5 预览（浏览器 / 手机）
    项目里也没有任何视频相关代码。视频已**降级为详情页的可选模块**，不占主线。
 4. **本小程序不上架**（2023-09 起须先完成小程序 ICP 备案，且服务器域名必须 HTTPS 且已备案）。
    开发期用开发者工具勾选「不校验合法域名」直连 IP；交付靠 H5 版。
+5. **线上全部 18 款游戏的 `cover` 都是 `null`**，帖子封面也全为空（只有用户头像有图）。
+   ⇒ 游戏卡必须**默认渲染「首字渐变色块」**（`utils/format.js` 的 `gameTile()`），有图才显示图；
+   反过来写会让所有游戏卡片变成空白。
+   📌 顺带：`curl -I`（HEAD）探 `/api/files/*` 会返回 **401**，别误判成「图片要鉴权」——
+   放行规则只写了 `GET`，`<image>` 走 GET，不需要 token。
+
 
 ## 视觉基调
 

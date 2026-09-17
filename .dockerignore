@@ -30,6 +30,10 @@ logs
 tests
 uploads
 
+# 小程序子项目（nginx 镜像不需要它 —— H5 产物在发版时已并入 frontend/dist/m/，
+# 直接排掉可省下十几 MB 上下文与上万个小文件）
+miniprogram
+
 *.log
 *.md
 !README.md

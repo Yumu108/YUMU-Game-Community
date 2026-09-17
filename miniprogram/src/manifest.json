@@ -1,0 +1,53 @@
+{
+  "name": "YUMU游戏助手",
+  "appid": "",
+  "description": "YUMU 游戏社区附带的游戏攻略 / 资讯小程序（弱社交，内容消费端）",
+  "versionName": "1.0.0",
+  "versionCode": "100",
+  "transformPx": false,
+  "app-plus": {
+    "usingComponents": true,
+    "nvueStyleCompiler": "uni-app",
+    "compilerVersion": 3,
+    "splashscreen": {
+      "alwaysShowBeforeRender": true,
+      "waiting": true,
+      "autoclose": true,
+      "delay": 0
+    },
+    "modules": {},
+    "distribute": {
+      "android": { "permissions": [] },
+      "ios": {},
+      "sdkConfigs": {}
+    }
+  },
+  "quickapp": {},
+  "mp-weixin": {
+    "appid": "",
+    "setting": {
+      "urlCheck": false,
+      "es6": true,
+      "minified": true,
+      "postcss": true
+    },
+    "usingComponents": true,
+    "lazyCodeLoading": "requiredComponents",
+    "permission": {}
+  },
+  "mp-alipay": { "usingComponents": true },
+  "mp-baidu": { "usingComponents": true },
+  "mp-toutiao": { "usingComponents": true },
+  "uniStatistics": { "enable": false },
+  "h5": {
+    "title": "YUMU 游戏助手",
+    "router": {
+      "mode": "hash",
+      "base": "/m/"
+    },
+    "optimization": {
+      "treeShaking": { "enable": true }
+    }
+  },
+  "vueVersion": "3"
+}

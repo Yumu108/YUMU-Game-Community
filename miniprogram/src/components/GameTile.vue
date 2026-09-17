@@ -1,0 +1,71 @@
+<template>
+  <view class="tile" :style="tileStyle">
+    <image v-if="cover" class="tile__img" :src="cover" mode="aspectFill" @error="onImgError" />
+    <text v-else class="tile__letter" :style="{ color: t.fg }">{{ t.letter }}</text>
+  </view>
+</template>
+
+<script setup>
+/**
+ * 游戏色块。
+ *
+ * 🚨 线上 18 款游戏的 `cover` 全是 null，所以**默认形态就是首字色块**，
+ *   有图才显示图 —— 反过来写会让所有游戏卡都变成空白。
+ */
+import { computed, ref, watch } from 'vue'
+import { gameTile, resolveImage } from '../utils/format'
+
+const props = defineProps({
+  game: { type: Object, default: () => ({}) },
+  size: { type: String, default: 'md' } // sm | md | lg
+})
+
+const t = computed(() => gameTile(props.game))
+const coverUrl = ref('')
+
+watch(
+  () => props.game && props.game.cover,
+  (v) => {
+    coverUrl.value = resolveImage(v)
+  },
+  { immediate: true }
+)
+
+const cover = computed(() => coverUrl.value)
+
+function onImgError() {
+  // 图挂了就退回首字色块，不留空白
+  coverUrl.value = ''
+}
+
+const sizeMap = { sm: 72, md: 96, lg: 120 }
+const px = computed(() => sizeMap[props.size] || 96)
+
+const tileStyle = computed(() => {
+  const radius = Math.round(px.value * 0.2)
+  return {
+    width: `${px.value}rpx`,
+    height: `${px.value}rpx`,
+    borderRadius: `${radius}rpx`,
+    background: t.value.bg
+  }
+})
+</script>
+
+<style scoped>
+.tile {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+.tile__img {
+  width: 100%;
+  height: 100%;
+}
+.tile__letter {
+  font-weight: 600;
+  font-size: 40rpx;
+}
+</style>

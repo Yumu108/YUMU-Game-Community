@@ -16,3 +16,9 @@ src/project.private.config.json
 
 # 打包产物
 *.zip
+
+# 产物备份（发版脚本在 Windows 上遇到 outDir 被占用时会把 dist 改名挪走再重试）
+dist_bak*/
+
+# 回归测试截图（可随时重新生成）
+tests/shots/

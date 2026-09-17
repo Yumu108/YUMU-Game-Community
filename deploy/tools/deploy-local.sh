@@ -12,6 +12,10 @@
 #   ⇒ 从此「编译在本机、服务器只 COPY 产物」。服务器上的 Dockerfile 已退化为纯
 #     COPY（见 backend/Dockerfile、deploy/nginx/Dockerfile 顶部说明）。
 #
+# 附带产出（2026-09-17）：发前端时会把**小程序 H5 版**（miniprogram/，uni-app 编译）
+#   并入 frontend/dist/m/，由同一个 nginx 镜像顺带托管 ⇒ 访问 http://<host>/m/
+#   H5 构建失败**不阻断发版**（附加交付渠道，不拖累主站）。
+#
 # 用法（在**本机**仓库根目录）：
 #   bash deploy/tools/deploy-local.sh                 # 自动判断该发前端还是后端（推荐）
 #   bash deploy/tools/deploy-local.sh frontend        # 只发前端
@@ -219,6 +223,8 @@ step "3/7 本机编译"
 # ⚠️ 必须先声明：--reuse-build 走的是下面的 elif 分支，不会执行 else 里的赋值，
 #    而 `set -u` 下引用未定义变量会直接中止发版（2026-09-16 实测 line 391 unbound）。
 LOCAL_BUNDLE=""
+# 本次是否成功把小程序 H5 并入 dist（第 7 步验收据此决定「缺失」是失败还是跳过）
+MP_H5=0
 
 if [ "$DRY" -eq 1 ]; then
   [ "$WANT_BACKEND" -eq 1 ] && note "[dry-run] cd backend && mvn -B -DskipTests package"
@@ -278,6 +284,38 @@ else
     rm -f "$FE_LOG"
     [ -f "$FRONTEND_DIST/index.html" ] || die "构建结束但没找到 $FRONTEND_DIST/index.html"
     ok "前端构建完成（耗时 $(( $(date +%s) - _t0 ))s，产物 $(du -sh "$FRONTEND_DIST" | cut -f1)）"
+
+    # ── 小程序 H5 版并入同一份 dist（第二交付渠道，见 miniprogram/README.md）──
+    # 放到 frontend/dist/m/ ⇒ 由同一个 nginx 镜像（COPY frontend/dist）顺带托管。
+    # **无需改 nginx 配置**：/m/ 命中 location / 的 try_files 拿到 /m/index.html，
+    # /m/assets/* 作为普通静态文件返回（hash 路由，故不需要深层路径回退）。
+    # 约定：H5 失败**不阻断发版** —— 它是附加渠道，不该拖累主站上线。
+    if [ -d "$ROOT_DIR/miniprogram/node_modules" ]; then
+      printf '\n  %s── 小程序 H5：npm run build:h5 ──%s\n' "$C_B" "$C_0"
+      _t0=$(date +%s)
+      MP_LOG="$(mktemp)"
+      for _try in 1 2; do
+        if (cd "$ROOT_DIR/miniprogram" && npm run build:h5 > "$MP_LOG" 2>&1); then
+          MP_H5=1; break
+        fi
+        # 同前端：Windows 上 vite 清 outDir 会被占用而 EBUSY（间歇性）→ 移走 dist 重试一次
+        [ "$_try" -eq 1 ] || break
+        warn "H5 构建失败 → 把 miniprogram/dist 改名挪走后重试一次"
+        mv "$ROOT_DIR/miniprogram/dist" "$ROOT_DIR/miniprogram/dist_bak.$(date +%Y%m%d%H%M%S)" 2>/dev/null || true
+      done
+      if [ "$MP_H5" -eq 1 ]; then
+        rm -rf "$FRONTEND_DIST/m"
+        mkdir -p "$FRONTEND_DIST/m"
+        cp -r "$ROOT_DIR/miniprogram/dist/build/h5/." "$FRONTEND_DIST/m/"
+        rm -f "$MP_LOG"
+        ok "小程序 H5 已并入 frontend/dist/m（耗时 $(( $(date +%s) - _t0 ))s，$(du -sh "$FRONTEND_DIST/m" | cut -f1)）"
+      else
+        warn "小程序 H5 构建失败 → 本次跳过 H5（主站不受影响）；日志：$MP_LOG"
+        tail -8 "$MP_LOG" | sed 's/^/     /'
+      fi
+    else
+      note "miniprogram/node_modules 不存在 → 跳过 H5（先 cd miniprogram && npm install）"
+    fi
   fi
 
 fi
@@ -483,6 +521,20 @@ if [ "$(printf '%s' "$B" | wc -c)" -gt 20 ]; then
   ok "业务接口 /api/boards 有真实返回"
 else
   warn "/api/boards 返回内容偏少 —— 手动开一次页面确认"
+fi
+
+# 7.5 小程序 H5 版（第二交付渠道，与主站同镜像托管，路径 /m/）
+# 🚨 **不能用状态码判断**：主站 SPA 有 `try_files … /index.html` 回退，任何未匹配路径
+#    都返回 200（实测 /m/ 在**从未部署过**时也是 200，吐的是主站 index.html）。
+#    判据必须是内容里有没有 `/m/assets/` —— 主站引的是 `assets/`，没有 `m/` 前缀。
+MHTML="$(curl -s -m 15 "$BASE_URL/m/" || echo '')"
+if printf '%s' "$MHTML" | grep -q '/m/assets/'; then
+  ok "小程序 H5 版可访问：$BASE_URL/m/"
+elif [ "$MP_H5" -eq 1 ]; then
+  err "/m/ 没返回 H5 页面，但本次确实构建了 H5 —— 检查 dist 是否含 m/ 或容器是否重建"
+  FAIL=1
+else
+  warn "/m/ 未返回 H5（本次未构建 H5，属预期）—— 手工看：$BASE_URL/m/"
 fi
 
 DUR=$(( $(date +%s) - T0 ))
