@@ -73,7 +73,10 @@ resolve_build_java() {
       printf '%s' "$cand"
       return
     fi
-    warn "环境里的 JAVA_HOME 是 JDK ${ver:-未知}（<17），已改用 $REQUIRED_JAVA_HOME 构建后端"
+    # ⚠️ 警告必须走 **stderr**：本函数是被 `$(...)` 调用的，warn 默认打到 stdout 会被
+    #    命令替换一起捕获，把 BUILD_JAVA_HOME 污染成「警告文字 + 路径」⇒ Maven 直接报
+    #    「参数语法不正确」（2026-09-17 第二版就栽在这）。
+    warn "环境里的 JAVA_HOME 是 JDK ${ver:-未知}（<17），已改用 $REQUIRED_JAVA_HOME 构建后端" >&2
   fi
   printf '%s' "$REQUIRED_JAVA_HOME"
 }
