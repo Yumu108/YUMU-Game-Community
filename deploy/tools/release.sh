@@ -260,8 +260,9 @@ case "$MODE" in
       #    小程序 H5 产物是并进 frontend/dist/m 由**同一个 nginx 镜像**托管的，
       #    只改 miniprogram/ 时若不重建 → 工具明明推了新产物，容器里却还是旧镜像，
       #    线上 /m/ 静默停留在旧版，而整条链路一路打印「成功」。
-      #    .dockerignore 决定镜像构建上下文，改了同理。
-      printf '%s\n' "$CHANGED" | grep -qE '^(frontend/|miniprogram/|deploy/nginx/|\.dockerignore$)' && WANT_NGINX=1
+      #    只认「真正进 H5 产物的输入」（src/ + 三个构建入口），不认 docs/ 与 tests/，
+      #    免得改个文档也去重启一次生产容器。.dockerignore 决定构建上下文，改了同理。
+      printf '%s\n' "$CHANGED" | grep -qE '^(frontend/|miniprogram/(src/|index\.html|package\.json|vite\.config\.js)|deploy/nginx/|\.dockerignore$)' && WANT_NGINX=1
       printf '%s\n' "$CHANGED" | grep -qE '^backend/'                  && WANT_BACKEND=1
       printf '%s\n' "$CHANGED" | grep -qE '^docker-compose\.yml$'      && { WANT_NGINX=1; WANT_BACKEND=1; }
       SQL_MIGRATIONS="$(printf '%s\n' "$CHANGED" | grep -E '^backend/src/main/resources/db/[0-9]+.*\.sql$' || true)"
@@ -576,7 +577,7 @@ RECORD=1
 [ "$RECREATE_BACKEND" -eq 1 ] && RECORD=0
 # 手动指定范围时，只有把改动面**完整覆盖**了，才能说「当前代码已上线」
 if [ "$MODE" != "auto" ] && [ -n "$CHANGED" ]; then
-  printf '%s\n' "$CHANGED" | grep -qE '^(frontend/|miniprogram/|deploy/nginx/|\.dockerignore$)' && [ "$WANT_NGINX" -ne 1 ] && RECORD=0
+  printf '%s\n' "$CHANGED" | grep -qE '^(frontend/|miniprogram/(src/|index\.html|package\.json|vite\.config\.js)|deploy/nginx/|\.dockerignore$)' && [ "$WANT_NGINX" -ne 1 ] && RECORD=0
   printf '%s\n' "$CHANGED" | grep -qE '^backend/'                  && [ "$WANT_BACKEND" -ne 1 ] && RECORD=0
 fi
 

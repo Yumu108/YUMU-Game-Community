@@ -185,6 +185,21 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
   assert('G2 无 JS 运行时错误', hardErrors.length === 0, hardErrors.slice(0, 2).join(' | '))
   if (hardErrors.length) console.log('   错误明细：\n     ' + hardErrors.slice(0, 8).join('\n     '))
 
+  // G3 移动端 viewport（2026-09-17 补）
+  //   背景：uni-app 官方 H5 模板用一段**内联脚本** document.write 生成 <meta viewport>，
+  //   而生产 nginx 的 CSP 是 `script-src 'self'` ⇒ 脚本被拒 ⇒ 页面上一个 viewport meta
+  //   都没有 ⇒ 真机按 980px 桌面宽度渲染、移动端布局全乱。
+  //   这类后果**不会让页面白屏**，只看「有没有报错」容易放过，所以这里直接读 DOM 断言。
+  const vp = await page.evaluate(() => {
+    const m = document.querySelector('meta[name="viewport"]')
+    return m ? (m.getAttribute('content') || '') : null
+  })
+  assert(
+    'G3 viewport meta 正确（width=device-width）',
+    !!vp && /width=device-width/.test(vp),
+    vp === null ? '缺失（可能被 CSP 拦掉了内联脚本）' : vp
+  )
+
   await browser.close()
   console.log(`\n=== 结果：${pass}/${pass + fail} 通过 ===`)
   console.log(`截图目录：${SHOTS}`)

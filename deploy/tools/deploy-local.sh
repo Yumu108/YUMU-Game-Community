@@ -191,8 +191,10 @@ case "$MODE" in
       printf '%s\n' "$CHANGED" | grep -qE '^backend/'                  && WANT_BACKEND=1
       # ⚠️ miniprogram/ 也要算进前端：H5 产物是并进 frontend/dist/m 一起上线的，
       #    只改小程序代码时不重发 nginx，线上 /m/ 就会**静默停留在旧版**。
-      #    .dockerignore 同理 —— 它决定镜像构建上下文，改了就该重建 nginx 镜像。
-      printf '%s\n' "$CHANGED" | grep -qE '^(frontend/|miniprogram/|deploy/nginx/|\.dockerignore$)' && WANT_NGINX=1
+      #    只认「真正进 H5 产物的输入」（src/ + 三个构建入口），不认 docs/ 与 tests/ ——
+      #    否则改个文档也会去重启一次生产容器。
+      #    .dockerignore 同理：它决定镜像构建上下文，改了就该重建 nginx 镜像。
+      printf '%s\n' "$CHANGED" | grep -qE '^(frontend/|miniprogram/(src/|index\.html|package\.json|vite\.config\.js)|deploy/nginx/|\.dockerignore$)' && WANT_NGINX=1
       printf '%s\n' "$CHANGED" | grep -qE '^docker-compose\.yml$'      && { WANT_NGINX=1; WANT_BACKEND=1; }
     fi
     ;;
