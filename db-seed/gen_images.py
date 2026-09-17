@@ -65,6 +65,14 @@ GENRE_COLOR = {
     '塔防': ((55, 48, 163), (129, 140, 248)), '派对': ((190, 24, 93), (244, 114, 182)),
     '非对称': ((68, 64, 60), (168, 162, 158)), '自走棋': ((109, 40, 217), (167, 139, 250)),
     '合作': ((15, 118, 110), (45, 212, 191)), '其他': ((51, 65, 85), (100, 116, 139)),
+    # 第二批游戏（id 20028-20062）引入的新类型：没有配色会全部落回「其他」的灰蓝，
+    # 导致游戏库页面一堆同色封面。这里逐类给一组能互相区分的深浅配色。
+    '格斗': ((88, 20, 40), (220, 60, 80)), 'RTS': ((19, 60, 40), (52, 168, 100)),
+    '银河恶魔城': ((30, 20, 80), (120, 90, 220)), '肉鸽': ((110, 45, 15), (240, 140, 60)),
+    '平台跳跃': ((16, 90, 130), (90, 200, 230)), '生存': ((70, 60, 20), (190, 165, 60)),
+    '生存恐怖': ((35, 25, 45), (110, 70, 110)), '模拟': ((20, 80, 80), (80, 190, 180)),
+    '战棋': ((60, 50, 110), (150, 140, 230)), '恋爱': ((140, 40, 90), (240, 130, 180)),
+    '音游': ((90, 20, 120), (210, 100, 240)),
 }
 
 
@@ -189,7 +197,7 @@ def main():
     os.makedirs(OUT, exist_ok=True)
     users = q("SELECT id, nickname FROM yumu_community.user WHERE id BETWEEN 20001 AND 20400 AND deleted=0")
     posts = q("SELECT id, board_id, title FROM yumu_community.post WHERE id >= 200001 AND deleted=0")
-    # 只覆盖「现有 18 款 + 本次新增 25 款」；本机 1000 段的历史测试游戏不生成
+    # 只覆盖「现有 18 款 + 种子新增 62 款」；本机 1000 段的历史测试游戏不生成
     games = [g for g in q("SELECT id, name, IFNULL(genre,'') FROM yumu_community.game WHERE deleted=0")
              if int(g[0]) <= 18 or int(g[0]) >= 20001]
     print('待生成：头像 %d / 帖子封面 %d / 游戏封面 %d' % (len(users), len(posts), len(games)))
@@ -214,7 +222,9 @@ def main():
         save(img, th, fname)
         files += [fname + '.jpg', fname + '_t.jpg']
 
-    with open(os.path.join(HERE, 'out', 'image-manifest.txt'), 'w', encoding='utf-8') as f:
+    # newline='\n'：Windows 上默认会把 \n 转成 \r\n，清单交给 shell/awk 处理时会
+    # 带着 \r 一起去比对，出现「明明都在、却一个都对不上」的假象。
+    with open(os.path.join(HERE, 'out', 'image-manifest.txt'), 'w', encoding='utf-8', newline='\n') as f:
         f.write('\n'.join(files) + '\n')
 
     total = sum(os.path.getsize(os.path.join(OUT, f)) for f in files if os.path.exists(os.path.join(OUT, f)))

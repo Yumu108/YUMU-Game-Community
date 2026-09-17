@@ -33,6 +33,13 @@ from posts_world import GACHA_POSTS as P_GACHA                # noqa: E402
 from posts_world import HELP_POSTS as P_HELP                  # noqa: E402
 from posts_news import POSTS as P_NEWS                        # noqa: E402
 from posts_art_misc import ART_POSTS, MISC_POSTS              # noqa: E402
+from posts_newgames import BY_BOARD as NG_BY_BOARD            # noqa: E402
+from posts_newgames import EXTRA_POSTS as NG_EXTRA            # noqa: E402
+from posts_deep_a import LONG_POSTS as LONG_A                 # noqa: E402
+from posts_deep_b import LONG_POSTS as LONG_B                 # noqa: E402
+from posts_threads import THREADS                             # noqa: E402
+
+LONG_POSTS = list(LONG_A) + list(LONG_B)
 
 # ---------------------------------------------------------------------------
 # id 段
@@ -90,8 +97,31 @@ ALL_POSTS = (
     [(p, 6) for p in MISC_POSTS]
 )
 
+# 新增 35 款游戏（id 20028-20062）的配套帖：显式带板块号，跨 1/2/3/4/6 五个板块。
+# 单独成表（不并进 ALL_POSTS）的原因见 posts_newgames.py 顶部说明。
+NEWGAME_POSTS = ([(p, b) for b in sorted(NG_BY_BOARD) for p in NG_BY_BOARD[b]]
+                 + list(NG_EXTRA))   # + 补齐 2 款历史零帖游戏（拳皇15 / 街霸6）
+
+# 深度内容：1500+ 字长文（板块显式指定）+ 长讨论串（回复由素材显式给出，不走随机池）
+LONG_POST_ROWS = [(p, b) for p, b in LONG_POSTS]
+THREAD_POST_ROWS = [(t['post'], t['board']) for t in THREADS]
+
+# 长讨论串按「主楼标题」反查 —— gen_post_rows 只拿到 (post, board)，要认领自己的
+# 回复脚本就得靠标题回查。标题必须全局唯一，否则会串台，所以在导入期就断言。
+THREAD_BY_TITLE = {}
+for _t in THREADS:
+    _title = _t['post'][0]
+    if _title in THREAD_BY_TITLE:
+        raise SystemExit('长讨论串标题重复，无法反查：%s' % _title)
+    THREAD_BY_TITLE[_title] = _t
+
+_ALL_OTHER_TITLES = {p[0] for p, _b in ALL_POSTS + NEWGAME_POSTS + LONG_POST_ROWS}
+for _t in THREADS:
+    if _t['post'][0] in _ALL_OTHER_TITLES:
+        raise SystemExit('长讨论串标题与其他素材重复：%s' % _t['post'][0])
+
 used_tag_names = set()
-for p, _b in ALL_POSTS:
+for p, _b in ALL_POSTS + NEWGAME_POSTS + LONG_POST_ROWS + THREAD_POST_ROWS:
     for t in p[3]:
         used_tag_names.add(t)
 NEW_TAGS = list(TAGS)
@@ -204,10 +234,18 @@ def batch_insert(table, cols, rows, chunk=300, ignore=False):
 # 1. 生成帖子（含时间、热度）
 # ---------------------------------------------------------------------------
 def build_posts():
-    """返回 [(post_tuple, board_id)]。DAILY_POOL 是 3 元组，这里统一补成 5 元组。"""
+    """返回 [(post_tuple, board_id)]。DAILY_POOL 是 3 元组，这里统一补成 5 元组。
+
+    🚨 顺序敏感：新增内容**一律追加在最后**（DAILY_POOL 之后）。
+       gen_post_rows 按顺序发号（POST_ID0 起）+ 消耗全局随机流，插在中间会让
+       既有帖子的 id / 作者 / 时间 / 热度全部漂移，和线上现状对不上、无法做 diff 复核。
+    """
     out = list(ALL_POSTS)
     for title, content, tags in DAILY_POOL:
         out.append(((title, content, None, tags, []), 6))
+    out += NEWGAME_POSTS        # 新增 35 款游戏的配套帖（46 篇）
+    out += LONG_POST_ROWS       # 1500+ 字长文
+    out += THREAD_POST_ROWS     # 长讨论串的主楼
     return out
 
 
@@ -267,6 +305,8 @@ def gen_post_rows(raw_posts):
             'id': pid, 'board': board, 'author': author_id,
             'game': gid, 'tags': tags, 'replies': replies,
             'mins': m, 'heat': heat, 'title': title,
+            # 长讨论串的帖子带上自己的回复脚本，gen_all 见到它就跳过随机回复池
+            'thread': THREAD_BY_TITLE.get(title),
         })
         pid += 1
     return rows, meta
@@ -298,6 +338,32 @@ def gen_all(meta):
     # ---------- 回复 ----------
     rid = REPLY_ID0
     for m in meta:
+        thr = m.get('thread')
+        if thr:
+            # 长讨论串：回复由素材显式给出（谁回谁、回到哪一条都写死了），
+            # 不走随机池 —— 随机池拼不出「有人接上一句、有人反驳」的讨论感。
+            # 楼主固定由 cast[0] 担任，其余参与者从全站用户里抽，且不与楼主重复。
+            others = [x for x in ALL_USER_IDX if USER_ID_BY_INDEX[x] != m['author']]
+            cast = [m['author']] + [USER_ID_BY_INDEX[x] for x in
+                                    random.sample(others, min(thr.get('cast', 6) - 1, len(others)))]
+            n = len(thr['replies'])
+            id_in_post = []
+            for i, rp in enumerate(thr['replies']):
+                uid = cast[rp['who'] % len(cast)]
+                # 时间：越靠后的回复离现在越近（rm 递减），但都晚于主楼（rm < m['mins']）
+                rm = max(2, int(m['mins'] * (0.93 - 0.88 * i / max(1, n - 1))))
+                reply_to = 'NULL' if rp.get('to') is None else str(id_in_post[rp['to']])
+                lk = int(rp.get('likes', 0))
+                reply_rows.append((
+                    str(rid), str(m['id']), str(uid), esc(rp['text']), reply_to, str(i + 1),
+                    '0', str(lk), mins_ago_expr(rm), mins_ago_expr(rm),
+                ))
+                id_in_post.append(rid)
+                reply_meta.append({'id': rid, 'post': m['id'], 'user': uid, 'mins': rm,
+                                   'likes': lk, 'text': rp['text']})
+                rid += 1
+            continue
+
         seeds = m['replies'] or []
         n = len(seeds)
         # 高热度帖额外补几条通用回复
