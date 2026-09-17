@@ -404,12 +404,29 @@ if [ "$WANT_NGINX" -eq 1 ] || [ "$WANT_BACKEND" -eq 1 ]; then
         backend) [ "$WANT_BACKEND" -eq 1 ] || continue ;;
         nginx)   [ "$WANT_NGINX" -eq 1 ]   || continue ;;
       esac
+      # 降险（9-17）：构建 backend 镜像**之前**先把运行中的 backend 停掉。
+      #   ① 释放约 245MB（JVM 堆 + 元空间）—— 2C2G 上这点内存就是决定性的边际；
+      #   ② 镜像变了，第 5 步 up -d 本来就必然重建容器 ⇒ 这次 stop **不增加中断窗口**，
+      #      只是把「反正要来的那次中断」提前几十秒。
+      # 不这么做的话：build 与运行中的 JVM 抢内存，2026-09-17 实测把整机拖进假死
+      # （静态页仍返回 200，但 /api 连上不回话、sshd 连 banner 都读不出）⇒ 只能控制台重启实例。
+      if [ "$svc" = "backend" ]; then
+        printf '\n  %s── 先停 backend 容器释放内存 ──%s\n' "$C_B" "$C_0"
+        $DC stop backend >/dev/null 2>&1 || true
+      fi
       printf '\n  %s── 构建 %s ──%s\n' "$C_B" "$svc" "$C_0"
       _t0=$(date +%s)
       $DC build --progress=plain "$svc"
       rc=$?
       _dur=$(( $(date +%s) - _t0 ))
-      [ "$rc" -eq 0 ] || die "$svc 构建失败（退出码 $rc，耗时 ${_dur}s）—— 完整日志：$LOG；失败前不需要回滚，旧容器还在跑"
+      if [ "$rc" -ne 0 ]; then
+        # 刚为省内存停了 backend —— 构建失败必须立刻拉回来，否则 /api 会一直挂着
+        if [ "$svc" = "backend" ]; then
+          warn "构建失败 —— 立即用旧镜像把 backend 拉回来，避免 API 持续不可用"
+          $DC up -d backend >/dev/null 2>&1 || warn "拉回失败，请手工执行：docker compose up -d backend"
+        fi
+        die "$svc 构建失败（退出码 $rc，耗时 ${_dur}s）—— 完整日志：$LOG"
+      fi
       ok "$svc 构建完成（耗时 ${_dur}s）"
     done
   fi
