@@ -668,6 +668,84 @@ const LABEL_TO_VALUE = { 手游: '手机', 多平台: '多平台', PC: 'PC', 主
   await anonCtx.close()
   void anonErrs
 
+  /* ---- L4-L7：忘记密码 + 注册协议勾选（2026-09-17 下午新增，对齐主站 C3/忘记密码设计） ---- */
+
+  // L4：登录页「忘记密码？」→ 独立视图（无 Tab、四个字段、返回登录）
+  await goto('/pages/login/login')
+  await new Promise((r) => setTimeout(r, 800))
+  await page.click('.forgot-row__link')
+  await new Promise((r) => setTimeout(r, 400))
+  const fpTitle = await text('.forgot-head__title')
+  assert(
+    'L4a 忘记密码是独立视图（无登录/注册 Tab、标题正确、4 个输入框）',
+    fpTitle.includes('忘记密码') && (await count('.seg__item')) === 0 && (await count('.field__input')) === 4,
+    `标题=${fpTitle} tab=${await count('.seg__item')} inputs=${await count('.field__input')}`
+  )
+  await page.click('.forgot-row__link') // 「← 返回登录」复用同一行样式
+  await new Promise((r) => setTimeout(r, 400))
+  assert('L4b 忘记密码可返回登录', (await count('.seg__item')) === 2, `tab=${await count('.seg__item')}`)
+
+  // L5：协议勾选行**只在注册 Tab** 出现，且带两个主站协议页链接
+  await page.click('.seg__item:nth-child(2)')
+  await new Promise((r) => setTimeout(r, 400))
+  const agreeLinks = await page.$$eval('.agree__link', (els) => els.map((e) => e.innerText))
+  assert(
+    'L5a 注册 Tab 有协议勾选行（《用户协议》《隐私政策》）',
+    (await count('.agree')) === 1 && agreeLinks.length === 2 && agreeLinks.join(',').includes('用户协议') && agreeLinks.join(',').includes('隐私政策'),
+    `agree=${await count('.agree')} links=${JSON.stringify(agreeLinks)}`
+  )
+  await page.click('.seg__item:nth-child(1)')
+  await new Promise((r) => setTimeout(r, 300))
+  assert('L5b 勾选行不在登录 Tab 出现', (await count('.agree')) === 0, `agree=${await count('.agree')}`)
+  await page.click('.seg__item:nth-child(2)')
+  await new Promise((r) => setTimeout(r, 300))
+
+  // L6：注册未勾选协议 → 被拦截，**不发** /auth/register 请求（判据=网络事实，不是 DOM）
+  // ⚠️ 与本脚本 456 行同一条坑：uni-input 是自定义元素，fill 必须打在内层 `input.uni-input-input` 上。
+  const regInputs = await page.$$('input.uni-input-input')
+  await regInputs[0].fill('regprobe1') // 账号id
+  await regInputs[1].fill('test123456') // 密码
+  await regInputs[2].fill('probe@test.local') // 邮箱
+  await regInputs[3].fill('123456') // 验证码
+  const regReqs = []
+  const onRegReq = (u) => regReqs.push(u)
+  page.on('request', (r) => {
+    if (/\/api\/auth\/register/.test(r.url())) onRegReq(r.url())
+  })
+  await page.click('.submit')
+  await new Promise((r) => setTimeout(r, 1000))
+  const bodyTxt = await page.evaluate(() => document.body.innerText)
+  assert(
+    'L6 未勾选协议时注册被拦截（无 register 请求 + 提示语）',
+    regReqs.length === 0 && bodyTxt.includes('请先阅读并同意'),
+    `register请求=${regReqs.length} 提示出现=${bodyTxt.includes('请先阅读并同意')}`
+  )
+  page.off('request', (r) => {
+    if (/\/api\/auth\/register/.test(r.url())) onRegReq(r.url())
+  })
+
+  // L7：协议链接打开**主站**协议页（window.open 打桩，判据=真实 URL）
+  await page.evaluate(() => {
+    window.__opened = []
+    window.open = (u) => {
+      window.__opened.push(String(u))
+      return null
+    }
+  })
+  // ⚠️ uni-app H5 会把 <text> 编译成 <uni-text>，nth-of-type 在全部 uni-text 兄弟间计数，
+  //     用 `.agree__link:nth-of-type(1)` 会扑空 —— 直接拿两个链接的元素句柄点击。
+  const legalLinks = await page.$$('.agree__link')
+  await legalLinks[0].click() // 《用户协议》
+  await legalLinks[1].click() // 《隐私政策》
+  await new Promise((r) => setTimeout(r, 400))
+  const opened = await page.evaluate(() => window.__opened || [])
+  assert(
+    'L7 协议链接指向主站 /agreement 与 /privacy',
+    opened.length === 2 && /\/agreement$/.test(opened[0]) && /\/privacy$/.test(opened[1]),
+    `opened=${JSON.stringify(opened)}`
+  )
+  await page.screenshot({ path: path.join(SHOTS, 'L-register-agree.png') })
+
   await browser.close()
   console.log(`\n=== 结果：${pass}/${pass + fail} 通过 ===`)
   console.log(`截图目录：${SHOTS}`)

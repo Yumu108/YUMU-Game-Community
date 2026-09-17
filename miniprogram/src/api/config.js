@@ -24,6 +24,12 @@ export const API_BASE = '/api'
  *   只有 `<image>` 组件会加前缀 —— 所以问题出在这一层，与 nginx / 后端无关。
  */
 export const ASSET_BASE = typeof location !== 'undefined' && location.origin ? location.origin : ''
+/**
+ * 主站页面基址 —— H5 与后端/主站**同源**（nginx 把 `/` 给主站、`/m/` 给本端），
+ * 协议页直接用 `location.origin`；本地 serve-h5 场景下打开的会是本地地址
+ * （回归测试里 window.open 会被打桩，不影响断言）。
+ */
+export const SITE_BASE = typeof location !== 'undefined' && location.origin ? location.origin : ''
 // #endif
 
 // #ifndef H5
@@ -31,7 +37,18 @@ export const ASSET_BASE = typeof location !== 'undefined' && location.origin ? l
 export const API_BASE = 'http://8.133.255.202/api'
 /** 静态资源（图片）前缀 —— 小程序端必须补全主机名 */
 export const ASSET_BASE = 'http://8.133.255.202'
+/** 主站页面基址 —— 小程序端无同源概念，直接写线上地址 */
+export const SITE_BASE = 'http://8.133.255.202'
 // #endif
+
+/**
+ * 主站协议页（history 路由，路径 `/agreement`、`/privacy`，见主站 router/index.js）。
+ * 注册勾选行的两个链接从这里取 —— 别在页面里手写 URL。
+ */
+export const LEGAL_LINKS = {
+  agreement: `${SITE_BASE}/agreement`,
+  privacy: `${SITE_BASE}/privacy`
+}
 
 /** 本地存储键 */
 export const STORAGE_KEYS = {

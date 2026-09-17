@@ -9,6 +9,9 @@
  *                          账号规则 `^[A-Za-z0-9_]{3,20}$`；邮箱必填 + 6 位验证码；
  *                          限频：同 IP 5 次/5 分钟
  *  · POST /auth/email-code {email, scene:'register'|'reset'}；同邮箱 60s 冷却
+ *  · POST /auth/reset-password {email, emailCode, newPassword} → void
+ *                          ⚠️ 防枚举：未注册邮箱同样返回成功（前端提示语不能写
+ *                          「已发送到你的邮箱」，要对齐主站「若该邮箱已注册…」）
  *  · POST /auth/logout     入黑名单当前 token；未传 token 也返回 200
  *  · POST /auth/refresh    Bearer 旧 token → {token}（2h 滑动续签，旧 jti 拉黑）
  *
@@ -30,6 +33,13 @@ export const register = ({ username, password, email, emailCode, nickname }) =>
 /** 发送邮箱验证码（scene：'register' 注册 / 'reset' 忘记密码） */
 export const sendEmailCode = (email, scene = 'register') =>
   post('/auth/email-code', { email, scene })
+
+/**
+ * 忘记密码：邮箱验证码重置密码（后端 `PasswordResetRequest`：email + emailCode + newPassword）。
+ * 与主站一致：成功后**不自动登录**，回登录态让用户用新密码登。
+ */
+export const resetPassword = ({ email, emailCode, newPassword }) =>
+  post('/auth/reset-password', { email, emailCode, newPassword })
 
 /** 退出登录（后端把 token 入黑名单；失败不阻断前端清态） */
 export const logout = () => post('/auth/logout', {})
