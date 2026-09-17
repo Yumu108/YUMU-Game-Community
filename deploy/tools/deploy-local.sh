@@ -55,6 +55,29 @@ JAR_NAME="yumu-community-1.0.0.jar"
 BACKEND_JAR="$ROOT_DIR/backend/target/$JAR_NAME"
 FRONTEND_DIST="$ROOT_DIR/frontend/dist"
 MAVEN_BIN="${MAVEN_BIN:-D:\\maven\\apache-maven-3.9.9\\bin\\mvn.cmd}"
+# 构建后端**必须**用的 JDK（Spring Boot 4 要 17+；本机另有 JDK 8 给老项目用）
+REQUIRED_JAVA_HOME="${REQUIRED_JAVA_HOME:-C:\\Program Files\\Java\\jdk-21}"
+# 🚨 `JAVA_HOME="${JAVA_HOME:-<jdk21>}"` 这种写法**不够**（2026-09-17 实际踩到）：
+#    本机 shell 里常有一个指向 **JDK 1.8** 的 JAVA_HOME（老项目 / 实训环境遗留），
+#    于是默认值根本不会生效 ⇒ 拿 JDK 8 去跑 Maven 构建 Spring Boot 4 项目 ⇒
+#    在**插件加载阶段**就抛 PluginContainerException，错误栈里全是
+#    maven-shade-plugin / plexus-utils 之类的 url 列表，**完全看不出是 JDK 版本问题**，
+#    第一次排查很容易往「jar 被占用 / 依赖损坏」方向找。
+#    所以这里**主动探测候选 JDK 的版本**，低于 17 一律换成 REQUIRED_JAVA_HOME。
+resolve_build_java() {
+  local cand="${JAVA_HOME:-}" ver
+  if [ -n "$cand" ] && [ -x "$cand/bin/java.exe" ]; then
+    # `java -version` 输出形如：java version "1.8.0_271" / openjdk version "21.0.2"
+    ver="$("$cand/bin/java.exe" -version 2>&1 | head -1 | sed -E 's/.*"([0-9]+)[."].*/\1/')"
+    if [ -n "$ver" ] && [ "$ver" -ge 17 ] 2>/dev/null; then
+      printf '%s' "$cand"
+      return
+    fi
+    warn "环境里的 JAVA_HOME 是 JDK ${ver:-未知}（<17），已改用 $REQUIRED_JAVA_HOME 构建后端"
+  fi
+  printf '%s' "$REQUIRED_JAVA_HOME"
+}
+# ⚠️ 调用必须放在 warn() 定义**之后**（函数在运行到那一行时才需要已定义）
 
 MODE=auto; DO_PUSH=1; DRY=0; ALLOW_DIRTY=0; SKIP_BUILD=0; FORCE_BUNDLE=0
 
@@ -74,6 +97,9 @@ err()  { printf '  %s❌ %s%s\n' "$C_R" "$1" "$C_0"; }
 note() { printf '  %s·  %s%s\n' "$C_D" "$1" "$C_0"; }
 step() { printf '\n%s▶ %s%s\n' "$C_B" "$1" "$C_0"; }
 die()  { err "$1"; printf '\n%s✋ 发版中止。线上服务没有被中断（失败发生在替换容器之前时，旧容器仍在跑）。%s\n' "$C_R" "$C_0"; exit 1; }
+
+# 选定构建后端的 JDK（见上方 resolve_build_java 的说明）
+BUILD_JAVA_HOME="$(resolve_build_java)"
 
 # 在服务器上执行命令（stdin 可传 heredoc 脚本）
 R() { ssh "${SSH_OPTS[@]}" "$DEPLOY_USER@$DEPLOY_HOST" "$@"; }
@@ -157,6 +183,8 @@ if [ "$SKIP_BUILD" -eq 0 ] && [ "$DRY" -eq 0 ]; then
   command -v node >/dev/null 2>&1 || die "本机没有 node（前端构建需要）"
   [ -f "$MAVEN_BIN" ] || [ -n "$(command -v mvn 2>/dev/null)" ] || die "找不到 Maven（设 MAVEN_BIN 环境变量指向 mvn）"
   note "node $(node -v) / Maven $(basename "$MAVEN_BIN")"
+  # 把实际用于构建后端的 JDK 打出来 —— 这个数不对就是上面那条 PluginContainerException
+  note "构建用 JDK：$("$BUILD_JAVA_HOME/bin/java.exe" -version 2>&1 | head -1)  [$BUILD_JAVA_HOME]"
 fi
 
 # ---------------------------------------------------------------------------
@@ -247,11 +275,11 @@ else
     # ⚠️ 输出必须**先落文件再 tail**：写成 `mvn … | tail` 会把退出码换成 tail 的 0，
     #    mvn 失败也会被当成成功，然后拿着旧 jar 去发版（2026-09-16 发现）。
     MVN_LOG="$(mktemp)"
-    if ! (cd "$ROOT_DIR/backend" && JAVA_HOME="${JAVA_HOME:-C:\\Program Files\\Java\\jdk-21}" \
+    if ! (cd "$ROOT_DIR/backend" && JAVA_HOME="$BUILD_JAVA_HOME" \
             "$MAVEN_BIN" -B -DskipTests package > "$MVN_LOG" 2>&1); then
       tail -20 "$MVN_LOG" | sed 's/^/     /'
       rm -f "$MVN_LOG"
-      die "后端构建失败 —— 若上面日志含 Unable to rename，说明本机有 java 正在运行该 jar：先停掉 8080 再重试"
+      die "后端构建失败 —— 排查两件事：① 日志含 Unable to rename ⇒ 本机有 java 正跑着这个 jar，先停 8080 再重试；② 日志是 PluginContainerException（满屏 maven-shade-plugin / plexus 的 url 列表）⇒ JDK 版本不对，确认用的是 17+（本脚本已自动选 $BUILD_JAVA_HOME）"
     fi
     tail -4 "$MVN_LOG" | sed 's/^/     /'
     rm -f "$MVN_LOG"
