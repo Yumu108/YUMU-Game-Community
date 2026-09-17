@@ -12,8 +12,18 @@
 // #ifdef H5
 /** 请求前缀（用于 uni.request 的 url） */
 export const API_BASE = '/api'
-/** 静态资源（图片）前缀 —— 同源留空即可，`/api/files/x.png` 直接可用 */
-export const ASSET_BASE = ''
+/**
+ * 静态资源（图片）前缀 —— H5 **必须给绝对地址**。
+ *
+ * 🚨 2026-09-17 实测（P0）：H5 里 uni-app 的 `<image>` 会按 `manifest.h5.router.base`
+ *   （本项目是 `/m/`）解析**根相对路径**，于是 `/api/files/x.jpg` 被发成
+ *   `/m/api/files/x.jpg` —— 本地 404、线上被 SPA 回退兜成 text/html ⇒ 全部图片解码失败。
+ *   用 `location.origin` 拼成绝对地址（`http://host/api/files/x.jpg`）后不再受 base 影响。
+ *
+ * 对照证据：同页面普通 `<img src="/api/files/x.jpg">` 是正常的（不受 base 影响），
+ *   只有 `<image>` 组件会加前缀 —— 所以问题出在这一层，与 nginx / 后端无关。
+ */
+export const ASSET_BASE = typeof location !== 'undefined' && location.origin ? location.origin : ''
 // #endif
 
 // #ifndef H5

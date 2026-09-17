@@ -265,7 +265,13 @@ function goGame(g) {
 .gitem__tags {
   display: flex;
   align-items: center;
+  flex-wrap: nowrap;
+  overflow: hidden;
   margin-top: 14rpx;
+}
+/* uni-text 默认 white-space: pre-line，不显式置回 nowrap 会被拆行 */
+.gitem__tags > * {
+  white-space: nowrap;
 }
 .gitem__tags .mp-tag {
   margin-right: 12rpx;

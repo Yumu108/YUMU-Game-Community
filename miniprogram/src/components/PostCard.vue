@@ -11,7 +11,7 @@
 
       <view class="pc__meta">
         <text v-if="post.gameName" class="mp-tag mp-tag--purple">{{ post.gameName }}</text>
-        <text v-if="post.boardName" class="pc__board">{{ post.boardName }}</text>
+        <text v-else-if="post.boardName" class="pc__board">{{ post.boardName }}</text>
         <text class="pc__dot">·</text>
         <text class="pc__time">{{ timeText }}</text>
         <view class="pc__spacer" />
@@ -145,12 +145,34 @@ function onTap() {
 .pc__meta {
   display: flex;
   align-items: center;
+  flex-wrap: nowrap;
+  /* 元信息行高度必须恒定：长游戏名（「崩坏：星穹铁道」）一旦折行，
+     右侧的赞/回复数字会被 align-items:center 拽到第二行，整行看起来错位 */
+  overflow: hidden;
+  white-space: nowrap;
   margin-top: 16rpx;
   font-size: 22rpx;
   color: #6f6a80;
 }
+/**
+ * 🚨 必须逐个直接命中：uni-app 的 `<text>` 在 H5 渲染成 `uni-text`，
+ *   其基础样式带了 `white-space: pre-line` —— **会覆盖从父级继承的 nowrap**，
+ *   只写父级 nowrap 是没用的，实测「资讯速递」照样被拆成两行。
+ */
+.pc__meta > * {
+  white-space: nowrap;
+}
+.pc__meta .mp-tag {
+  flex: none;
+  max-width: 160rpx;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 .pc__board {
-  margin-left: 12rpx;
+  flex: none;
+  max-width: 200rpx;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .pc__dot {
   margin: 0 8rpx;
@@ -159,7 +181,8 @@ function onTap() {
   flex: 1;
 }
 .pc__stat {
-  margin-left: 18rpx;
+  flex: none;
+  margin-left: 12rpx;
 }
 </style>
 
