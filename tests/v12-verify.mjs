@@ -22,7 +22,7 @@ const jput = (p, b, t) => j('PUT', p, b, t)
 const jdel = (p, t) => j('DELETE', p, null, t)
 
 const FIXED = [
-  { id: 1, name: '攻略心得' }, { id: 2, name: '游戏吐槽' }, { id: 3, name: '组队大厅' },
+  { id: 1, name: '攻略心得' }, { id: 2, name: '游戏吐槽' }, { id: 3, name: '玩家天地' },
   { id: 4, name: '资讯速递' }, { id: 5, name: '二次创作' }, { id: 6, name: '其他' }
 ]
 const suffix = Date.now().toString(36).slice(-6)
@@ -53,7 +53,7 @@ async function main() {
   const idSet = new Set(parents.map((b) => b.id))
   assert([1, 2, 3, 4, 5, 6].every((id) => idSet.has(id)), '板块 id 覆盖 1-6')
   const nameOk = FIXED.every((f) => parents.some((b) => b.id === f.id && b.name === f.name))
-  assert(nameOk, '板块名称与固定分类一致（攻略心得/游戏吐槽/组队大厅/资讯速递/二次创作/其他）')
+  assert(nameOk, '板块名称与固定分类一致（攻略心得/游戏吐槽/玩家天地/资讯速递/二次创作/其他）')
   const hasChildren = parents.some((b) => Array.isArray(b.children) && b.children.length)
   assert(!hasChildren, '无子版块（children 为空）')
 

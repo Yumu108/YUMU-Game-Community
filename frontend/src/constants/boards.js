@@ -5,7 +5,7 @@
 export const FIXED_BOARDS = [
   { id: 1, key: 'guide', name: '攻略心得', emoji: '📖', desc: '通关攻略、阵容搭配、数值解析' },
   { id: 2, key: 'roast', name: '游戏吐槽', emoji: '😜', desc: '槽点、迷惑设计、实名吐槽' },
-  { id: 3, key: 'teamup', name: '组队大厅', emoji: '🤝', desc: '召集队友、开黑组队、约战' },
+  { id: 3, key: 'players', name: '玩家天地', emoji: '🎮', desc: '晒卡晒欧气、组队开黑、求助提问' },
   { id: 4, key: 'news', name: '资讯速递', emoji: '📰', desc: '版本更新、活动公告、官方情报' },
   { id: 5, key: 'fan', name: '二次创作', emoji: '🎨', desc: '同人图、MAD、Cos、脑洞二创' },
   { id: 6, key: 'other', name: '其他', emoji: '📦', desc: '不属于以上分类的杂谈' }

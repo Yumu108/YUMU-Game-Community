@@ -90,3 +90,10 @@ docker-compose.override.yml
 # 冒烟脚本在**项目根目录**跑时落下的截图（tests/.pw/*.png 已有单独规则；
 # 这几个是 cwd=根目录 时相对路径写出来的，别让它们把工作区弄脏挡发版）
 /login-*.png
+
+# 内容富化种子（db-seed）的生成产物：SQL 约 2.9MB + 约 1500 张配图 —— 脚本入库，产物不入库
+# （重新生成：python db-seed/gen_seed.py && python db-seed/gen_images.py）
+db-seed/out/
+
+# 富化验收脚本落下的截图目录（tests/.pw/*.png 只覆盖文件，不覆盖子目录）
+tests/.pw/shots/

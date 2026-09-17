@@ -400,7 +400,7 @@ public class PostServiceImpl implements PostService {
         //   MODERATOR / 普通用户 → 待审核 (2)，由负责该(游戏,板块)的版主或 ADMIN 处理
         p.setStatus(determineInitialPostStatus(userId));
         // C1：内容含站外联系方式（微信/QQ/群号）→ 强制转人工审核，ADMIN 直发权也不放行——
-        // 组队大厅是广告/诈骗重灾区，引流内容必须经人审再曝光
+        // 「玩家天地」集中了组队/招募（原组队大厅），是广告/诈骗重灾区，引流内容必须经人审再曝光
         if (contentRisk.hasContactInfo(p.getTitle(), p.getContent())) {
             p.setStatus(2);
         }

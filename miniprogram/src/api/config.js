@@ -37,7 +37,7 @@ export const STORAGE_KEYS = {
 export const BOARD = {
   GUIDE: 1, // 攻略心得
   CHAT: 2, // 游戏吐槽
-  TEAM: 3, // 组队大厅
+  TEAM: 3, // 玩家天地（原「组队大厅」）
   NEWS: 4, // 资讯速递
   CREATION: 5, // 二次创作
   OTHER: 6 // 其他

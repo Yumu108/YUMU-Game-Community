@@ -63,7 +63,7 @@ async function main () {
   const bl = boards.data || []
   ok(boards.code === 200 && bl.length === 6, 'GET /boards 返回 6 个板块', `实际 ${bl.length}`)
   const boardNames = bl.map(b => b.name).join('/')
-  ok(boardNames === '攻略心得/游戏吐槽/组队大厅/资讯速递/二次创作/其他', '板块名称与顺序正确', boardNames)
+  ok(boardNames === '攻略心得/游戏吐槽/玩家天地/资讯速递/二次创作/其他', '板块名称与顺序正确', boardNames)
   const boardSum = bl.reduce((s, b) => s + (b.postCount || 0), 0)
   ok(boardSum > 300, '各板块帖数合计 > 300', `合计 ${boardSum}`)
   ok(bl.every(b => (b.postCount || 0) > 0), '每个板块都有帖子（无空板块）')

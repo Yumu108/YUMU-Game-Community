@@ -31,7 +31,7 @@ async function main() {
   console.log('[1] 板块列表：固定六个平铺分类，无父子层级')
   const boards = await get('/boards')
   assert(Array.isArray(boards) && boards.length === 6, `GET /boards 返回 6 个分类（实际 ${boards?.length}）`)
-  const expected = ['攻略心得', '游戏吐槽', '组队大厅', '资讯速递', '二次创作', '其他']
+  const expected = ['攻略心得', '游戏吐槽', '玩家天地', '资讯速递', '二次创作', '其他']
   assert(expected.every((n) => boards.some((b) => b.name === n)), `六个固定分类齐全：${expected.join(' / ')}`)
   const anyChildren = boards.some((b) => Array.isArray(b.children) && b.children.length > 0)
   assert(!anyChildren, '没有任何板块带子板块（9-05 起取消板块细分）')

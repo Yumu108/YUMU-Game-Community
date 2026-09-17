@@ -61,7 +61,7 @@ done
 # ---- 执行顺序（顺序即依赖，勿随意调整）----
 #   schema.sql          建库建表（DROP DATABASE + CREATE + 全部 CREATE TABLE）
 #   data.sql            role 表三种角色（USER/MODERATOR/ADMIN）—— 用户系统依赖
-#   init-boards.sql     固定六板块（攻略心得/游戏吐槽/组队大厅/资讯速递/二次创作/其他）
+#   init-boards.sql     固定六板块（攻略心得/游戏吐槽/玩家天地/资讯速递/二次创作/其他）
 #   seed-tags.sql       12 个标签 + 按 id 取模回灌 post_tag
 #   015-game-seed.sql   18 款游戏库（幂等 ON DUPLICATE KEY UPDATE）
 #   016-v12-content-reset.sql  演示内容：清空内容表后灌入覆盖「热门游戏 × 六板块」的帖子
