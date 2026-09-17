@@ -367,15 +367,21 @@ else
     SERVER_SHA="$(R "cd $DEPLOY_DIR && git rev-parse HEAD" 2>/dev/null | tail -1)"
     note "服务器当前 HEAD：${SERVER_SHA:0:8}    本地 HEAD：$(printf '%s' "$HEAD_SHA" | cut -c1-8)"
 
-    BUNDLE="$ROOT_DIR/.git/yumu-deploy.bundle"   # 放 .git 里，天然不会被提交
+    # 🚨 路径必须用**相对仓库根**的写法，不能写成 `$ROOT_DIR/...`（展开是 `/e/2kewai/...`）：
+    #    Windows 版 git.exe 不认 MSYS 的 `/e/` 挂载点，会把它当成「当前盘根下的 e/2kewai/...」
+    #    ⇒ E:\e\... 不存在，报 `Unable to create '...bundle.lock': No such file or directory`。
+    #    （2026-09-17 实测：同一路径 tar/scp/ssh 都正常 —— 它们是 MSYS 程序，能认 /e/，
+    #      所以只有 git 这一步会踩到，且只在「GitHub 被墙、走 bundle 回退」时才暴露。）
+    BUNDLE_REL=".git/yumu-deploy.bundle"        # 放 .git 里，天然不会被提交
+    BUNDLE="$ROOT_DIR/$BUNDLE_REL"              # bash 侧判断存在性 / 算体积仍用绝对路径
     rm -f "$BUNDLE"
     if [ -n "$SERVER_SHA" ] && git cat-file -e "${SERVER_SHA}^{commit}" 2>/dev/null; then
       note "打包增量对象：${SERVER_SHA:0:8}..master"
-      git bundle create "$BUNDLE" "${SERVER_SHA}..master" 2>&1 | tail -2 | sed 's/^/     /' \
+      (cd "$ROOT_DIR" && git bundle create "$BUNDLE_REL" "${SERVER_SHA}..master" 2>&1 | tail -2 | sed 's/^/     /') \
         || die "git bundle 打包失败"
     else
       warn "服务器上的提交 ${SERVER_SHA:0:8} 不在本机仓库里（历史被重写？）→ 打包完整分支"
-      git bundle create "$BUNDLE" master 2>&1 | tail -2 | sed 's/^/     /' \
+      (cd "$ROOT_DIR" && git bundle create "$BUNDLE_REL" master 2>&1 | tail -2 | sed 's/^/     /') \
         || die "git bundle 打包失败"
     fi
     [ -f "$BUNDLE" ] || die "bundle 没生成出来：$BUNDLE"
