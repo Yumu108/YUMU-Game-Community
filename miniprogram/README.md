@@ -49,7 +49,7 @@ miniprogram/                  ← 独立子项目，与 backend/ frontend/ 平�
 ├── src/                      uni-app 源码
 │   ├── main.js  App.vue  pages.json  manifest.json
 │   ├── api/                  config.js（端点单一来源）/ request.js / community.js
-│   ├── utils/                format.js / content.js / stepParser.js / storage.js
+│   ├── utils/                format.js / content.js / stepParser.js / store.js
 │   ├── components/           GameTile / PostCard / StepCard / EmptyState / Skeleton
 │   └── pages/                index / games / game·detail / post·detail / news / my / search / list
 ├── tests/                    单测 + 浏览器回归 + 产物验证服务器
@@ -90,14 +90,20 @@ cd miniprogram
 # ① 解析器单测 20 项（直接 import 被测源码）
 node --experimental-default-type=module tests/stepParser.test.mjs
 
-# ② 浏览器回归 27 项（打在**真实构建产物**上）
+# ② 浏览器回归 28 项（打在**真实构建产物**上）
 npm run build:h5
 node tests/serve-h5.mjs &                       # 起在 http://localhost:5199/m/
 NODE_PATH="<repo>/tests/.pw/node_modules" node tests/verify-miniprogram.cjs
+
+# ③ 也可以直接打**线上**（同一套断言，只换基址）—— 发版后最硬的验收
+MP_BASE=http://8.133.255.202/m NODE_PATH="<repo>/tests/.pw/node_modules" node tests/verify-miniprogram.cjs
 ```
 
 - `tests/serve-h5.mjs` 把 `dist/build/h5` 挂在 `/m/` 并把 `/api` 代理到线上 —— **必需**，
   否则产物里的相对路径 `/api` 找不到后端，页面会全是空数据。
+- 它还**复刻了生产 nginx 的五项安全响应头（含 CSP）**。这不是可选项：本地若不带 CSP，
+  「内联脚本被拦」这类问题会本地全绿、一上线才炸（2026-09-17 真踩过，见下方第 6 条约束）。
+  ⚠️ 改了 `deploy/nginx/security-headers.conf` 时，这两份要同步。
 - `NODE_PATH` 复用社区项目已装的 `playwright-core`，不重复安装。
 - 诊断工具：`tests/probe-scroll.cjs`（打印 H5 真实滚动容器与触发条件）。
   遇到「上拉加载不生效」先跑它，**别直接改业务代码**。
@@ -117,6 +123,12 @@ NODE_PATH="<repo>/tests/.pw/node_modules" node tests/verify-miniprogram.cjs
    反过来写会让所有游戏卡片变成空白。
    📌 顺带：`curl -I`（HEAD）探 `/api/files/*` 会返回 **401**，别误判成「图片要鉴权」——
    放行规则只写了 `GET`，`<image>` 走 GET，不需要 token。
+6. **`index.html` 里不能有任何内联 `<script>`**（生产 nginx 的 CSP 是 `script-src 'self'`）。
+   🚨 uni-app 官方 H5 模板默认那段「iPhone 刘海屏适配」就是内联脚本，**而它负责
+   `document.write` 出 `<meta viewport>`** —— 被 CSP 拦掉后页面上**一个 viewport meta 都没有**，
+   真机按 980px 桌面宽度渲染、移动端布局全乱。本项目已改成静态 viewport meta。
+   📌 这类问题的教训：**「页面不白屏、只有一条控制台报错」的故障最容易被放过**，
+   所以回归里有 G3 直接断言 viewport meta（见 `tests/verify-miniprogram.cjs`）。
 
 
 ## 视觉基调
