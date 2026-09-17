@@ -189,7 +189,10 @@ case "$MODE" in
       WANT_NGINX=1; WANT_BACKEND=1
     else
       printf '%s\n' "$CHANGED" | grep -qE '^backend/'                  && WANT_BACKEND=1
-      printf '%s\n' "$CHANGED" | grep -qE '^(frontend/|deploy/nginx/)' && WANT_NGINX=1
+      # ⚠️ miniprogram/ 也要算进前端：H5 产物是并进 frontend/dist/m 一起上线的，
+      #    只改小程序代码时不重发 nginx，线上 /m/ 就会**静默停留在旧版**。
+      #    .dockerignore 同理 —— 它决定镜像构建上下文，改了就该重建 nginx 镜像。
+      printf '%s\n' "$CHANGED" | grep -qE '^(frontend/|miniprogram/|deploy/nginx/|\.dockerignore$)' && WANT_NGINX=1
       printf '%s\n' "$CHANGED" | grep -qE '^docker-compose\.yml$'      && { WANT_NGINX=1; WANT_BACKEND=1; }
     fi
     ;;
