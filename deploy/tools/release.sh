@@ -256,7 +256,12 @@ case "$MODE" in
       warn "无法算出改动面（没有发版基线）—— 保守起见按前端 + 后端全发"
       WANT_NGINX=1; WANT_BACKEND=1
     else
-      printf '%s\n' "$CHANGED" | grep -qE '^(frontend/|deploy/nginx/)' && WANT_NGINX=1
+      # ⚠️ miniprogram/ 与 .dockerignore 同样要触发 nginx 重建（2026-09-17 实测踩到）：
+      #    小程序 H5 产物是并进 frontend/dist/m 由**同一个 nginx 镜像**托管的，
+      #    只改 miniprogram/ 时若不重建 → 工具明明推了新产物，容器里却还是旧镜像，
+      #    线上 /m/ 静默停留在旧版，而整条链路一路打印「成功」。
+      #    .dockerignore 决定镜像构建上下文，改了同理。
+      printf '%s\n' "$CHANGED" | grep -qE '^(frontend/|miniprogram/|deploy/nginx/|\.dockerignore$)' && WANT_NGINX=1
       printf '%s\n' "$CHANGED" | grep -qE '^backend/'                  && WANT_BACKEND=1
       printf '%s\n' "$CHANGED" | grep -qE '^docker-compose\.yml$'      && { WANT_NGINX=1; WANT_BACKEND=1; }
       SQL_MIGRATIONS="$(printf '%s\n' "$CHANGED" | grep -E '^backend/src/main/resources/db/[0-9]+.*\.sql$' || true)"
@@ -571,7 +576,7 @@ RECORD=1
 [ "$RECREATE_BACKEND" -eq 1 ] && RECORD=0
 # 手动指定范围时，只有把改动面**完整覆盖**了，才能说「当前代码已上线」
 if [ "$MODE" != "auto" ] && [ -n "$CHANGED" ]; then
-  printf '%s\n' "$CHANGED" | grep -qE '^(frontend/|deploy/nginx/)' && [ "$WANT_NGINX" -ne 1 ]   && RECORD=0
+  printf '%s\n' "$CHANGED" | grep -qE '^(frontend/|miniprogram/|deploy/nginx/|\.dockerignore$)' && [ "$WANT_NGINX" -ne 1 ] && RECORD=0
   printf '%s\n' "$CHANGED" | grep -qE '^backend/'                  && [ "$WANT_BACKEND" -ne 1 ] && RECORD=0
 fi
 
