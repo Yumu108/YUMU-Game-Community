@@ -34,6 +34,17 @@ uploads
 # 直接排掉可省下十几 MB 上下文与上万个小文件）
 miniprogram
 
+# ⚠️ 以下三处是 2026-09-17 实测「把构建上下文喂肥、进而拖垮 2C2G 服务器」的来源：
+#   1) frontend/dist.prev —— release.sh 原地解包前留下的回滚副本（在**服务器**上，仓库里没有）
+#   2) db-seed/           —— 内容富化种子的生成器与产物（产物含 1500 张图 + 3MB SQL）
+#   3) 手工 scp 到 /opt/yumu 的种子 SQL / 配图包 —— 直接躺在构建上下文根目录里
+#   这些都不参与任何镜像，一律排掉。
+frontend/dist.prev
+db-seed
+seed-imgs
+seed-imgs.tar.gz
+030-*.sql
+
 *.log
 *.md
 !README.md
