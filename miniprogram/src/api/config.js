@@ -37,12 +37,21 @@ export const ASSET_BASE = 'http://8.133.255.202'
 export const STORAGE_KEYS = {
   TOKEN: 'yumu_token',
   HISTORY: 'yumu_history',
-  FAVORITES: 'yumu_favorites'
+  FAVORITES: 'yumu_favorites',
+  LIKES: 'yumu_likes',
+  /** 端内聚合索引（帖子池 + 平台归属），见 utils/guideIndex.js */
+  GUIDE_INDEX: 'yumu_guide_index',
+  /** 全部游戏的 `gameId → platform` 映射（变化很慢，单独长缓存） */
+  GAME_PLATFORM: 'yumu_game_platform'
 }
 
 /**
  * 板块固定 id（与后端 `board` 表一致）。
- * 小程序只用到「攻略心得」和「资讯速递」两块，其余留作扩展。
+ *
+ * 🚨 2026-09-17 定位调整：小程序从「社区消费端」改为**纯干货攻略的聚合展示端**
+ *   （弱化讨论互动），内容池只保留下面 `GUIDE_BOARDS` 两块。
+ *   其余板块（吐槽 / 玩家天地 / 二次创作 / 其他）**不进小程序**，别再加回来 —— 
+ *   这是产品口径，不是技术限制。
  */
 export const BOARD = {
   GUIDE: 1, // 攻略心得
@@ -54,8 +63,52 @@ export const BOARD = {
 }
 
 /**
+ * **干货内容池** —— 小程序端只聚合这两个板块的内容。
+ * 线上实测：攻略心得 155 帖 + 资讯速递 99 帖 = 254 帖，全部带封面。
+ */
+export const GUIDE_BOARDS = [BOARD.GUIDE, BOARD.NEWS]
+
+/**
+ * 平台档位 —— value **必须与后端 `game.platform` 的字面量完全一致**，
+ * 否则端内归类会全部落空（后端取值实测：多平台 / PC / 主机 / 手机）。
+ *
+ * ⚠️ 展示名与取值故意不同：库里存的是 `手机`，面向用户的叫法是 `手游`。
+ *   改展示名只动 `PLATFORM_TABS` 的 label，**不要动 value**。
+ */
+export const PLATFORM = {
+  MULTI: '多平台',
+  PC: 'PC',
+  CONSOLE: '主机',
+  MOBILE: '手机'
+}
+
+/**
+ * 平台筛选按钮（顺序即 UI 顺序）。`value: ''` 表示不过滤。
+ * 数量在运行时由 `utils/guideIndex.js#countByPlatform` 填进去。
+ */
+export const PLATFORM_TABS = [
+  { label: '全部', value: '' },
+  { label: '多平台', value: PLATFORM.MULTI },
+  { label: 'PC', value: PLATFORM.PC },
+  { label: '主机', value: PLATFORM.CONSOLE },
+  { label: '手游', value: PLATFORM.MOBILE }
+]
+
+/** 平台 → 展示色（PlatformFilter 用，取 App.vue 的主题令牌） */
+export const PLATFORM_HINT = {
+  [PLATFORM.PC]: 'PC / 单机大作',
+  [PLATFORM.CONSOLE]: '主机独占 / 跨世代',
+  [PLATFORM.MOBILE]: '手游 / 移动端',
+  [PLATFORM.MULTI]: '全平台通吃'
+}
+
+/**
  * 帖子排序的合法取值（已核对后端 `PostServiceImpl` 分支）。
  * ⚠️ 传错值不会报错，会**静默回退**成默认排序。
+ *
+ * 🚨 端内索引排序（`utils/guideIndex.js`）只实现 latest / hot / essence 三种，
+ *   权重与后端保持一致：hot = 浏览 + 点赞×2 + 回复×3（后端还含收藏数，
+ *   但列表接口不下发收藏数，端内无法复算 —— 见该文件注释）。
  */
 export const SORT = {
   LATEST: 'latest', // 最新（默认）

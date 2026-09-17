@@ -3,6 +3,16 @@
  */
 import { ASSET_BASE } from '../api/config'
 
+/**
+ * 平台展示名。
+ * 🚨 库里存的是 `手机`，面向用户的叫法是 `手游` —— 只改展示，别改数据。
+ * @param {string} p
+ */
+export function platformLabel(p) {
+  if (!p) return ''
+  return p === '手机' ? '手游' : p
+}
+
 /* ==================== 图片 ==================== */
 
 const ABSOLUTE = /^(https?:)?\/\/|^data:|^blob:/i

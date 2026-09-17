@@ -6,163 +6,243 @@
       <text class="search__ph">搜索游戏 / 攻略 / 资讯</text>
     </view>
 
-    <!-- 品牌横幅 -->
-    <view class="banner">
-      <text class="banner__title">YUMU 游戏助手</text>
-      <text class="banner__desc">找游戏 · 看攻略 · 追更新</text>
-      <view class="banner__btns">
-        <view class="btn" @click="goGames">逛游戏库</view>
-        <view class="btn btn--ghost" @click="goNews">看资讯</view>
+    <!--
+      定位横幅 —— 一句话说清「这是什么」。
+      产品口径：多平台游戏知识的聚合与分类展示端（只收干货攻略/情报，不做闲聊讨论）。
+    -->
+    <view class="hero">
+      <text class="hero__title">多平台游戏攻略库</text>
+      <text class="hero__sub">聚合 PC / 主机 / 手游 的攻略与情报 · 只收干货</text>
+      <view class="hero__stats">
+        <view class="hero__stat">
+          <text class="hero__num">{{ statText(stats.total) }}</text>
+          <text class="hero__label">干货篇数</text>
+        </view>
+        <view class="hero__divider" />
+        <view class="hero__stat">
+          <text class="hero__num">{{ statText(stats.games) }}</text>
+          <text class="hero__label">覆盖游戏</text>
+        </view>
+        <view class="hero__divider" />
+        <view class="hero__stat">
+          <text class="hero__num">{{ statText(stats.platforms) }}</text>
+          <text class="hero__label">平台档位</text>
+        </view>
       </view>
     </view>
 
-    <!-- 整页拉取失败：只给失败态 + 重试，不伪装成「暂无内容」 -->
+    <!-- 同步失败但用的是旧内容：必须明说，不能让用户以为这就是最新的 -->
+    <view v-if="stale" class="warn" @click="sync(true)">
+      <text class="warn__text">⚠️ 内容同步失败，当前显示的是上次同步结果（{{ syncTimeText }}）。点此重试</text>
+    </view>
+
+    <!--
+      平台筛选 —— 本页的**核心交互**。
+      数字取自端内索引的真实计数，与筛出来的条数必然一致。
+    -->
+    <PlatformFilter
+      v-model:value="platform"
+      :tabs="platTabs"
+      title="按平台筛选"
+      :hint="platHint"
+      @change="onFilterChange"
+    />
+
+    <!-- 排序 + 结果计数 -->
+    <view class="bar">
+      <view class="bar__chips">
+        <view
+          v-for="s in sorts"
+          :key="s.value"
+          class="sortchip"
+          :class="{ 'sortchip--on': sort === s.value }"
+          @click="pickSort(s.value)"
+        >
+          {{ s.label }}
+        </view>
+      </view>
+      <text class="bar__count">共 {{ filtered.length }} 篇</text>
+    </view>
+
+    <!-- 公告（有正文，点开看全文 —— 原来只渲染标题且不可点） -->
+    <view v-if="topNotice" class="notice" @click="openNotice(topNotice)">
+      <text class="notice__tag">📢 公告</text>
+      <text class="notice__text mp-ellipsis">{{ topNotice.title }}</text>
+      <text class="notice__more">查看 ›</text>
+    </view>
+
+    <!-- 首屏 / 同步中 -->
+    <Skeleton v-if="loading" :rows="3" />
+
+    <!-- 同步失败且无旧内容可回退 -->
     <ErrorState
-      v-if="failed"
+      v-else-if="failed"
       icon="📡"
-      text="没能连上服务器"
-      sub="检查网络后重试，或下拉刷新"
-      @retry="load"
+      text="内容同步失败"
+      :sub="errMsg"
+      @retry="sync(true)"
     />
 
     <template v-else>
-    <!--
-      统计条
-      ⚠️ 这里三个数字**都必须是「库里的真实总量」**（接口返回的 total），
-         不能拿「本页取了几条」冒充 —— 原来「热门游戏」显示的是 hotGames.length（固定 8），
-         与真实 40+ 款游戏对不上，属于一眼可查的虚标。
-    -->
-    <view class="stats">
-      <view class="stats__item">
-        <text class="stats__num">{{ statText(gameTotal) }}</text>
-        <text class="stats__label">收录游戏</text>
-      </view>
-      <view class="stats__divider" />
-      <view class="stats__item">
-        <text class="stats__num">{{ statText(guideTotal) }}</text>
-        <text class="stats__label">攻略篇数</text>
-      </view>
-      <view class="stats__divider" />
-      <view class="stats__item">
-        <text class="stats__num">{{ statText(newsTotal) }}</text>
-        <text class="stats__label">资讯动态</text>
-      </view>
-    </view>
+      <PostCard v-for="p in visible" :key="p.id" :post="p" />
 
-    <!-- 热门游戏 -->
-    <view class="mp-sec">
-      <text class="mp-sec__title">🔥 热门游戏</text>
-      <text class="mp-sec__more" @click="goGames">全部 ›</text>
-    </view>
-    <Skeleton v-if="loading" :rows="1" />
-    <scroll-view v-else scroll-x class="hscroll">
-      <view class="hscroll__inner">
-        <view v-for="g in hotGames" :key="g.id" class="gcard" @click="goGame(g)">
-          <GameTile :game="g" size="lg" />
-          <text class="gcard__name mp-ellipsis">{{ g.name }}</text>
-          <text class="gcard__meta">
-            <text class="mp-num">{{ g.postCount || 0 }}</text> 帖
-          </text>
-        </view>
-      </view>
-    </scroll-view>
-    <EmptyState v-if="!loading && !hotGames.length" icon="🎮" text="暂无热门游戏" />
+      <EmptyState
+        v-if="!filtered.length"
+        icon="🧭"
+        :text="platform ? `「${platLabelOf(platform)}」还没有攻略` : '还没有内容'"
+        sub="换个平台看看"
+      />
 
-    <!-- 最新资讯 -->
-    <view class="mp-sec">
-      <text class="mp-sec__title">📰 最新资讯</text>
-      <text class="mp-sec__more" @click="goNews">更多 ›</text>
-    </view>
-    <Skeleton v-if="loading" :rows="2" />
-    <template v-else>
-      <PostCard v-for="p in news" :key="p.id" :post="p" />
-      <EmptyState v-if="!news.length" icon="📰" text="暂无资讯" sub="去看看攻略吧" />
+      <view v-if="filtered.length" class="footer" @click="loadMore">{{ footerText }}</view>
     </template>
 
-    <!-- 推荐攻略 -->
-    <view class="mp-sec">
-      <text class="mp-sec__title">🧭 推荐攻略</text>
-      <text class="mp-sec__more" @click="goGuideBoard">更多 ›</text>
+    <!-- 公告详情浮层 -->
+    <view v-if="noticeOpen" class="sheet" @click="noticeOpen = false">
+      <view class="sheet__panel" @click.stop>
+        <text class="sheet__title">{{ noticeOpen.title }}</text>
+        <text v-if="noticeTime(noticeOpen)" class="sheet__time">{{ noticeTime(noticeOpen) }}</text>
+        <scroll-view scroll-y class="sheet__body">
+          <text class="sheet__text">{{ noticeOpen.content || '（暂无正文）' }}</text>
+        </scroll-view>
+        <view class="sheet__close" @click="noticeOpen = false">关闭</view>
+      </view>
     </view>
-    <Skeleton v-if="loading" :rows="2" />
-    <template v-else>
-      <PostCard v-for="p in guides" :key="p.id" :post="p" />
-      <EmptyState v-if="!guides.length" icon="🧭" text="暂无攻略" />
-    </template>
-    </template>
   </view>
 </template>
 
 <script setup>
-import { ref } from 'vue'
-import { onLoad, onPullDownRefresh } from '@dcloudio/uni-app'
-import { fetchHotGames, fetchGames, homeSources } from '../../api/community'
-import GameTile from '../../components/GameTile.vue'
+/**
+ * 首页 = 攻略聚合页。
+ *
+ * 与旧版的区别（定位调整）：
+ *   · 旧版是「社区消费端首页」：热门游戏 + 最新资讯 + 推荐攻略 三块拼盘，无筛选能力；
+ *   · 新版是「多平台攻略库」：**平台筛选是主交互**，内容来自端内聚合索引
+ *     （攻略心得 + 资讯速递 两个板块，见 utils/guideIndex.js），
+ *     切换平台/排序**零请求**，按钮上的数字与列表条数同源、必然一致。
+ */
+import { ref, computed } from 'vue'
+import { onLoad, onReachBottom, onPullDownRefresh } from '@dcloudio/uni-app'
+import { ensureIndex, queryIndex, countByPlatform, indexStats } from '../../utils/guideIndex'
+import { fetchAnnouncements } from '../../api/community'
+import { PLATFORM_TABS, PLATFORM_HINT, SORT } from '../../api/config'
+import { platformLabel, formatTime } from '../../utils/format'
+import PlatformFilter from '../../components/PlatformFilter.vue'
 import PostCard from '../../components/PostCard.vue'
 import Skeleton from '../../components/Skeleton.vue'
 import EmptyState from '../../components/EmptyState.vue'
 import ErrorState from '../../components/ErrorState.vue'
 
+/** 本地分页步长：索引已在内存里，一屏给 12 条足够，多了反而白渲染 */
+const PAGE = 12
+
+const sorts = [
+  { label: '最新', value: SORT.LATEST },
+  { label: '最热', value: SORT.HOT },
+  { label: '精华', value: SORT.ESSENCE }
+]
+
+const items = ref([])
 const loading = ref(true)
 const failed = ref(false)
-const hotGames = ref([])
-const news = ref([])
-const guides = ref([])
-const gameTotal = ref(0)
-const newsTotal = ref(0)
-const guideTotal = ref(0)
+const errMsg = ref('')
+const stale = ref(false)
+const syncedAt = ref(0)
+const platform = ref('')
+const sort = ref(SORT.LATEST)
+const visibleCount = ref(PAGE)
+const topNotice = ref(null)
+const noticeOpen = ref(null)
 
-/** 数字拿不到时给「—」，别显示 0 假装是真实数据 */
+const stats = computed(() => indexStats(items.value))
+const counts = computed(() => countByPlatform(items.value))
+
+/** 按钮上带真实数量；「全部」= 池内总数 */
+const platTabs = computed(() =>
+  PLATFORM_TABS.map((t) => ({ ...t, count: counts.value[t.value] || 0 }))
+)
+
+const platHint = computed(() =>
+  platform.value ? PLATFORM_HINT[platform.value] || '' : '全部平台的内容聚合在一起'
+)
+
+const filtered = computed(() =>
+  queryIndex(items.value, { platform: platform.value, sort: sort.value })
+)
+const visible = computed(() => filtered.value.slice(0, visibleCount.value))
+
+const noMore = computed(() => visibleCount.value >= filtered.value.length)
+const footerText = computed(() =>
+  noMore.value ? `已加载全部 ${filtered.value.length} 篇` : '上拉加载更多'
+)
+
 const statText = (n) => (n > 0 ? String(n) : '—')
+const platLabelOf = (v) => platformLabel(v)
+const syncTimeText = computed(() => (syncedAt.value ? formatTime(new Date(syncedAt.value)) : '未知时间'))
+const noticeTime = (a) => formatTime((a && (a.updatedAt || a.createdAt)) || '')
 
-async function load() {
+async function sync(force = false) {
   loading.value = true
   failed.value = false
-  // 四个请求并发；用 allSettled —— 任一模块失败不应拖垮整页
-  const [g, t, n, d] = await Promise.allSettled([
-    fetchHotGames(8),
-    // size 取 1 只为了拿 total（真实收录总量）；列表内容用 hot 接口
-    fetchGames({ current: 1, size: 1 }),
-    homeSources.news(5),
-    homeSources.guides(5)
-  ])
-
-  // `/games/hot` 的 data 是纯数组，不是分页体，这里要区分对待
-  if (g.status === 'fulfilled') hotGames.value = g.value || []
-  if (t.status === 'fulfilled') gameTotal.value = (t.value && t.value.total) || 0
-  if (n.status === 'fulfilled') {
-    news.value = (n.value && n.value.records) || []
-    newsTotal.value = (n.value && n.value.total) || 0
+  errMsg.value = ''
+  try {
+    const res = await ensureIndex({ force })
+    items.value = res.items || []
+    syncedAt.value = res.at || 0
+    stale.value = !!res.stale
+    visibleCount.value = PAGE
+  } catch (e) {
+    // 失败 ≠ 空数据：交给 ErrorState 渲染，绝不掉进 EmptyState
+    items.value = []
+    stale.value = false
+    failed.value = true
+    errMsg.value = (e && (e.message || e.errMsg)) || '网络异常，请检查网络后重试'
+  } finally {
+    loading.value = false
   }
-  if (d.status === 'fulfilled') {
-    guides.value = (d.value && d.value.records) || []
-    guideTotal.value = (d.value && d.value.total) || 0
-  }
-  // 三个主体模块全挂 = 真的连不上，给失败态；只要有一个回来就正常渲染
-  failed.value = [g, t, n, d].every((r) => r.status === 'rejected')
-  loading.value = false
 }
 
-onLoad(load)
+function onFilterChange() {
+  // 切平台 = 换一批内容，回到第一页；索引在内存里，无需重新请求
+  visibleCount.value = PAGE
+}
+
+function pickSort(v) {
+  if (sort.value === v) return
+  sort.value = v
+  visibleCount.value = PAGE
+}
+
+function loadMore() {
+  if (noMore.value) return
+  visibleCount.value = Math.min(visibleCount.value + PAGE, filtered.value.length)
+}
+
+function openNotice(a) {
+  noticeOpen.value = a
+}
+
+async function loadNotices() {
+  try {
+    const a = await fetchAnnouncements()
+    topNotice.value = Array.isArray(a) && a.length ? a[0] : null
+  } catch (e) {
+    topNotice.value = null
+  }
+}
+
+onLoad(async () => {
+  await Promise.all([sync(false), loadNotices()])
+})
+
+onReachBottom(loadMore)
+
 onPullDownRefresh(async () => {
-  await load()
+  await Promise.all([sync(true), loadNotices()])
   uni.stopPullDownRefresh()
 })
 
 function goSearch() {
   uni.navigateTo({ url: '/pages/search/search' })
-}
-function goGames() {
-  uni.switchTab({ url: '/pages/games/games' })
-}
-function goNews() {
-  uni.switchTab({ url: '/pages/news/news' })
-}
-function goGame(g) {
-  uni.navigateTo({ url: `/pages/game/detail?id=${g.id}&name=${encodeURIComponent(g.name || '')}` })
-}
-function goGuideBoard() {
-  uni.navigateTo({ url: '/pages/list/list?boardId=1&sort=hot&title=' + encodeURIComponent('攻略心得') })
 }
 </script>
 
@@ -182,110 +262,193 @@ function goGuideBoard() {
 }
 .search__ph {
   font-size: 25rpx;
-  color: #6f6a80;
+  color: #8b8599;
 }
 
-/* 品牌横幅 */
-.banner {
+/* 定位横幅 */
+.hero {
   margin-top: 20rpx;
   border-radius: 28rpx;
-  padding: 32rpx 28rpx;
+  padding: 30rpx 28rpx 24rpx;
   background: #221d33;
   border: 1rpx solid #332c4a;
 }
-.banner__title {
+.hero__title {
   display: block;
-  font-size: 36rpx;
+  font-size: 38rpx;
   font-weight: 700;
   color: #e9e7f2;
 }
-.banner__desc {
+.hero__sub {
   display: block;
-  margin-top: 8rpx;
-  font-size: 25rpx;
-  color: #8b8599;
+  margin-top: 10rpx;
+  font-size: 24rpx;
+  color: #a49eb6;
 }
-.banner__btns {
-  display: flex;
-  margin-top: 24rpx;
-}
-.btn {
-  font-size: 25rpx;
-  padding: 12rpx 32rpx;
-  border-radius: 30rpx;
-  background: #7c5cff;
-  color: #fff;
-  font-weight: 500;
-}
-.btn--ghost {
-  background: transparent;
-  border: 1rpx solid #4a4166;
-  color: #b9b3c9;
-  margin-left: 18rpx;
-}
-
-/* 统计条 */
-.stats {
+.hero__stats {
   display: flex;
   align-items: center;
   margin-top: 22rpx;
-  border-radius: 22rpx;
-  background: #1a1725;
-  border: 1rpx solid #2a2538;
-  padding: 24rpx 0;
 }
-.stats__item {
+.hero__stat {
   flex: 1;
   display: flex;
   flex-direction: column;
   align-items: center;
 }
-.stats__num {
+.hero__num {
   font-size: 34rpx;
   font-weight: 700;
   color: #b9a9ff;
 }
-.stats__label {
-  margin-top: 6rpx;
-  font-size: 22rpx;
-  color: #6f6a80;
-}
-.stats__divider {
-  width: 1rpx;
-  height: 44rpx;
-  background: #2a2538;
-}
-
-/* 热门游戏横滑 */
-.hscroll {
-  white-space: nowrap;
-  width: 100%;
-}
-.hscroll__inner {
-  display: inline-flex;
-  padding-bottom: 6rpx;
-}
-.gcard {
-  width: 210rpx;
-  flex: none;
-  margin-right: 18rpx;
-  background: #1a1725;
-  border: 1rpx solid #2a2538;
-  border-radius: 22rpx;
-  padding: 20rpx;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-}
-.gcard__name {
-  margin-top: 14rpx;
-  font-size: 25rpx;
-  color: #e9e7f2;
-  max-width: 170rpx;
-}
-.gcard__meta {
+.hero__label {
   margin-top: 6rpx;
   font-size: 21rpx;
-  color: #6f6a80;
+  color: #8b8599;
+}
+.hero__divider {
+  width: 1rpx;
+  height: 44rpx;
+  background: #332c4a;
+}
+
+/* 同步失败提示条 */
+.warn {
+  margin-top: 18rpx;
+  padding: 16rpx 20rpx;
+  border-radius: 16rpx;
+  background: rgba(255, 176, 32, 0.1);
+  border: 1rpx solid rgba(255, 176, 32, 0.32);
+}
+.warn__text {
+  font-size: 22rpx;
+  color: #ffce7a;
+  line-height: 1.6;
+}
+
+/* 排序 + 计数 */
+.bar {
+  display: flex;
+  align-items: center;
+  margin: 4rpx 0 20rpx;
+}
+.bar__chips {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+}
+.sortchip {
+  flex: none;
+  padding: 8rpx 24rpx;
+  border-radius: 28rpx;
+  background: #231f31;
+  font-size: 24rpx;
+  color: #c8c3d6;
+  border: 1rpx solid transparent;
+  margin-right: 14rpx;
+}
+.sortchip--on {
+  background: rgba(124, 92, 255, 0.2);
+  border-color: #7c5cff;
+  color: #cbbdff;
+  font-weight: 600;
+}
+.bar__count {
+  flex: none;
+  font-size: 22rpx;
+  color: #8b8599;
+}
+
+/* 公告条 */
+.notice {
+  display: flex;
+  align-items: center;
+  background: #221d33;
+  border: 1rpx solid #332c4a;
+  border-radius: 18rpx;
+  padding: 18rpx 22rpx;
+  margin-bottom: 20rpx;
+}
+.notice__tag {
+  flex: none;
+  font-size: 22rpx;
+  color: #f0b45f;
+  margin-right: 14rpx;
+}
+.notice__text {
+  flex: 1;
+  min-width: 0;
+  font-size: 25rpx;
+  color: #e9e7f2;
+}
+.notice__more {
+  flex: none;
+  margin-left: 14rpx;
+  font-size: 22rpx;
+  color: #b9a9ff;
+}
+
+/* 公告详情浮层
+ * 🚨 z-index 必须高过 tabBar：uni-app H5 的底栏 z-index 是 998，
+ *   原来写 90 ⇒ 浮层底部（连同「关闭」按钮）被底栏盖住，真机上点不到关闭。
+ *   （回归 A16「可关闭浮层」就是被这个挡住的，实测报 "tabbar intercepts pointer events"。）
+ */
+.sheet {
+  position: fixed;
+  left: 0;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.6);
+  display: flex;
+  align-items: flex-end;
+  z-index: 1200;
+}
+.sheet__panel {
+  width: 100%;
+  max-height: 72vh;
+  background: #1a1725;
+  border-radius: 28rpx 28rpx 0 0;
+  border-top: 1rpx solid #332c4a;
+  padding: 30rpx 30rpx calc(30rpx + env(safe-area-inset-bottom));
+  box-sizing: border-box;
+}
+.sheet__title {
+  display: block;
+  font-size: 30rpx;
+  font-weight: 700;
+  color: #e9e7f2;
+}
+.sheet__time {
+  display: block;
+  margin-top: 8rpx;
+  font-size: 21rpx;
+  color: #8b8599;
+}
+.sheet__body {
+  max-height: 48vh;
+  margin-top: 16rpx;
+}
+.sheet__text {
+  font-size: 26rpx;
+  color: #cfcade;
+  line-height: 1.8;
+}
+.sheet__close {
+  margin-top: 24rpx;
+  text-align: center;
+  font-size: 26rpx;
+  color: #cbbdff;
+  background: rgba(124, 92, 255, 0.2);
+  border: 1rpx solid #7c5cff;
+  border-radius: 30rpx;
+  padding: 16rpx 0;
+}
+
+.footer {
+  text-align: center;
+  font-size: 23rpx;
+  color: #8b8599;
+  padding: 24rpx 0 10rpx;
 }
 </style>

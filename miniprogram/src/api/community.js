@@ -42,14 +42,16 @@ export const fetchPostDetail = (id) => get(`/posts/${id}`)
 /**
  * 回帖列表 —— **返回已归一化的 `{ records, total }`**。
  *
- * 🚨 2026-09-17 实测（P0）：`GET /posts/{id}/replies` 的 `Result.data` 是**裸数组**，
- *   不是分页体（且 `current` / `size` 会被服务端忽略，一次给全部 27 条）。
- *   详情页原来按分页体读 `r.records` / `r.total` ⇒ 两个字段恒为 `undefined`
- *   ⇒ 回复区永远渲染「还没有回复」、标题永远「回复 0」，
- *   27 条回复的讨论串**一条都看不到**，而且它伪装成正常的空态，线上挂了很久没人发现。
+ * 🚨 保留原因（**当前详情页已不再展示回复**）：这里的归一化是为了记录一个真实的接口陷阱 ——
+ *   `GET /posts/{id}/replies` 的 `Result.data` 是**裸数组**，不是分页体
+ *   （且 `current` / `size` 会被服务端忽略，一次给全部 27 条）。
+ *   详情页原来按分页体读 `r.records` / `r.total` ⇒ 两个字段恒为 undefined
+ *   ⇒ 回复区永远渲染「还没有回复」，27 条的讨论串**一条都看不到**，
+ *   而且它伪装成正常的空态，线上挂了很久没人发现。
  *
- * 处理方式：在**这一层**归一化，调用方拿到的形状永远一致；
- *   同时保留对分页体的兼容 —— 后端将来真改成 PageResult 也不会再让页面空掉。
+ * 2026-09-17 定位调整：小程序改为「多平台攻略聚合的展示端」，**弱化互动**，
+ *   详情页的回复区已替换为「相关攻略」。本封装保留给将来可能的只读讨论视图 ——
+ *   真要用时**必须走这里**，不要在页面里直接读 `.records`（那正是当初的 bug）。
  */
 export const fetchReplies = async (postId, { current = 1, size = 100 } = {}) => {
   const raw = await get(`/posts/${postId}/replies`, { current, size })
@@ -87,15 +89,19 @@ export const searchAll = (keyword, type = 'all', { current = 1, size = 10 } = {}
 /** 公告列表（⚠️ 线上当前可能为空数组，空时前端自动隐藏该模块） */
 export const fetchAnnouncements = () => get('/announcements')
 
-/** 每日精选（⚠️ 同上，可能为空） */
+/** 每日精选（编辑按日挑出的几条；⚠️ 按日期出题，拿不到就是空数组，页面自动隐藏该模块） */
 export const fetchDailyPicks = () => get('/picks/daily')
 
-/** 首页/资讯页的三个快捷组合 —— 集中在此，避免各页面重复拼参数 */
-export const homeSources = {
-  /** 最新资讯（资讯速递板块） */
-  news: (size = 5) => fetchPosts({ boardId: BOARD.NEWS, sort: SORT.LATEST, current: 1, size }),
-  /** 推荐攻略（攻略心得板块 · 按热门加权） */
-  guides: (size = 5) => fetchPosts({ boardId: BOARD.GUIDE, sort: SORT.HOT, current: 1, size })
-}
-
+/**
+ * ⚠️ 保留但**当前未被页面使用**的封装：
+ *   `fetchHotGames` / `fetchBoards` / `fetchTagPosts` / `fetchGameActiveUsers` / `fetchReplies`
+ *
+ * 为什么留着而不是删掉：这一层是后端公开接口的**客户端全貌**，每条都带着踩过的坑
+ *   （比如 fetchReplies 的「裸数组」陷阱），删掉就等于把接口事实一起删了。
+ * 什么时候真正用得上：首页改版若要加「热门游戏」横滑（fetchHotGames）、
+ *   分类页若要按板块/标签视角展开（fetchBoards / fetchTagPosts）。
+ *
+ * 2026-09-17 定位调整后**已删除** `homeSources`（首页三个快捷组合）——
+ *   它是页面专用拼装，首页改成端内聚合后不再有调用方，留着才是真死代码。
+ */
 export { BOARD, SORT, post }

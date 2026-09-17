@@ -9,6 +9,7 @@ import { STORAGE_KEYS } from '../api/config'
 
 const MAX_HISTORY = 50
 const MAX_FAVORITES = 200
+const MAX_LIKES = 200
 
 function read(key, fallback) {
   try {
@@ -69,25 +70,81 @@ export function isFavorite(id) {
 
 /**
  * 切换收藏状态。
- * @returns {boolean} 切换后是否处于「已收藏」
+ *
+ * 🚨 2026-09-17 修：原来超上限时 `slice(0, MAX)` **静默丢弃最旧的一条** ——
+ *   用户点了「收藏」，提示「已加入收藏」，但另一条悄无声息地没了。
+ *   这与本项目的三条工程约定同族（故障/损失被伪装成正常）。
+ *   现在改为：**不再静默丢弃**，写满时不动原有数据，把 `full: true` 交回调用方去提示。
+ *
+ * @returns {{on:boolean, full:boolean}} on=切换后是否已收藏；full=因写满而未能收藏
  */
 export function toggleFavorite(post) {
-  if (!post || !post.id) return false
+  if (!post || !post.id) return { on: false, full: false }
   const list = getFavorites()
   const idx = list.findIndex((x) => x.id === post.id)
   if (idx >= 0) {
     list.splice(idx, 1)
     write(STORAGE_KEYS.FAVORITES, list)
-    return false
+    return { on: false, full: false }
   }
-  list.unshift({
+  if (list.length >= MAX_FAVORITES) return { on: false, full: true }
+  list.unshift(toBrief(post))
+  write(STORAGE_KEYS.FAVORITES, list)
+  return { on: true, full: false }
+}
+
+/* ==================== 点赞（本机记录） ==================== */
+
+/**
+ * 点赞 —— **仅存本机，不上传**。
+ *
+ * 🚨 为什么不做「真点赞」：后端 `POST /posts/{id}/like` 落在
+ *   `SecurityConfig` 的 `.anyRequest().authenticated()` 里，**必须有登录态**；
+ *   而本端定位是零登录的内容浏览端（见 docs/方案设计.md §二）。
+ *   所以这里与「收藏」采用**同一套本地模型**：可点亮、可回看、可取消，
+ *   但**不会**去篡改帖子真实的 `likeCount`（页面展示的仍是服务端数字）。
+ *   如实标注「本机记录」，不做假按钮、不虚增数据。
+ */
+export function getLikes() {
+  const list = read(STORAGE_KEYS.LIKES, [])
+  return Array.isArray(list) ? list : []
+}
+
+export function isLiked(id) {
+  return getLikes().some((x) => x.id === id)
+}
+
+/**
+ * 切换点赞。
+ * @returns {{on:boolean, full:boolean}} 语义同 toggleFavorite
+ */
+export function toggleLike(post) {
+  if (!post || !post.id) return { on: false, full: false }
+  const list = getLikes()
+  const idx = list.findIndex((x) => x.id === post.id)
+  if (idx >= 0) {
+    list.splice(idx, 1)
+    write(STORAGE_KEYS.LIKES, list)
+    return { on: false, full: false }
+  }
+  if (list.length >= MAX_LIKES) return { on: false, full: true }
+  list.unshift(toBrief(post))
+  write(STORAGE_KEYS.LIKES, list)
+  return { on: true, full: false }
+}
+
+export function clearLikes() {
+  write(STORAGE_KEYS.LIKES, [])
+}
+
+/** 本地记录只留「能在列表里显示出来」的最小字段集 */
+function toBrief(post) {
+  return {
     id: post.id,
     title: post.title || '',
     boardName: post.boardName || '',
     gameName: post.gameName || '',
     likeCount: post.likeCount || 0,
     at: Date.now()
-  })
-  write(STORAGE_KEYS.FAVORITES, list.slice(0, MAX_FAVORITES))
-  return true
+  }
 }

@@ -9,17 +9,20 @@
       <view class="user__avatar">游</view>
       <view class="user__info">
         <text class="user__name">访客模式</text>
-        <text class="user__tip">收藏与浏览记录保存在本机</text>
+        <text class="user__tip">收藏、点赞与浏览记录都保存在本机</text>
       </view>
     </view>
 
     <!-- 切换 -->
     <view class="tabs">
       <view class="tabs__item" :class="{ 'tabs__item--on': tab === 'fav' }" @click="tab = 'fav'">
-        我的收藏 {{ favorites.length }}
+        收藏 {{ favorites.length }}
+      </view>
+      <view class="tabs__item" :class="{ 'tabs__item--on': tab === 'like' }" @click="tab = 'like'">
+        点赞 {{ likes.length }}
       </view>
       <view class="tabs__item" :class="{ 'tabs__item--on': tab === 'his' }" @click="tab = 'his'">
-        浏览历史 {{ history.length }}
+        历史 {{ history.length }}
       </view>
     </view>
 
@@ -37,43 +40,70 @@
         <text class="item__arrow">›</text>
       </view>
 
-      <view class="danger" @click="onClear">{{ tab === 'fav' ? '清空收藏' : '清空历史' }}</view>
+      <view class="danger" @click="onClear">{{ clearLabel }}</view>
     </template>
 
     <EmptyState
       v-else
-      :icon="tab === 'fav' ? '★' : '🕘'"
-      :text="tab === 'fav' ? '还没有收藏内容' : '还没有浏览记录'"
-      sub="去首页或游戏库逛逛吧"
+      :icon="emptyIcon"
+      :text="emptyText"
+      sub="去攻略库逛逛，看到有用的点个收藏"
     />
 
     <!-- 说明 -->
     <view class="about">
       <text class="about__title">关于</text>
       <text class="about__text">
-        YUMU 游戏助手 · 内容来自 YUMU 游戏社区。本端只做内容浏览，不含发帖、私信等社交功能。
+        YUMU 攻略库 · 内容来自 YUMU 游戏社区。本端做多平台攻略与资讯的聚合和分类展示，
+        不含发帖、回复、私信等社交功能；点赞与收藏是**本机记录**（换设备不会同步）。
       </text>
     </view>
   </view>
 </template>
 
 <script setup>
+/**
+ * 「我的」= 本机收藏 / 点赞 / 浏览历史。
+ *
+ * 定位调整后这里**不再有任何社交入口**（关注、粉丝、私信一律没有），
+ * 只保留读者自己攒下来的内容清单 —— 与「弱化互动、强化内容」的口径一致。
+ */
 import { ref, computed } from 'vue'
 import { onShow } from '@dcloudio/uni-app'
-import { getFavorites, getHistory, clearHistory, toggleFavorite } from '../../utils/store'
+import {
+  getFavorites,
+  getLikes,
+  getHistory,
+  clearHistory,
+  clearLikes,
+  toggleFavorite
+} from '../../utils/store'
 import { formatTime } from '../../utils/format'
 import EmptyState from '../../components/EmptyState.vue'
 
 const tab = ref('fav')
 const favorites = ref([])
+const likes = ref([])
 const history = ref([])
 
-const current = computed(() => (tab.value === 'fav' ? favorites.value : history.value))
+const current = computed(() =>
+  tab.value === 'fav' ? favorites.value : tab.value === 'like' ? likes.value : history.value
+)
+const clearLabel = computed(() =>
+  tab.value === 'fav' ? '清空收藏' : tab.value === 'like' ? '清空点赞' : '清空历史'
+)
+const emptyIcon = computed(() => (tab.value === 'fav' ? '★' : tab.value === 'like' ? '👍' : '🕘'))
+const emptyText = computed(
+  () =>
+    tab.value === 'fav' ? '还没有收藏内容' : tab.value === 'like' ? '还没有点赞内容' : '还没有浏览记录'
+)
+
 const timeOf = (v) => formatTime(v)
 
-/** onShow：从详情页返回后要能看到刚收藏/刚浏览的内容 */
+/** onShow：从详情页返回后要能看到刚收藏 / 刚点赞 / 刚浏览的内容 */
 onShow(() => {
   favorites.value = getFavorites()
+  likes.value = getLikes()
   history.value = getHistory()
 })
 
@@ -82,19 +112,23 @@ function goItem(it) {
 }
 
 function onClear() {
-  const isFav = tab.value === 'fav'
+  const t = tab.value
+  const name = t === 'fav' ? '收藏' : t === 'like' ? '点赞' : '浏览历史'
   uni.showModal({
     title: '确认清空',
-    content: isFav ? '将删除全部本地收藏，确定吗？' : '将删除全部本地浏览历史，确定吗？',
+    content: `将删除全部本机${name}记录，确定吗？`,
     success: (res) => {
       if (!res.confirm) return
-      if (isFav) {
+      if (t === 'fav') {
         // 逐条取消收藏，复用同一套存储写入逻辑
         favorites.value.forEach((f) => toggleFavorite(f))
+      } else if (t === 'like') {
+        clearLikes()
       } else {
         clearHistory()
       }
       favorites.value = getFavorites()
+      likes.value = getLikes()
       history.value = getHistory()
       uni.showToast({ title: '已清空', icon: 'none' })
     }
@@ -138,7 +172,7 @@ function onClear() {
   display: block;
   margin-top: 8rpx;
   font-size: 22rpx;
-  color: #6f6a80;
+  color: #8b8599;
 }
 
 .tabs {
@@ -152,7 +186,7 @@ function onClear() {
   flex: 1;
   text-align: center;
   font-size: 25rpx;
-  color: #8b8599;
+  color: #a49eb6;
   padding: 14rpx 0;
   border-radius: 12rpx;
 }
@@ -185,19 +219,23 @@ function onClear() {
   align-items: center;
   margin-top: 10rpx;
 }
+/* uni-text 自带 white-space: pre-line，不逐个命中会被长游戏名拆行 */
+.item__meta > * {
+  white-space: nowrap;
+}
 .item__board {
   font-size: 22rpx;
-  color: #6f6a80;
+  color: #8b8599;
   margin-left: 12rpx;
 }
 .item__time {
   font-size: 22rpx;
-  color: #6f6a80;
+  color: #8b8599;
   margin-left: auto;
 }
 .item__arrow {
   font-size: 30rpx;
-  color: #6f6a80;
+  color: #8b8599;
   margin-left: 14rpx;
 }
 
@@ -218,12 +256,12 @@ function onClear() {
 .about__title {
   display: block;
   font-size: 25rpx;
-  color: #8b8599;
+  color: #a49eb6;
   margin-bottom: 10rpx;
 }
 .about__text {
   font-size: 23rpx;
-  color: #6f6a80;
+  color: #8b8599;
   line-height: 1.7;
 }
 </style>

@@ -9,7 +9,7 @@
           {{ (game && (game.description || game.developer)) || '加载中…' }}
         </text>
         <view class="hero__tags">
-          <text v-if="game && game.platform" class="mp-tag mp-tag--purple">{{ game.platform }}</text>
+          <text v-if="game && game.platform" class="mp-tag mp-tag--purple">{{ platName(game.platform) }}</text>
           <text v-if="game && game.genre" class="mp-tag">{{ game.genre }}</text>
           <text v-if="game && game.releaseDate" class="mp-tag mp-tag--orange">
             {{ String(game.releaseDate).slice(0, 10) }}
@@ -30,11 +30,11 @@
 
     <Skeleton v-if="loading" :rows="3" />
     <template v-else>
-      <PostCard v-for="p in list" :key="p.id" :post="p" />
+      <PostCard v-for="p in shownList" :key="p.id" :post="p" />
       <ErrorState
         v-if="failed"
         icon="📡"
-        text="帖子加载失败"
+        text="内容加载失败"
         sub="检查网络后重试，或下拉刷新"
         @retry="reload"
       />
@@ -49,10 +49,21 @@
 </template>
 
 <script setup>
-import { ref } from 'vue'
+/**
+ * 游戏详情 —— 「按游戏聚合」这一维度的落点。
+ *
+ * 首页是「按文章的平台聚合」，这里是「按游戏聚合」：同一款游戏下的攻略与资讯。
+ * `/games/{id}/posts` 是后端原生接口（支持 boardId / sort / 分页），跑真·服务端分页。
+ *
+ * ⚠️ 列表接口**不下发 platform**（platform 只存在于 game 表），
+ *   所以这里用本页已经拿到的 `game.platform` 回填给每条帖子 ——
+ *   这样 PostCard 的平台角标在这一页也能正常显示，与其他页视觉一致。
+ */
+import { ref, computed } from 'vue'
 import { onLoad, onReachBottom, onPullDownRefresh } from '@dcloudio/uni-app'
 import { fetchGameDetail, fetchGamePosts } from '../../api/community'
 import { BOARD, SORT } from '../../api/config'
+import { platformLabel } from '../../utils/format'
 import { usePagedList } from '../../utils/usePagedList'
 import GameTile from '../../components/GameTile.vue'
 import PostCard from '../../components/PostCard.vue'
@@ -65,12 +76,21 @@ const name = ref('')
 const game = ref(null)
 const tab = ref('guide')
 
+const platName = (v) => platformLabel(v)
+
 const boardIdOfTab = () => (tab.value === 'guide' ? BOARD.GUIDE : BOARD.NEWS)
 
 const { list, loading, failed, footerText, reload, loadMore, retryMore } = usePagedList(
   ({ current, size }) =>
     fetchGamePosts(gameId.value, { boardId: boardIdOfTab(), sort: SORT.LATEST, current, size })
 )
+
+/** 把本页已知的平台回填给每条帖子（列表接口不带 platform） */
+const shownList = computed(() => {
+  const plat = (game.value && game.value.platform) || ''
+  if (!plat) return list.value
+  return list.value.map((p) => (p.platform ? p : { ...p, platform: plat }))
+})
 
 function switchTab(t) {
   if (tab.value === t) return
@@ -128,7 +148,7 @@ onPullDownRefresh(async () => {
   display: block;
   margin-top: 10rpx;
   font-size: 24rpx;
-  color: #8b8599;
+  color: #a49eb6;
   line-height: 1.6;
 }
 .hero__tags {
@@ -151,7 +171,7 @@ onPullDownRefresh(async () => {
   flex: 1;
   text-align: center;
   font-size: 27rpx;
-  color: #8b8599;
+  color: #a49eb6;
   padding: 14rpx 0;
   border-radius: 12rpx;
 }
@@ -164,7 +184,7 @@ onPullDownRefresh(async () => {
 .footer {
   text-align: center;
   font-size: 23rpx;
-  color: #6f6a80;
+  color: #8b8599;
   padding: 24rpx 0 10rpx;
 }
 </style>

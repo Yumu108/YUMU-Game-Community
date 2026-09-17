@@ -51,7 +51,7 @@ function onRetry() {
 .err__sub {
   margin-top: 10rpx;
   font-size: 23rpx;
-  color: #6f6a80;
+  color: #a49eb6;
   text-align: center;
 }
 .err__btn {

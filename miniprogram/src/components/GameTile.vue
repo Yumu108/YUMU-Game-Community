@@ -1,6 +1,16 @@
 <template>
   <view class="tile" :style="tileStyle">
-    <image v-if="cover" class="tile__img" :src="cover" mode="aspectFill" @error="onImgError" />
+    <!-- 无 alt 见 PostCard 里的说明：H5 端 `<image>` 会丢掉 `alt`，两端各给一份 -->
+    <image
+      v-if="cover"
+      class="tile__img"
+      :src="cover"
+      mode="aspectFill"
+      :alt="gameName"
+      role="img"
+      :aria-label="gameName"
+      @error="onImgError"
+    />
     <text v-else class="tile__letter" :style="{ color: t.fg }">{{ t.letter }}</text>
   </view>
 </template>
@@ -32,6 +42,8 @@ watch(
 )
 
 const cover = computed(() => coverUrl.value)
+/** 有图时给读屏的可读名（无图时走首字色块，那段文本本身就可读） */
+const gameName = computed(() => (props.game && props.game.name) || '游戏封面')
 
 function onImgError() {
   // 图挂了就退回首字色块，不留空白

@@ -29,12 +29,12 @@ defineProps({
 .empty__text {
   margin-top: 20rpx;
   font-size: 27rpx;
-  color: #8b8599;
+  color: #a49eb6;
 }
 .empty__sub {
   margin-top: 10rpx;
   font-size: 23rpx;
-  color: #6f6a80;
+  color: #a49eb6;
   text-align: center;
 }
 </style>

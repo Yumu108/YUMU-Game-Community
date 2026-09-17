@@ -10,13 +10,23 @@
       <text v-if="summary" class="pc__summary" :class="{ 'pc__summary--clamp': clamp }">{{ summary }}</text>
 
       <view class="pc__meta">
+        <!--
+          平台角标 —— 定位改为「多平台攻略聚合」后，平台是**第一眼要看到的分类维度**，
+          所以放在最前面。只有端内索引过来的数据带 `platform`（服务端列表接口不下发），
+          没有时整块隐藏，不显示空标签。
+        -->
+        <text v-if="post.platform" class="pc__plat" :class="platClass">{{ platLabel }}</text>
         <text v-if="post.gameName" class="mp-tag mp-tag--purple">{{ post.gameName }}</text>
         <text v-else-if="post.boardName" class="pc__board">{{ post.boardName }}</text>
         <text class="pc__dot">·</text>
         <text class="pc__time">{{ timeText }}</text>
         <view class="pc__spacer" />
+        <!--
+          互动指标从「👍 赞 / 💬 回复」改为「👍 赞 / 👁 浏览」：
+          定位弱化讨论后，「回复数」不再是读者关心的信号，浏览量才反映内容被阅读的程度。
+        -->
         <text class="pc__stat">👍 {{ likeText }}</text>
-        <text class="pc__stat">💬 {{ replyText }}</text>
+        <text class="pc__stat">👁 {{ viewText }}</text>
       </view>
     </view>
 
@@ -24,12 +34,21 @@
       封面：列表接口的每条帖子都带 `cover`（种子内容覆盖率约 7 成），
       没有封面时退到所属游戏的 `gameCover`，画面不至于整片纯文字。
       ⚠️ 加载失败必须整个移除，不能留一个空框 —— 宁可没有缩略图，也不要破图。
+
+      🚨 无障碍：`alt` 在**小程序端**是 `<image>` 的原生属性，但 **H5 端会被直接丢弃**
+         —— 实测（tests/probe-alt.cjs）线上 12 张内容封面的真实 `<img>` **一个 alt 属性都没有**，
+         写了等于白写。所以两端各给一份：`alt` 留给小程序，`role` + `aria-label` 给 H5 读屏。
+         只写 `alt` 不行，只写 `aria-label` 也不行 —— 这不是冗余，是两个运行时的差异。
     -->
     <image
       v-if="thumb"
       class="pc__thumb"
       :src="thumb"
       mode="aspectFill"
+      :lazy-load="true"
+      :alt="post.title || '帖子封面'"
+      role="img"
+      :aria-label="post.title || '帖子封面'"
       @error="onThumbError"
     />
   </view>
@@ -37,7 +56,7 @@
 
 <script setup>
 import { computed, ref, watch } from 'vue'
-import { formatTime, shortNumber, resolveImage } from '../utils/format'
+import { formatTime, shortNumber, resolveImage, platformLabel } from '../utils/format'
 import { summaryOf } from '../utils/content'
 
 const props = defineProps({
@@ -49,7 +68,17 @@ const emit = defineEmits(['tap'])
 const summary = computed(() => summaryOf(props.post, 52))
 const timeText = computed(() => formatTime(props.post.createdAt))
 const likeText = computed(() => shortNumber(props.post.likeCount))
-const replyText = computed(() => shortNumber(props.post.replyCount))
+const viewText = computed(() => shortNumber(props.post.viewCount))
+
+/** 平台角标配色 —— 四档各一色，扫一眼就能区分（取 App.vue 的主题令牌） */
+const PLAT_CLASS = {
+  '多平台': 'pc__plat--multi',
+  PC: 'pc__plat--pc',
+  '主机': 'pc__plat--console',
+  '手机': 'pc__plat--mobile'
+}
+const platClass = computed(() => PLAT_CLASS[props.post.platform] || '')
+const platLabel = computed(() => platformLabel(props.post.platform))
 
 /** 封面优先级：帖子自己的 cover → 所属游戏封面 */
 const thumb = ref('')
@@ -133,7 +162,7 @@ function onTap() {
   display: block;
   margin-top: 12rpx;
   font-size: 25rpx;
-  color: #8b8599;
+  color: #a49eb6;
   line-height: 1.6;
 }
 .pc__summary--clamp {
@@ -152,7 +181,7 @@ function onTap() {
   white-space: nowrap;
   margin-top: 16rpx;
   font-size: 22rpx;
-  color: #6f6a80;
+  color: #a49eb6;
 }
 /**
  * 🚨 必须逐个直接命中：uni-app 的 `<text>` 在 H5 渲染成 `uni-text`，
@@ -176,6 +205,35 @@ function onTap() {
 }
 .pc__dot {
   margin: 0 8rpx;
+}
+/*
+  平台角标 —— 「多平台攻略聚合」定位下，平台是第一眼要看到的分类维度，
+  四档各配一色（PC 紫 / 主机 青 / 手游 橙 / 多平台 蓝），扫一眼即可区分。
+  用「浅色文字 + 低透明度同色底」而不是纯色块，避免在深色卡片上抢标题的风头。
+*/
+.pc__plat {
+  flex: none;
+  font-size: 19rpx;
+  line-height: 1.7;
+  padding: 0 10rpx;
+  border-radius: 6rpx;
+  margin-right: 10rpx;
+}
+.pc__plat--pc {
+  background: rgba(124, 92, 255, 0.2);
+  color: #cbbdff;
+}
+.pc__plat--console {
+  background: rgba(25, 227, 194, 0.16);
+  color: #6fe3d0;
+}
+.pc__plat--mobile {
+  background: rgba(240, 159, 39, 0.18);
+  color: #f0b45f;
+}
+.pc__plat--multi {
+  background: rgba(143, 189, 240, 0.18);
+  color: #a9cdf5;
 }
 .pc__spacer {
   flex: 1;

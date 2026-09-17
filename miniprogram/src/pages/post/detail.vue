@@ -13,6 +13,8 @@
     <!-- 标题 -->
     <text class="title">{{ post.title }}</text>
     <view class="meta">
+      <!-- 平台角标：定位改为「多平台攻略聚合」后，先亮明这篇属于哪个平台 -->
+      <text v-if="post.platform" class="pcplat" :class="'pcplat--' + platKey">{{ platLabel }}</text>
       <text v-if="post.gameName" class="mp-tag mp-tag--purple">{{ post.gameName }}</text>
       <text v-if="post.boardName" class="meta__text">{{ post.boardName }}</text>
       <text class="meta__dot">·</text>
@@ -21,7 +23,16 @@
 
     <!-- 作者 -->
     <view class="author">
-      <image v-if="avatar" class="author__avatar" :src="avatar" mode="aspectFill" @error="avatarOk = false" />
+      <!-- 头像旁边就是作者名，属**装饰图**：给读屏标成 aria-hidden，别让它念两遍 -->
+      <image
+        v-if="avatar"
+        class="author__avatar"
+        :src="avatar"
+        mode="aspectFill"
+        :alt="post.authorName || '作者头像'"
+        aria-hidden="true"
+        @error="avatarOk = false"
+      />
       <view v-else class="author__ph">{{ authorLetter }}</view>
       <view class="author__info">
         <text class="author__name">{{ post.authorName || '匿名玩家' }}</text>
@@ -87,7 +98,11 @@
           class="content__img"
           :src="resolveImage(b.src)"
           mode="widthFix"
+          :alt="`${post.title || ''} 配图`"
+          role="img"
+          :aria-label="`${post.title || ''} 配图`"
           @error="onImgError(i)"
+          @click="previewImg(b.src)"
         />
       </template>
       <EmptyState v-if="!blocks.length" icon="📄" text="正文为空" />
@@ -98,57 +113,37 @@
       <text v-for="t in tags" :key="t.id || t.name" class="mp-tag">{{ t.name }}</text>
     </view>
 
-    <!-- 回复 -->
-    <view class="mp-sec">
-      <text class="mp-sec__title">💬 回复 {{ replyTotal }}</text>
+    <!--
+      相关推荐 —— **取代了原来的回复区**。
+      定位改为「多平台攻略聚合的展示端」后，讨论不在本端出现（弱化互动）；
+      而长文读者真正需要的是「下一篇同类的」，不是把页面拖长几百像素的评论区。
+      相关度按 同游戏 → 同平台 → 同板块 依次兜底，右侧标出「凭什么相关」。
+    -->
+    <template v-if="related.length">
+      <view class="mp-sec">
+        <text class="mp-sec__title">📚 相关攻略</text>
+        <text class="mp-sec__more">{{ relatedHint }}</text>
+      </view>
+      <PostCard v-for="r in related" :key="r.id" :post="r" />
+    </template>
+    <!-- 补充内容加载失败也要留痕，不能静默留白（否则看起来就像「本来就没有相关攻略」） -->
+    <view v-else-if="relatedFailed" class="tips">
+      <text class="tips__text" @click="loadRelated(true)">相关攻略加载失败，点此重试</text>
     </view>
 
     <!--
-      🚨 「加载失败」与「没有回复」必须分开：前者可重试，后者是事实。
-      原来两者都掉进 EmptyState，遇到后端抖动会显示「还没有回复」——把故障说成事实。
-    -->
-    <ErrorState
-      v-if="replyFailed"
-      icon="📡"
-      text="回复加载失败"
-      sub="网络异常，点此重试"
-      @retry="loadReplies"
-    />
-
-    <template v-else>
-      <view v-for="r in visibleReplies" :key="r.id" class="reply">
-        <view class="reply__head">
-          <text class="reply__name">{{ r.authorName || '匿名玩家' }}</text>
-          <text v-if="r.floor" class="reply__floor">#{{ r.floor }}</text>
-          <text class="reply__time">{{ timeOf(r.createdAt) }}</text>
-        </view>
-        <!--
-          楼中楼署名：讨论串里 20/27 条都是楼中楼（带 `replyToName`）。
-          不标出回复对象的话，一长串回复读起来完全没有上下文。
-        -->
-        <text v-if="r.replyToName" class="reply__to">回复 @{{ r.replyToName }}</text>
-        <text class="reply__text">{{ r.content }}</text>
-      </view>
-
-      <!-- 长讨论串先只展开一部分，避免「正文下面要划很久才到底」 -->
-      <view
-        v-if="replies.length > REPLY_PAGE && !showAllReplies"
-        class="more"
-        @click="showAllReplies = true"
-      >
-        <text class="more__text">展开全部 {{ replies.length }} 条回复</text>
-      </view>
-
-      <EmptyState v-if="!replies.length" icon="💬" text="还没有回复" />
-    </template>
-
-    <!--
-      底部操作条
-      🚨 只保留「本端真的能做」的动作。原来那个点赞按钮点了会弹
-        「点赞需登录，第二期开放」—— 等于当面告诉评审「这功能没做完」；
-        本端不登录，点赞本来也无从谈起，所以把点赞数放到作者行做只读展示，按钮撤掉。
+      底部操作条：**点赞 / 收藏 / 分享** 三个动作，全部是本端真能做的。
+      🚨 关于「点赞」的口径（别写成假按钮、也别虚增数据）：
+        · 后端 `POST /posts/{id}/like` 在 SecurityConfig 里是 `authenticated()`，
+          必须有登录态；本端是零登录的内容浏览端，**拿不到真点赞**；
+        · 所以这里与「收藏」用同一套**本机记录**模型：可点亮、可回看、可取消，
+          页面展示的 `likeCount` 仍是服务端真实数字，**不做 +1 伪装**；
+        · 「我的」页有「我赞过的」列表，用户能看见自己点过的内容。
     -->
     <view v-if="!isNonPublic" class="fab">
+      <view class="fab__btn" :class="{ 'fab__btn--on': liked }" @click="onLike">
+        {{ liked ? '👍 已赞' : '👍 点赞' }}
+      </view>
       <view class="fab__btn" :class="{ 'fab__btn--on': faved }" @click="onFav">
         {{ faved ? '★ 已收藏' : '☆ 收藏' }}
       </view>
@@ -169,37 +164,42 @@
 <script setup>
 import { ref, computed } from 'vue'
 import { onLoad, onShareAppMessage } from '@dcloudio/uni-app'
-import { fetchPostDetail, fetchReplies, fetchPostTags } from '../../api/community'
+import { fetchPostDetail, fetchPostTags } from '../../api/community'
 import { ASSET_BASE } from '../../api/config'
-import { resolveImage, formatTime } from '../../utils/format'
+import { resolveImage, formatTime, platformLabel } from '../../utils/format'
 import { contentBlocks } from '../../utils/content'
 import { parseReading } from '../../utils/stepParser'
-import { addHistory, isFavorite, toggleFavorite } from '../../utils/store'
+import { addHistory, isFavorite, toggleFavorite, isLiked, toggleLike } from '../../utils/store'
+import { ensureIndex, relatedOf } from '../../utils/guideIndex'
+import PostCard from '../../components/PostCard.vue'
 import StepCard from '../../components/StepCard.vue'
 import Skeleton from '../../components/Skeleton.vue'
 import EmptyState from '../../components/EmptyState.vue'
 import ErrorState from '../../components/ErrorState.vue'
 
 const post = ref(null)
-const replies = ref([])
 const tags = ref([])
-const replyTotal = ref(0)
 const mode = ref('card')
 const faved = ref(false)
+const liked = ref(false)
 const failed = ref(false)
 const errMsg = ref('')
 const avatarOk = ref(true)
 const badImgs = ref({})
 const postId = ref(0)
-const replyFailed = ref(false)
-const showAllReplies = ref(false)
 
-/** 讨论串一次全渲染会很长（线上最长 27 条），先放这么多，其余点「展开全部」 */
-const REPLY_PAGE = 12
+/**
+ * 相关推荐（**取代了原来的回复区**）—— 数据来自端内聚合索引。
+ * 定位改成内容展示端后，详情页读完不该只剩「返回」这一条路。
+ */
+const related = ref([])
+const relatedFailed = ref(false)
+const relatedHint = ref('')
 
-const visibleReplies = computed(() =>
-  showAllReplies.value ? replies.value : replies.value.slice(0, REPLY_PAGE)
-)
+/** 平台角标配色分组（与 PostCard 的 `.pc__plat--*` 同一套语义） */
+const PLAT_KEY = { '多平台': 'multi', PC: 'pc', '主机': 'console', '手机': 'mobile' }
+const platKey = computed(() => PLAT_KEY[post.value && post.value.platform] || '')
+const platLabel = computed(() => platformLabel(post.value && post.value.platform))
 
 const avatar = computed(() => (avatarOk.value ? resolveImage(post.value && post.value.authorAvatar) : ''))
 const authorLetter = computed(() => {
@@ -252,7 +252,17 @@ const cards = computed(() => {
   })
 })
 
-const timeOf = (v) => formatTime(v)
+/**
+ * 点正文大图 → 系统级大图预览。
+ * 原来正文图只能按容器宽度看，攻略里的「面板数值截图 / 地图标注」这类细节根本读不清。
+ * urls 传整篇的图，预览时可以直接左右滑着看，不用退出来重新点。
+ */
+function previewImg(src) {
+  const current = resolveImage(src)
+  const urls = blocks.value.filter((b) => b.type === 'image').map((b) => resolveImage(b.src)).filter(Boolean)
+  if (!current || !urls.length) return
+  uni.previewImage({ urls, current })
+}
 
 function onImgError(i) {
   // 图挂了就整块移除，不留破图占位
@@ -276,6 +286,7 @@ async function load() {
     const d = await fetchPostDetail(id)
     post.value = d
     faved.value = isFavorite(id)
+    liked.value = isLiked(id)
     if (d) addHistory(d) // 记录浏览历史（本地）
   } catch (e) {
     failed.value = true
@@ -283,32 +294,41 @@ async function load() {
     return
   }
 
-  // 回复与标签失败都不影响正文阅读
-  await loadReplies()
+  // 标签与相关推荐都只是**补充内容**，任一失败都不影响正文阅读
   loadTags(id)
+  loadRelated()
 }
 
 /**
- * 加载回复 —— 单独抽出来是为了能给「重试」按钮复用。
+ * 相关推荐 —— 相关度按 同游戏 → 同平台 → 同板块 依次兜底（见 guideIndex#relatedOf）。
  *
- * 🚨 回复总数以帖子详情里的 `replyCount` 为准：列表接口实测返回**裸数组**，
- *   没有 `total` 字段（归一化在 `api/community.js` 里做）。
- *   `post.replyCount` 是后端维护的计数，最可靠。
+ * 🚨 失败必须留痕：`relatedFailed` 会让页面显示「加载失败，点此重试」。
+ *   若这里静默清空，页面看起来就和「本来就没有相关攻略」一模一样 ——
+ *   正是本项目反复踩的那类坑（故障被空态伪装成事实）。
  */
-async function loadReplies() {
-  const id = postId.value
-  if (!id) return
-  replyFailed.value = false
-  showAllReplies.value = false
+async function loadRelated(force = false) {
+  relatedFailed.value = false
   try {
-    const r = await fetchReplies(id)
-    replies.value = (r && r.records) || []
-    replyTotal.value = (post.value && post.value.replyCount) || (r && r.total) || replies.value.length
+    const res = await ensureIndex({ force })
+    const items = res.items || []
+    const p = post.value || {}
+    // 索引记录带 `platform`，详情接口不带 —— 从索引回填一次，算相关度要用
+    const self = items.find((it) => it.id === p.id)
+    if (self && self.platform) p.platform = self.platform
+
+    const list = relatedOf(items, p, 4)
+    related.value = list
+    const sameGame = list.filter((r) => p.gameName && r.gameName === p.gameName).length
+    relatedHint.value = sameGame
+      ? sameGame < list.length
+        ? `同《${p.gameName}》 + 同平台`
+        : `同《${p.gameName}》`
+      : p.platform
+        ? '同平台 / 同板块'
+        : ''
   } catch (e) {
-    // 失败 ≠ 没有回复：这里必须留下痕迹，让模板走 ErrorState
-    replies.value = []
-    replyTotal.value = (post.value && post.value.replyCount) || 0
-    replyFailed.value = true
+    related.value = []
+    relatedFailed.value = true
   }
 }
 
@@ -326,10 +346,30 @@ onLoad((q = {}) => {
   load()
 })
 
+/**
+ * 点赞 —— **本机记录**（后端点赞接口需要登录态，本端零登录）。
+ * 展示的 `likeCount` 仍是服务端真实数字，不做 +1 伪装；写满 200 条时如实提示而非静默丢弃。
+ */
+function onLike() {
+  if (!post.value) return
+  const r = toggleLike(post.value)
+  liked.value = r.on
+  if (r.full) {
+    uni.showToast({ title: '本机点赞已满 200 条，请先到「我的」清理', icon: 'none', duration: 2000 })
+    return
+  }
+  uni.showToast({ title: r.on ? '已点赞（记录在本机）' : '已取消点赞', icon: 'none', duration: 1500 })
+}
+
 function onFav() {
   if (!post.value) return
-  faved.value = toggleFavorite(post.value)
-  uni.showToast({ title: faved.value ? '已加入收藏' : '已取消收藏', icon: 'none', duration: 1500 })
+  const r = toggleFavorite(post.value)
+  faved.value = r.on
+  if (r.full) {
+    uni.showToast({ title: '本机收藏已满 200 条，请先到「我的」清理', icon: 'none', duration: 2000 })
+    return
+  }
+  uni.showToast({ title: r.on ? '已加入收藏' : '已取消收藏', icon: 'none', duration: 1500 })
 }
 
 function onShare() {
@@ -384,12 +424,12 @@ onShareAppMessage(() => ({
 }
 .meta__text {
   font-size: 23rpx;
-  color: #6f6a80;
+  color: #a49eb6;
   margin-left: 12rpx;
 }
 .meta__dot {
   font-size: 23rpx;
-  color: #6f6a80;
+  color: #a49eb6;
   margin-left: 10rpx;
 }
 
@@ -436,7 +476,7 @@ onShareAppMessage(() => ({
 }
 .author__views {
   font-size: 22rpx;
-  color: #6f6a80;
+  color: #a49eb6;
 }
 
 .modebar {
@@ -450,7 +490,7 @@ onShareAppMessage(() => ({
   flex: 1;
   text-align: center;
   font-size: 25rpx;
-  color: #8b8599;
+  color: #a49eb6;
   padding: 12rpx 0;
   border-radius: 12rpx;
 }
@@ -464,7 +504,7 @@ onShareAppMessage(() => ({
 }
 .tips__text {
   font-size: 21rpx;
-  color: #6f6a80;
+  color: #a49eb6;
   line-height: 1.6;
 }
 /* 真被截断时的提示 —— 要与普通说明区分开，不能让它淹没在灰字里 */
@@ -545,75 +585,34 @@ onShareAppMessage(() => ({
   margin: 0 12rpx 12rpx 0;
 }
 
-.reply {
-  background: #1a1725;
-  border: 1rpx solid #2a2538;
-  border-radius: 20rpx;
-  padding: 20rpx;
-  margin-bottom: 14rpx;
-}
-.reply__head {
-  display: flex;
-  align-items: center;
-  /* 加了楼层号后头行有三个元素，要的是「名字靠左、楼层与时间靠右」，
-     默认 space-between 会把三者均分，名字和楼层之间空一大块 */
-  justify-content: flex-start;
-}
-/* 🚨 uni-text 自带 white-space: pre-line，会覆盖父级 —— 长昵称会把这一行撑成两行 */
-.reply__head > * {
-  white-space: nowrap;
-}
-.reply__name {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  font-size: 24rpx;
-  color: #b9a9ff;
-}
-.reply__time {
+/* 平台角标 —— 与 PostCard 的 `.pc__plat--*` 同一套配色语义（PC 紫 / 主机 青 / 手游 橙 / 多平台 蓝） */
+.pcplat {
   flex: none;
-  margin-left: 14rpx;
-  font-size: 21rpx;
-  color: #6f6a80;
-}
-.reply__text {
-  display: block;
-  margin-top: 10rpx;
-  font-size: 26rpx;
-  color: #cfcade;
-  line-height: 1.7;
-}
-/* 楼层号：讨论串里便于「第 12 楼」这样指代，弱化显示不抢作者名 */
-.reply__floor {
-  flex: none;
-  margin-left: 12rpx;
   font-size: 20rpx;
-  color: #7c5cff;
-  background: rgba(124, 92, 255, 0.14);
-  padding: 2rpx 10rpx;
-  border-radius: 8rpx;
+  line-height: 1.7;
+  padding: 0 12rpx;
+  border-radius: 6rpx;
+  margin-right: 12rpx;
 }
-/* 楼中楼署名 —— 20/27 条是楼中楼，不标就完全读不出这人在回谁 */
-.reply__to {
-  display: block;
-  margin-top: 8rpx;
-  font-size: 22rpx;
-  color: #8b8599;
+.pcplat--pc {
+  background: rgba(124, 92, 255, 0.2);
+  color: #cbbdff;
 }
-
-/* 「展开全部回复」 */
-.more {
-  margin: 6rpx 0 18rpx;
-  padding: 20rpx 0;
-  text-align: center;
-  background: #1a1725;
-  border: 1rpx dashed #332d45;
-  border-radius: 16rpx;
+.pcplat--console {
+  background: rgba(25, 227, 194, 0.16);
+  color: #6fe3d0;
 }
-.more__text {
-  font-size: 25rpx;
-  color: #a99cf0;
+.pcplat--mobile {
+  background: rgba(240, 159, 39, 0.18);
+  color: #f0b45f;
+}
+.pcplat--multi {
+  background: rgba(143, 189, 240, 0.18);
+  color: #a9cdf5;
+}
+/* 🚨 uni-text 自带 white-space: pre-line，长游戏名会把 meta 行撑成两行，必须逐个命中 */
+.meta > * {
+  white-space: nowrap;
 }
 
 /* 底部操作条 */

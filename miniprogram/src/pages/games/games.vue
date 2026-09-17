@@ -1,6 +1,6 @@
 <template>
   <view class="mp-page">
-    <!-- 关键词搜索 -->
+    <!-- 关键词搜索（带防抖，见 script） -->
     <view class="search">
       <text class="search__icon">🔍</text>
       <input
@@ -10,22 +10,34 @@
         confirm-type="search"
         placeholder="搜索游戏名"
         placeholder-class="search__ph"
-        @confirm="reload"
+        @confirm="onSearchNow"
       />
       <text v-if="keyword" class="search__clear" @click="clearKeyword">✕</text>
     </view>
 
-    <!-- 平台筛选 -->
-    <scroll-view scroll-x class="chips">
+    <!-- 平台筛选：与首页同一套档位与视觉，数量为各平台收录的游戏款数 -->
+    <view class="pfwrap">
+      <PlatformFilter
+        v-model:value="platform"
+        :tabs="platTabs"
+        title="按平台筛选"
+        :hint="platHint"
+        @change="reload"
+      />
+    </view>
+
+    <!-- 类型筛选（31 种类型，按收录量倒序，横滑） -->
+    <scroll-view scroll-x class="chips" :show-scrollbar="false">
       <view class="chips__inner">
+        <view class="chip" :class="{ 'chip--on': genre === '' }" @click="pickGenre('')">全部类型</view>
         <view
-          v-for="p in platforms"
-          :key="p.value"
+          v-for="g in genres"
+          :key="g.name"
           class="chip"
-          :class="{ 'chip--on': platform === p.value }"
-          @click="pickPlatform(p.value)"
+          :class="{ 'chip--on': genre === g.name }"
+          @click="pickGenre(g.name)"
         >
-          {{ p.label }}
+          {{ g.name }}<text class="chip__n">{{ g.count }}</text>
         </view>
       </view>
     </scroll-view>
@@ -39,7 +51,7 @@
           <text class="gitem__name">{{ g.name }}</text>
           <text class="gitem__desc mp-clamp-2">{{ g.description || g.developer || '暂无简介' }}</text>
           <view class="gitem__tags">
-            <text v-if="g.platform" class="mp-tag mp-tag--purple">{{ g.platform }}</text>
+            <text v-if="g.platform" class="mp-tag mp-tag--purple">{{ platName(g.platform) }}</text>
             <text v-if="g.genre" class="mp-tag">{{ g.genre }}</text>
             <text class="gitem__count">
               <text class="mp-num">{{ g.postCount || 0 }}</text> 帖
@@ -63,121 +75,108 @@
         sub="换个关键词或清掉筛选试试"
       />
 
-      <!-- 上拉加载状态 -->
-      <view v-if="list.length" class="footer" @click="onFooterTap">{{ footerText }}</view>
+      <view v-if="list.length" class="footer" @click="retryMore">{{ footerText }}</view>
     </template>
   </view>
 </template>
 
 <script setup>
-import { ref, computed } from 'vue'
+/**
+ * 游戏库 = 「多平台」这个定位的**第二入口**：
+ * 首页按「文章」切平台，这里按「游戏」切平台 + 类型。
+ *
+ * 两处筛选的差别（容易混，写清楚）：
+ *   · 这里的平台/类型筛选走**后端**（`/games?platform=&genre=`，接口原生支持）⇒ 真·服务端分页；
+ *   · 首页的文章平台筛选只能走**端内索引**（`/posts` 没有 platform 参数）。
+ *   数量都取自同一份游戏元数据缓存，口径一致。
+ */
+import { ref, computed, watch, onUnmounted } from 'vue'
 import { onLoad, onReachBottom, onPullDownRefresh } from '@dcloudio/uni-app'
 import { fetchGames } from '../../api/community'
+import { PLATFORM_TABS, PLATFORM_HINT } from '../../api/config'
+import { platformLabel } from '../../utils/format'
+import { ensureGameMeta } from '../../utils/guideIndex'
+import { usePagedList } from '../../utils/usePagedList'
+import PlatformFilter from '../../components/PlatformFilter.vue'
 import GameTile from '../../components/GameTile.vue'
 import Skeleton from '../../components/Skeleton.vue'
 import EmptyState from '../../components/EmptyState.vue'
 import ErrorState from '../../components/ErrorState.vue'
 
-const PAGE_SIZE = 12
-
-/** 平台取值来自线上实测：多平台 6 / 手机 6 / PC 5 / 主机 1 */
-const platforms = [
-  { label: '全部', value: '' },
-  { label: '多平台', value: '多平台' },
-  { label: '手机', value: '手机' },
-  { label: 'PC', value: 'PC' },
-  { label: '主机', value: '主机' }
-]
-
 const keyword = ref('')
 const platform = ref('')
-const list = ref([])
-const loading = ref(true)
-const current = ref(1)
-const total = ref(0)
-const noMore = ref(false)
-const failed = ref(false) // 首屏/刷新失败
-const moreFailed = ref(false) // 上拉这一页失败
+const genre = ref('')
+const genres = ref([])
+const platCount = ref({})
 
-const footerText = computed(() => {
-  if (moreFailed.value) return '加载失败，点此重试'
-  if (noMore.value) return `已加载全部 ${total.value} 款`
-  return '上拉加载更多'
+const platTabs = computed(() =>
+  PLATFORM_TABS.map((t) => ({ ...t, count: platCount.value[t.value] }))
+)
+const platHint = computed(() =>
+  platform.value ? PLATFORM_HINT[platform.value] || '' : '全部平台的游戏收录在一起'
+)
+const platName = (v) => platformLabel(v)
+
+const { list, loading, failed, footerText, reload, loadMore, retryMore } = usePagedList(
+  ({ current, size }) =>
+    fetchGames({
+      current,
+      size,
+      keyword: keyword.value || undefined,
+      platform: platform.value || undefined,
+      genre: genre.value || undefined
+    }),
+  { pageSize: 12, unit: '款' }
+)
+
+/* ==================== 搜索防抖 ====================
+ * 原来只在「键盘回车」时才发请求，边打字边变（v-model 绑定）却不会刷新，
+ * 用户容易以为搜索没生效。这里加 350ms 防抖：既实时又不至于每敲一个字打一次接口。
+ */
+let timer = null
+watch(keyword, () => {
+  if (timer) clearTimeout(timer)
+  timer = setTimeout(() => reload(), 350)
+})
+onUnmounted(() => {
+  if (timer) clearTimeout(timer)
 })
 
-/**
- * 🚨 分页参数是 `current`，不是 `page`。
- *   传 `page` 会被后端静默忽略、恒返回第 1 页 —— 上拉加载会无限重复第一页。
- */
-async function load(reset = false) {
-  if (reset) {
-    current.value = 1
-    noMore.value = false
-    failed.value = false
-    moreFailed.value = false
-  }
-  loading.value = reset
-  try {
-    const res = await fetchGames({
-      current: current.value,
-      size: PAGE_SIZE,
-      keyword: keyword.value || undefined,
-      platform: platform.value || undefined
-    })
-    const records = (res && res.records) || []
-    total.value = (res && res.total) || 0
-    list.value = reset ? records : list.value.concat(records)
-    moreFailed.value = false
-    if (list.value.length >= total.value || !records.length) noMore.value = true
-  } catch (e) {
-    if (reset) {
-      // 失败 ≠ 空数据：清掉旧数据，标记失败，由 ErrorState 接管渲染
-      list.value = []
-      failed.value = true
-    } else {
-      // 页码回退，否则重试会直接跳过这一页
-      current.value = Math.max(1, current.value - 1)
-      moreFailed.value = true
-    }
-  } finally {
-    loading.value = false
-  }
-}
-
-function reload() {
-  load(true)
-}
-
-/** 底部「加载失败，点此重试」 */
-function onFooterTap() {
-  if (!moreFailed.value) return
-  current.value += 1
-  moreFailed.value = false
-  load(false)
+/** 键盘上的「搜索」键：立刻查，不等防抖 */
+function onSearchNow() {
+  if (timer) clearTimeout(timer)
+  reload()
 }
 
 function clearKeyword() {
   keyword.value = ''
+  if (timer) clearTimeout(timer)
   reload()
 }
 
-function pickPlatform(v) {
-  if (platform.value === v) return
-  platform.value = v
+function pickGenre(g) {
+  if (genre.value === g) return
+  genre.value = g
   reload()
 }
 
-onLoad(() => load(true))
-
-onReachBottom(() => {
-  // 上一页失败时不自动重试：否则会在触底处疯狂重连，用户只能手动点底部重试
-  if (noMore.value || loading.value || moreFailed.value) return
-  current.value += 1
-  load(false)
+onLoad(async () => {
+  // 类型清单与平台计数来自「全部游戏」的元数据缓存（24h），失败就让筛选条留空，不阻塞列表
+  try {
+    const meta = await ensureGameMeta()
+    genres.value = meta.genres || []
+    platCount.value = meta.platforms || {}
+  } catch (e) {
+    genres.value = []
+    platCount.value = {}
+  }
+  reload()
 })
 
+onReachBottom(loadMore)
+
 onPullDownRefresh(async () => {
-  await load(true)
+  await reload()
   uni.stopPullDownRefresh()
 })
 
@@ -205,18 +204,22 @@ function goGame(g) {
   color: #e9e7f2;
 }
 .search__ph {
-  color: #6f6a80;
+  color: #8b8599;
 }
 .search__clear {
   font-size: 26rpx;
-  color: #6f6a80;
+  color: #8b8599;
   padding-left: 16rpx;
+}
+
+.pfwrap {
+  margin-top: 22rpx;
 }
 
 .chips {
   white-space: nowrap;
   width: 100%;
-  margin: 20rpx 0 24rpx;
+  margin: 0 0 24rpx;
 }
 .chips__inner {
   display: inline-flex;
@@ -226,7 +229,7 @@ function goGame(g) {
   padding: 10rpx 26rpx;
   border-radius: 30rpx;
   background: #231f31;
-  font-size: 25rpx;
+  font-size: 24rpx;
   color: #c8c3d6;
   border: 1rpx solid transparent;
   margin-right: 14rpx;
@@ -234,6 +237,14 @@ function goGame(g) {
 .chip--on {
   background: rgba(124, 92, 255, 0.2);
   border-color: #7c5cff;
+  color: #cbbdff;
+}
+.chip__n {
+  font-size: 20rpx;
+  color: #8b8599;
+  margin-left: 6rpx;
+}
+.chip--on .chip__n {
   color: #cbbdff;
 }
 
@@ -260,7 +271,7 @@ function goGame(g) {
   display: block;
   margin-top: 8rpx;
   font-size: 24rpx;
-  color: #8b8599;
+  color: #a49eb6;
 }
 .gitem__tags {
   display: flex;
@@ -278,14 +289,14 @@ function goGame(g) {
 }
 .gitem__count {
   font-size: 22rpx;
-  color: #6f6a80;
+  color: #8b8599;
   margin-left: auto;
 }
 
 .footer {
   text-align: center;
   font-size: 23rpx;
-  color: #6f6a80;
+  color: #8b8599;
   padding: 24rpx 0 10rpx;
 }
 </style>

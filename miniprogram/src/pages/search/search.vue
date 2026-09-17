@@ -8,7 +8,7 @@
         v-model="keyword"
         type="text"
         confirm-type="search"
-        placeholder="搜索游戏 / 攻略 / 资讯"
+        placeholder="搜索攻略 / 游戏名"
         placeholder-class="search__ph"
         focus
         @confirm="doSearch"
@@ -44,6 +44,17 @@
 
     <!-- 搜索结果 -->
     <template v-else>
+      <!--
+        🚨 帖子结果走**端内索引**搜索，不走 `/search` —— 因为后端搜索会把
+          吐槽 / 玩家天地 / 其他等板块的帖子一并返回，而本端的口径是「只收干货」
+          （见 docs/方案设计.md §二）。端内搜既能保证范围正确，又是**零请求、即输即出**。
+      -->
+      <view v-if="type !== 'game'" class="hint">
+        <text class="hint__text">
+          在 {{ poolSize }} 篇攻略 / 资讯中搜索{{ keyword ? `「${keyword}」` : '' }}
+        </text>
+      </view>
+
       <Skeleton v-if="loading" :rows="2" />
 
       <template v-else>
@@ -52,12 +63,12 @@
           icon="📡"
           text="搜索失败"
           sub="检查网络后重试"
-          @retry="reload"
+          @retry="reloadGames"
         />
 
         <template v-else>
           <!-- 游戏结果 -->
-          <view v-if="games.length" class="mp-sec">
+          <view v-if="type !== 'post' && games.length" class="mp-sec">
             <text class="mp-sec__title">🎮 游戏</text>
           </view>
           <view v-for="g in games" :key="'g' + g.id" class="gitem" @click="goGame(g)">
@@ -69,21 +80,21 @@
           </view>
 
           <!-- 帖子结果 -->
-          <view v-if="posts.length" class="mp-sec">
-            <text class="mp-sec__title">📄 帖子</text>
+          <view v-if="type !== 'game' && hits.length" class="mp-sec">
+            <text class="mp-sec__title">📄 攻略 / 资讯</text>
+            <text class="mp-sec__more">共 {{ hits.length }} 篇</text>
           </view>
-          <PostCard v-for="p in posts" :key="'p' + p.id" :post="p" />
+          <PostCard v-for="p in visibleHits" :key="'p' + p.id" :post="p" />
 
           <EmptyState
-            v-if="!games.length && !posts.length"
+            v-if="!games.length && !hits.length"
             icon="🔍"
             text="没有找到相关内容"
             sub="换个关键词试试"
           />
 
-          <!-- 帖子/综合结果才分页；游戏结果由后端一次性返回，不显示加载条 -->
-          <view v-if="type !== 'game' && posts.length" class="footer" @click="retryMore">
-            {{ footerText }}
+          <view v-if="type !== 'game' && hits.length > visibleHits.length" class="more" @click="showMore">
+            <text class="more__text">查看更多（还有 {{ hits.length - visibleHits.length }} 篇）</text>
           </view>
         </template>
       </template>
@@ -92,15 +103,26 @@
 </template>
 
 <script setup>
-import { ref } from 'vue'
-import { onLoad, onReachBottom } from '@dcloudio/uni-app'
+/**
+ * 搜索页 —— 双通道：
+ *   · **帖子**：端内索引搜索（零请求、范围锁定在干货池、结果即时）
+ *   · **游戏**：走后端 `/search?type=game`（游戏是服务端数据，端内没有全量索引）
+ *
+ * 为什么不用 `/search?type=post`：后端搜索是**全站**范围，会把吐槽 / 玩家天地 /
+ * 其他板块的帖子也带出来，与小程序的干货口径不符；而且它每翻一页都要一次请求，
+ * 端内索引已经在内存里，搜索是纯粹的内存过滤。
+ */
+import { ref, computed } from 'vue'
+import { onLoad } from '@dcloudio/uni-app'
 import { searchAll, fetchHotTags } from '../../api/community'
-import { usePagedList } from '../../utils/usePagedList'
+import { ensureIndex, queryIndex } from '../../utils/guideIndex'
 import GameTile from '../../components/GameTile.vue'
 import PostCard from '../../components/PostCard.vue'
 import Skeleton from '../../components/Skeleton.vue'
 import EmptyState from '../../components/EmptyState.vue'
 import ErrorState from '../../components/ErrorState.vue'
+
+const PAGE = 10
 
 const types = [
   { label: '综合', value: 'all' },
@@ -113,61 +135,57 @@ const type = ref('all')
 const searched = ref(false)
 const games = ref([])
 const hotTags = ref([])
+const loading = ref(false)
+const failed = ref(false)
 
-/**
- * 🚨 搜索结果必须能翻页：原来写死 `size:20` 且没有上拉加载，
- *   搜「原神」这种热门词命中 50+ 条，页面只给前 20 条、下面的**凭空消失**，
- *   用户还以为只有 20 条。现在走统一分页。
- *
- * 结构随 type 变化：
- *  · type=all  → { posts: PageResult, boards, users, games }
- *  · type=post → PageResult
- *  · type=game → 游戏数组（后端不分页）
- */
-const { list: posts, loading, failed, footerText, reload, loadMore, retryMore } = usePagedList(
-  async ({ current, size }) => {
-    const res = await searchAll(keyword.value, type.value, { current, size })
-    if (type.value === 'all') {
-      games.value = (res && res.games) || []
-      const p = (res && res.posts) || {}
-      return { total: p.total || 0, records: p.records || [] }
-    }
-    if (type.value === 'post') return res
-    games.value = Array.isArray(res) ? res : (res && res.records) || []
-    return { total: games.value.length, records: [] }
-  }
-)
+/** 端内索引（干货池） */
+const items = ref([])
+const visibleCount = ref(PAGE)
 
-onLoad(async (q = {}) => {
-  if (q.keyword) {
-    keyword.value = decodeURIComponent(q.keyword)
-    doSearch()
-  }
+const poolSize = computed(() => items.value.length)
+const hits = computed(() => (searched.value ? queryIndex(items.value, { keyword: keyword.value }) : []))
+const visibleHits = computed(() => hits.value.slice(0, visibleCount.value))
+
+async function loadIndex() {
   try {
-    const t = await fetchHotTags(12)
-    hotTags.value = Array.isArray(t) ? t : []
+    const res = await ensureIndex({})
+    items.value = res.items || []
   } catch (e) {
-    hotTags.value = []
+    items.value = []
   }
-})
+}
+
+async function loadGames() {
+  failed.value = false
+  try {
+    const res = await searchAll(keyword.value, 'game')
+    games.value = Array.isArray(res) ? res : (res && res.records) || []
+  } catch (e) {
+    games.value = []
+    // 帖子结果来自本地，仍可用；只有「游戏」这一路失败时给出失败态
+    failed.value = true
+  }
+}
 
 async function doSearch() {
   const kw = keyword.value.trim()
   if (!kw) {
     searched.value = false
-    posts.value = []
     games.value = []
     return
   }
   searched.value = true
-  games.value = []
-  await reload()
+  visibleCount.value = PAGE
+  loading.value = true
+  // 帖子命中是同步的（索引在内存），游戏要发一次请求；两者一起等，避免页面先空后跳
+  await loadGames()
+  loading.value = false
 }
 
 function pickType(v) {
   if (type.value === v) return
   type.value = v
-  doSearch()
+  visibleCount.value = PAGE
 }
 
 function useTag(name) {
@@ -175,16 +193,33 @@ function useTag(name) {
   doSearch()
 }
 
+function showMore() {
+  visibleCount.value = Math.min(visibleCount.value + PAGE, hits.value.length)
+}
+
 function clearAll() {
   keyword.value = ''
   searched.value = false
-  posts.value = []
   games.value = []
+  visibleCount.value = PAGE
 }
 
-onReachBottom(() => {
-  if (type.value === 'game') return
-  loadMore()
+function reloadGames() {
+  doSearch()
+}
+
+onLoad(async (q = {}) => {
+  await loadIndex()
+  try {
+    const t = await fetchHotTags(12)
+    hotTags.value = Array.isArray(t) ? t : []
+  } catch (e) {
+    hotTags.value = []
+  }
+  if (q.keyword) {
+    keyword.value = decodeURIComponent(q.keyword)
+    doSearch()
+  }
 })
 
 function goGame(g) {
@@ -211,11 +246,11 @@ function goGame(g) {
   color: #e9e7f2;
 }
 .search__ph {
-  color: #6f6a80;
+  color: #8b8599;
 }
 .search__clear {
   font-size: 26rpx;
-  color: #6f6a80;
+  color: #8b8599;
   padding-left: 16rpx;
 }
 
@@ -230,13 +265,21 @@ function goGame(g) {
   flex: 1;
   text-align: center;
   font-size: 26rpx;
-  color: #8b8599;
+  color: #a49eb6;
   padding: 12rpx 0;
   border-radius: 12rpx;
 }
 .tabs__item--on {
   background: rgba(124, 92, 255, 0.22);
   color: #cbbdff;
+}
+
+.hint {
+  margin-top: 20rpx;
+}
+.hint__text {
+  font-size: 22rpx;
+  color: #8b8599;
 }
 
 .tagbox {
@@ -276,13 +319,19 @@ function goGame(g) {
   display: block;
   margin-top: 6rpx;
   font-size: 23rpx;
-  color: #8b8599;
+  color: #a49eb6;
 }
 
-.footer {
+.more {
+  margin-top: 6rpx;
+  padding: 22rpx 0;
   text-align: center;
-  font-size: 23rpx;
-  color: #6f6a80;
-  padding: 24rpx 0 10rpx;
+  background: #1a1725;
+  border: 1rpx dashed #332d45;
+  border-radius: 16rpx;
+}
+.more__text {
+  font-size: 25rpx;
+  color: #a99cf0;
 }
 </style>

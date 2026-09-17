@@ -3,7 +3,7 @@
     {
       "path": "pages/index/index",
       "style": {
-        "navigationBarTitleText": "YUMU 游戏助手",
+        "navigationBarTitleText": "攻略库",
         "enablePullDownRefresh": true,
         "backgroundTextStyle": "light"
       }
@@ -38,14 +38,7 @@
     {
       "path": "pages/post/detail",
       "style": {
-        "navigationBarTitleText": "详情"
-      }
-    },
-    {
-      "path": "pages/list/list",
-      "style": {
-        "navigationBarTitleText": "内容列表",
-        "enablePullDownRefresh": true
+        "navigationBarTitleText": "攻略详情"
       }
     },
     {
@@ -57,21 +50,21 @@
   ],
   "globalStyle": {
     "navigationBarTextStyle": "white",
-    "navigationBarTitleText": "YUMU 游戏助手",
+    "navigationBarTitleText": "YUMU 攻略库",
     "navigationBarBackgroundColor": "#16131f",
     "backgroundColor": "#0f0d16",
     "backgroundColorTop": "#0f0d16",
     "backgroundColorBottom": "#0f0d16"
   },
   "tabBar": {
-    "color": "#6f6a80",
+    "color": "#8b8599",
     "selectedColor": "#7C5CFF",
     "backgroundColor": "#16131f",
     "borderStyle": "black",
     "list": [
       {
         "pagePath": "pages/index/index",
-        "text": "首页",
+        "text": "攻略",
         "iconPath": "static/tabbar/home.png",
         "selectedIconPath": "static/tabbar/home-on.png"
       },
