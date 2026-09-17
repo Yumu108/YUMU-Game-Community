@@ -137,6 +137,65 @@ export function clearLikes() {
   write(STORAGE_KEYS.LIKES, [])
 }
 
+/* ==================== 登录会话 ==================== */
+
+/**
+ * 登录态（2026-09-17 接入）。账号体系与主站**完全通用**：
+ * 同一套 user 表、同一个 `POST /auth/login`，token 也是同一个 JWT。
+ *
+ * ⚠️ token 的清理由 `api/request.js#clearSession` 收口（401 时同步清 user），
+ *    这里只提供读写视图，不要在页面里绕过它直接清 token。
+ */
+
+/** @returns {{id:number,username:string,nickname:string,avatar?:string}|null} */
+export function getUser() {
+  const u = read(STORAGE_KEYS.USER, null)
+  return u && u.id ? u : null
+}
+
+/** 登录成功后写入（结构与主站登录响应的 `data.user` 对齐） */
+export function setUser(user) {
+  if (!user || !user.id) return
+  write(STORAGE_KEYS.USER, {
+    id: user.id,
+    username: user.username || '',
+    nickname: user.nickname || user.username || '',
+    avatar: user.avatar || ''
+  })
+}
+
+export function clearUser() {
+  try {
+    uni.removeStorageSync(STORAGE_KEYS.USER)
+  } catch (e) {
+    /* 忽略 */
+  }
+}
+
+/* ==================== 举报（本机防重复） ==================== */
+
+/**
+ * 已举报记录 —— 只存本机帖子 id，用于把「举报」入口置灰，防止重复提交。
+ * 服务端还有第二道防线（同一帖存在待处理举报时后端会拒绝），这里只是体验层。
+ */
+export function isReported(id) {
+  return getReported().includes(id)
+}
+
+export function markReported(id) {
+  if (!id) return
+  const list = getReported()
+  if (!list.includes(id)) {
+    list.unshift(id)
+    write(STORAGE_KEYS.REPORTED, list.slice(0, 200))
+  }
+}
+
+function getReported() {
+  const list = read(STORAGE_KEYS.REPORTED, [])
+  return Array.isArray(list) ? list : []
+}
+
 /** 本地记录只留「能在列表里显示出来」的最小字段集 */
 function toBrief(post) {
   return {

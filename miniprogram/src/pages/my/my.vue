@@ -1,16 +1,18 @@
 <template>
   <view class="mp-page">
     <!--
-      账号区：本端定位是**内容浏览端**，不做登录（社交动作在 Web 端完成）。
-      🚨 文案注意：不要写「未登录」——那看起来像登录功能坏了；
-        写成「访客模式」才是如实描述设计选择。
+      账号区：2026-09-17 接入登录（与主站账号通用）。
+      未登录仍叫「访客模式」（不写「未登录」，那看起来像功能坏了）；
+      收藏、点赞、历史仍为本机记录 —— 登录当前只服务于「举报」等需要身份的动作。
     -->
     <view class="user">
-      <view class="user__avatar">游</view>
+      <view class="user__avatar">{{ user ? (user.nickname || user.username || '游').slice(0, 1) : '游' }}</view>
       <view class="user__info">
-        <text class="user__name">访客模式</text>
-        <text class="user__tip">收藏、点赞与浏览记录都保存在本机</text>
+        <text class="user__name">{{ user ? user.nickname || user.username : '访客模式' }}</text>
+        <text class="user__tip">{{ user ? '已登录（账号与主站通用）' : '收藏、点赞与浏览记录都保存在本机' }}</text>
       </view>
+      <text v-if="!user" class="user__login" @click="goLogin">登录 / 注册</text>
+      <text v-else class="user__login user__login--out" @click="onLogout">退出</text>
     </view>
 
     <!-- 切换 -->
@@ -76,8 +78,12 @@ import {
   getHistory,
   clearHistory,
   clearLikes,
-  toggleFavorite
+  toggleFavorite,
+  getUser,
+  clearUser
 } from '../../utils/store'
+import { logout } from '../../api/auth'
+import { clearSession } from '../../api/request'
 import { formatTime } from '../../utils/format'
 import EmptyState from '../../components/EmptyState.vue'
 
@@ -85,6 +91,7 @@ const tab = ref('fav')
 const favorites = ref([])
 const likes = ref([])
 const history = ref([])
+const user = ref(null)
 
 const current = computed(() =>
   tab.value === 'fav' ? favorites.value : tab.value === 'like' ? likes.value : history.value
@@ -100,12 +107,40 @@ const emptyText = computed(
 
 const timeOf = (v) => formatTime(v)
 
-/** onShow：从详情页返回后要能看到刚收藏 / 刚点赞 / 刚浏览的内容 */
+/** onShow：从详情页返回后要能看到刚收藏 / 刚点赞 / 刚浏览的内容；登录态也在这里刷新 */
 onShow(() => {
   favorites.value = getFavorites()
   likes.value = getLikes()
   history.value = getHistory()
+  user.value = getUser()
 })
+
+function goLogin() {
+  uni.navigateTo({ url: '/pages/login/login' })
+}
+
+/**
+ * 退出登录：先尽力通知后端把 token 入黑名单，**无论成败都清本地会话**。
+ * （后端 /auth/logout 对已过期 token 也是 no-op，语义上就是「清残留」。）
+ */
+function onLogout() {
+  uni.showModal({
+    title: '退出登录',
+    content: '本机的收藏、点赞与浏览记录会保留，确定退出吗？',
+    success: async (res) => {
+      if (!res.confirm) return
+      try {
+        await logout()
+      } catch (e) {
+        /* 后端失败不阻断 —— 本地必须清干净 */
+      }
+      clearSession()
+      clearUser()
+      user.value = null
+      uni.showToast({ title: '已退出登录', icon: 'none' })
+    }
+  })
+}
 
 function goItem(it) {
   uni.navigateTo({ url: `/pages/post/detail?id=${it.id}` })
@@ -156,6 +191,22 @@ function onClear() {
   align-items: center;
   justify-content: center;
   flex: none;
+}
+.user__login {
+  margin-left: auto;
+  flex-shrink: 0;
+  padding: 12rpx 24rpx;
+  border-radius: 999rpx;
+  background: #7c5cff;
+  color: #fff;
+  font-size: 24rpx;
+  font-weight: 600;
+}
+.user__login--out {
+  background: transparent;
+  border: 1rpx solid #3a3350;
+  color: #a49eb6;
+  font-weight: 400;
 }
 .user__info {
   flex: 1;

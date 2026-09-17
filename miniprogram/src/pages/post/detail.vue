@@ -39,6 +39,10 @@
         <text v-if="post.authorLevelTitle" class="author__level">{{ post.authorLevelTitle }}</text>
       </view>
       <text class="author__views">{{ post.viewCount || 0 }} 阅读 · {{ post.likeCount || 0 }} 赞</text>
+      <!-- 举报：未登录先去登录；已登录弹理由选择。提交到主站审核流程（/reports） -->
+      <text class="author__report" :class="{ 'author__report--done': reported }" @click="onReportTap">
+        {{ reported ? '已举报' : '举报' }}
+      </text>
     </view>
 
     <!-- 模式切换：仅当正文能被拆解时出现 -->
@@ -149,6 +153,35 @@
       </view>
       <view class="fab__btn fab__btn--primary" @click="onShare">分享</view>
     </view>
+
+    <!--
+      举报弹层 —— 理由预置单选，提交到 `POST /reports`，进入主站审核流程
+      （管理员 / 版主在「管理后台 → 举报处理」里看到并处理）。
+      🚨 层级铁律：页面内浮层 z-index 必须 > 998（uni-app H5 底栏就是 998），
+        这里用 1200（公告浮层同款），否则点选会被底栏拦截。
+    -->
+    <view v-if="reportSheet" class="rsheet" @click.self="reportSheet = false">
+      <view class="rsheet__panel">
+        <text class="rsheet__title">举报这篇内容</text>
+        <text class="rsheet__sub">举报后将由社区管理员 / 版主审核处理</text>
+        <view
+          v-for="(r, i) in REPORT_REASONS"
+          :key="r"
+          class="rsheet__opt"
+          :class="{ 'rsheet__opt--on': reportReasonIdx === i }"
+          @click="reportReasonIdx = i"
+        >
+          <text>{{ r }}</text>
+          <text v-if="reportReasonIdx === i" class="rsheet__check">✓</text>
+        </view>
+        <view class="rsheet__btns">
+          <view class="rsheet__btn" @click="reportSheet = false">取消</view>
+          <view class="rsheet__btn rsheet__btn--primary" :class="{ 'rsheet__btn--off': reportBusy }" @click="onReportSubmit">
+            {{ reportBusy ? '提交中…' : '提交举报' }}
+          </view>
+        </view>
+      </view>
+    </view>
   </view>
 
   <!-- 失败：给原因 + 重试，绝不停在骨架屏（原来是 `catch → return`，页面永远转圈） -->
@@ -169,7 +202,9 @@ import { ASSET_BASE } from '../../api/config'
 import { resolveImage, formatTime, platformLabel } from '../../utils/format'
 import { contentBlocks } from '../../utils/content'
 import { parseReading } from '../../utils/stepParser'
-import { addHistory, isFavorite, toggleFavorite, isLiked, toggleLike } from '../../utils/store'
+import { addHistory, isFavorite, toggleFavorite, isLiked, toggleLike, getUser, isReported, markReported } from '../../utils/store'
+import { submitReport } from '../../api/auth'
+import { REPORT_REASONS } from '../../api/config'
 import { ensureIndex, relatedOf } from '../../utils/guideIndex'
 import PostCard from '../../components/PostCard.vue'
 import StepCard from '../../components/StepCard.vue'
@@ -187,6 +222,54 @@ const errMsg = ref('')
 const avatarOk = ref(true)
 const badImgs = ref({})
 const postId = ref(0)
+
+/* ==================== 举报（2026-09-17 新增） ==================== */
+
+/**
+ * 举报入口与弹层状态。
+ * 两道防线防重复：① 本机 `isReported` 置灰入口（体验层）；
+ * ② 服务端对同一帖的重复举报有自己的校验，报错会 toast 后端原文。
+ */
+const reportSheet = ref(false)
+const reportReasonIdx = ref(-1)
+const reportBusy = ref(false)
+const reported = ref(false)
+
+function onReportTap() {
+  // 非公开帖（审核中/隐藏）本来就不接收举报，入口只在公开帖出现（模板同 fab 的 v-if）
+  if (reported.value) {
+    return uni.showToast({ title: '这篇内容你已举报过，管理员会尽快处理', icon: 'none' })
+  }
+  if (!getUser()) {
+    // 未登录：先去登录（账号与主站通用），登录成功 navigateBack 自动回到本页
+    uni.showToast({ title: '举报需要先登录（与主站账号通用）', icon: 'none' })
+    return setTimeout(() => uni.navigateTo({ url: '/pages/login/login' }), 600)
+  }
+  reportReasonIdx.value = -1
+  reportSheet.value = true
+}
+
+async function onReportSubmit() {
+  if (reportBusy.value) return
+  if (reportReasonIdx.value < 0) {
+    return uni.showToast({ title: '请先选择一个举报理由', icon: 'none' })
+  }
+  reportBusy.value = true
+  try {
+    await submitReport({
+      targetId: postId.value,
+      reason: REPORT_REASONS[reportReasonIdx.value]
+    })
+    reportSheet.value = false
+    reported.value = true
+    markReported(postId.value)
+    uni.showToast({ title: '举报已提交，感谢反馈', icon: 'success' })
+  } catch (e) {
+    /* 失败文案已由请求层 toast 后端原文（如「帖子正在审核中，暂不支持举报」） */
+  } finally {
+    reportBusy.value = false
+  }
+}
 
 /**
  * 相关推荐（**取代了原来的回复区**）—— 数据来自端内聚合索引。
@@ -291,6 +374,7 @@ async function load() {
     tags.value = (d && Array.isArray(d.tags)) ? d.tags : []
     faved.value = isFavorite(id)
     liked.value = isLiked(id)
+    reported.value = isReported(id)
     if (d) addHistory(d) // 记录浏览历史（本地）
   } catch (e) {
     failed.value = true
@@ -471,6 +555,91 @@ onShareAppMessage(() => ({
 .author__views {
   font-size: 22rpx;
   color: #a49eb6;
+}
+/* 举报入口：低调小字，低频负面操作不抢视线；已举报后置灰 */
+.author__report {
+  flex-shrink: 0;
+  font-size: 22rpx;
+  color: #8b8599;
+  padding: 4rpx 10rpx;
+}
+.author__report--done {
+  color: #5d5773;
+}
+
+/* 举报弹层 —— 🚨 z-index 必须 > 998（uni-app H5 底栏层级），与公告浮层同用 1200 */
+.rsheet {
+  position: fixed;
+  inset: 0;
+  z-index: 1200;
+  background: rgba(10, 8, 18, 0.7);
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+}
+.rsheet__panel {
+  width: 100%;
+  max-width: 760px;
+  box-sizing: border-box;
+  background: #1a1725;
+  border-radius: 28rpx 28rpx 0 0;
+  padding: 32rpx 32rpx calc(32rpx + env(safe-area-inset-bottom));
+}
+.rsheet__title {
+  display: block;
+  font-size: 32rpx;
+  font-weight: 600;
+  color: #f2f0f7;
+}
+.rsheet__sub {
+  display: block;
+  margin: 8rpx 0 24rpx;
+  font-size: 22rpx;
+  color: #8b8599;
+}
+.rsheet__opt {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 24rpx 20rpx;
+  margin-bottom: 16rpx;
+  border: 1rpx solid #2c2740;
+  border-radius: 14rpx;
+  color: #c9c4d8;
+  font-size: 28rpx;
+}
+.rsheet__opt--on {
+  border-color: #7c5cff;
+  background: rgba(124, 92, 255, 0.12);
+  color: #f2f0f7;
+}
+.rsheet__check {
+  color: #7c5cff;
+  font-weight: 700;
+}
+.rsheet__btns {
+  display: flex;
+  gap: 20rpx;
+  margin-top: 8rpx;
+}
+.rsheet__btn {
+  flex: 1;
+  height: 84rpx;
+  line-height: 84rpx;
+  text-align: center;
+  border-radius: 16rpx;
+  border: 1rpx solid #3a3350;
+  color: #a49eb6;
+  font-size: 28rpx;
+}
+.rsheet__btn--primary {
+  background: #7c5cff;
+  border-color: #7c5cff;
+  color: #fff;
+  font-weight: 600;
+}
+.rsheet__btn--off {
+  opacity: 0.6;
 }
 
 .modebar {

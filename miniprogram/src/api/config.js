@@ -36,14 +36,31 @@ export const ASSET_BASE = 'http://8.133.255.202'
 /** 本地存储键 */
 export const STORAGE_KEYS = {
   TOKEN: 'yumu_token',
+  /** 登录用户信息（与 token 同生命周期，见 utils/store.js 的 session 段） */
+  USER: 'yumu_user',
   HISTORY: 'yumu_history',
   FAVORITES: 'yumu_favorites',
   LIKES: 'yumu_likes',
+  /** 本机已举报的帖子 id 列表（防重复举报入口，见 utils/store.js） */
+  REPORTED: 'yumu_reported',
   /** 端内聚合索引（帖子池 + 平台归属），见 utils/guideIndex.js */
   GUIDE_INDEX: 'yumu_guide_index',
   /** 全部游戏的 `gameId → platform` 映射（变化很慢，单独长缓存） */
   GAME_PLATFORM: 'yumu_game_platform'
 }
+
+/**
+ * 举报理由（预置单选）—— 2026-09-17 新增举报功能。
+ * 提交到 `POST /reports`（targetType=1 帖子），主站「管理后台 → 举报处理」闭环。
+ * reason 后端上限 200 字，预置理由直接拼进 reason 字段。
+ */
+export const REPORT_REASONS = [
+  '违法违规内容',
+  '垃圾广告 / 导流',
+  '引战 / 辱骂攻击',
+  '内容不实 / 误导',
+  '侵权 / 冒用他人作品'
+]
 
 /**
  * 板块固定 id（与后端 `board` 表一致）。

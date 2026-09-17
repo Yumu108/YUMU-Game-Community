@@ -4,14 +4,22 @@
  * 保留的关键行为：
  *  ① 自动注入 `Authorization: Bearer <token>`；
  *  ② **HTTP 状态码恒为 200**，成败一律看响应体的 `code` 字段（后端统一 Result 包装）；
- *  ③ `code === 401` → 清登录态 + 提示（对应 Web 端「登录已过期」分支）。
+ *  ③ 401 分三类处理（**与主站 `classify401` 口径一致**，2026-09-17 接入登录时补齐）：
+ *     · silent —— `/auth/refresh`、`/auth/logout`：静默失败，绝不弹「登录已过期」刷屏；
+ *     · toast  —— `/auth/login`、`/auth/register`、`/auth/email-code`、`/auth/reset-password`：
+ *                 登录入口类，把**后端原文**弹给用户（如「账号或密码错误」）；
+ *     · unauth —— 其余业务请求：先尝试**续签一次并重放**（单飞），失败才清登录态。
  *
- * 有意简化的部分（小程序端第一期不走登录）：
- *  · 不做 token 滑动续签 / 401 重试 —— 收藏先走本地，等接入登录时再补。
+ * 滑动续签（对齐主站两段式里的「被动段」）：
+ *  · 后端 access token 有效期 2h，`POST /auth/refresh` 用旧 token 换新 token（旧 jti 立即拉黑）；
+ *  · 后端会作废旧 token ⇒ 并发请求必须**共用同一个续签 Promise**（single-flight），
+ *    否则后发的续签会把前面刚拿到的新 token 作废（主站注释原话）。
+ *  · 与主站的差异：不做「临期 <30min 主动续签」（需要解析 JWT exp，小程序端先省略），
+ *    活跃会话里收到 401 会自动续签重放，用户无感；闲置超 2h 才需要重新登录。
  */
 import { API_BASE, STORAGE_KEYS } from './config'
 
-/* ---------------- token 存取 ---------------- */
+/* ---------------- token / 会话存取 ---------------- */
 
 export function getToken() {
   try {
@@ -30,8 +38,62 @@ export function setToken(token) {
   }
 }
 
-export function clearToken() {
+/** 清登录态：token + 用户信息一起清（session 收口） */
+export function clearSession() {
   setToken('')
+  try {
+    uni.removeStorageSync(STORAGE_KEYS.USER)
+  } catch (e) {
+    /* 同上 */
+  }
+}
+
+/* ---------------- 401 三分类（对齐主站 classify401） ---------------- */
+
+const SILENT_401 = /\/auth\/(refresh|logout)/
+const TOAST_401 = /\/auth\/(login|register|email-code|reset-password)/
+
+/** @returns {'silent'|'toast'|'unauth'} */
+function classify401(url = '') {
+  if (SILENT_401.test(url)) return 'silent'
+  if (TOAST_401.test(url)) return 'toast'
+  return 'unauth'
+}
+
+/* ---------------- 续签单飞 ---------------- */
+
+let refreshing = null
+
+/**
+ * 用当前 token 换新 token。并发调用共享同一个 Promise（单飞）。
+ * @returns {Promise<boolean>} 是否续签成功
+ */
+function refreshOnce() {
+  if (refreshing) return refreshing
+  refreshing = new Promise((resolve) => {
+    const token = getToken()
+    if (!token) return resolve(false)
+    uni.request({
+      url: API_BASE + '/auth/refresh',
+      method: 'POST',
+      data: {},
+      header: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      timeout: 15000,
+      success: (res) => {
+        const body = res.data
+        if (res.statusCode === 200 && body && body.code === 200 && body.data && body.data.token) {
+          setToken(body.data.token)
+          resolve(true)
+        } else {
+          resolve(false)
+        }
+      },
+      fail: () => resolve(false)
+    })
+  }).finally(() => {
+    refreshing = null
+  })
+  return refreshing
 }
 
 /* ---------------- 提示 ---------------- */
@@ -48,10 +110,11 @@ function toast(message) {
  * @param {string}  [opt.method]  默认 GET
  * @param {object}  [opt.data]    query（GET）或 body（POST）
  * @param {boolean} [opt.silent]  静默模式：失败不弹 toast（用于首屏并发拉取）
+ * @param {boolean} [opt._retried] 内部标记：401 续签重放后的第二次尝试，不再续签
  * @returns {Promise<any>} 直接 resolve 出 `data`（已剥掉 Result 外壳）
  */
 export function request(opt = {}) {
-  const { url, method = 'GET', data = {}, silent = false } = opt
+  const { url, method = 'GET', data = {}, silent = false, _retried = false } = opt
 
   return new Promise((resolve, reject) => {
     const token = getToken()
@@ -64,12 +127,12 @@ export function request(opt = {}) {
       data,
       header,
       timeout: 15000,
-      success: (res) => {
+      success: async (res) => {
         // 安全入口（未带 token / token 失效）会直接返回 HTTP 401
         if (res.statusCode === 401) {
-          clearToken()
-          if (!silent) toast('登录已过期，请重新登录')
-          return reject(new Error('unauthorized'))
+          return handle401(url, silent, _retried, resolve, reject, () =>
+            request({ ...opt, _retried: true })
+          )
         }
 
         const body = res.data
@@ -80,9 +143,9 @@ export function request(opt = {}) {
         if (body.code === 200) return resolve(body.data)
 
         if (body.code === 401) {
-          clearToken()
-          if (!silent) toast(body.message || '登录已过期，请重新登录')
-          return reject(new Error(body.message || 'unauthorized'))
+          return handle401(url, silent, _retried, resolve, reject, () =>
+            request({ ...opt, _retried: true })
+          , body.message)
         }
 
         if (!silent) toast(body.message || '请求失败，请稍后重试')
@@ -94,6 +157,40 @@ export function request(opt = {}) {
       }
     })
   })
+}
+
+/**
+ * 401 统一处理（HTTP 401 与业务 code 401 两路都汇到这里）。
+ * @param {string} url 原请求路径
+ * @param {boolean} silent 静默模式
+ * @param {boolean} retried 是否已是重放请求
+ * @param {(v:any)=>void} resolve
+ * @param {(e:Error)=>void} reject
+ * @param {()=>Promise<any>} replay 续签成功后重放原请求
+ * @param {string} [msg] 后端返回的 message（toast 类直接展示）
+ */
+async function handle401(url, silent, retried, resolve, reject, replay, msg) {
+  const kind = classify401(url)
+  if (kind === 'silent') {
+    // refresh/logout 自己的 401：静默失败，由调用方决定下一步
+    return reject(new Error(msg || 'unauthorized'))
+  }
+  if (kind === 'toast') {
+    // 登录入口类：后端原文就是给用户看的（如「账号或密码错误」），原样弹
+    if (!silent) toast(msg || '请求失败，请稍后重试')
+    return reject(new Error(msg || 'unauthorized'))
+  }
+  // unauth：业务请求的登录态失效 —— 续签一次并重放；已是重放则真的登出
+  if (!retried && (await refreshOnce())) {
+    try {
+      return resolve(await replay())
+    } catch (e) {
+      return reject(e)
+    }
+  }
+  clearSession()
+  if (!silent) toast(msg || '登录已过期，请重新登录')
+  reject(new Error(msg || 'unauthorized'))
 }
 
 export const get = (url, data, opt) => request({ url, method: 'GET', data, ...opt })

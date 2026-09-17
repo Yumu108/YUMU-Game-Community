@@ -640,6 +640,34 @@ const LABEL_TO_VALUE = { 手游: '手机', 多平台: '多平台', PC: 'PC', 主
   await page.screenshot({ path: path.join(SHOTS, 'Z-offline-home.png') })
   await page.unroute('**/api/**')
 
+  /* ================= L. 登录与举报（2026-09-17 新增） ================= */
+  // 登录/注册（与主站账号通用）+ 详情页举报（进主站审核流程）。
+  // 这里只锁 **UI 行为**（页面可达、入口存在、未登录跳转）；真实提交链路由
+  // 本地端到端 curl 序列覆盖（注册→登录→POST /reports→admin 列表可见），
+  // 因为线上是生产环境（无 MAIL_TEST_CODE），自动化注册只可能在本地成立。
+  console.log('\n--- L. 登录与举报 ---')
+  await goto('/pages/login/login')
+  await new Promise((r) => setTimeout(r, 800))
+  assert('L1 登录页渲染（登录/注册双 tab）', (await count('.seg__item')) === 2 && (await count('.field__input')) >= 2, `seg=${await count('.seg__item')} inputs=${await count('.field__input')}`)
+
+  await goto('/pages/post/detail?id=' + candIds[0])
+  await new Promise((r) => setTimeout(r, 1500))
+  assert('L2 详情页有举报入口', (await count('.author__report')) === 1, `report=${await count('.author__report')}`)
+
+  // 未登录（新 context：storage 为空）点击举报 → 提示 + 跳转登录页
+  const anonCtx = await browser.newContext({ viewport: { width: 390, height: 844 } })
+  const anonPage = await anonCtx.newPage()
+  const anonErrs = []
+  anonPage.on('pageerror', (e) => anonErrs.push(String(e)))
+  await anonPage.goto(BASE + '/#/pages/post/detail?id=' + candIds[0], { waitUntil: 'networkidle' })
+  await new Promise((r) => setTimeout(r, 1800))
+  await anonPage.click('.author__report')
+  await new Promise((r) => setTimeout(r, 1200))
+  const anonHash = await anonPage.evaluate(() => location.hash)
+  assert('L3 未登录点举报 → 跳转登录页', /pages\/login\/login/.test(anonHash), `hash=${anonHash}`)
+  await anonCtx.close()
+  void anonErrs
+
   await browser.close()
   console.log(`\n=== 结果：${pass}/${pass + fail} 通过 ===`)
   console.log(`截图目录：${SHOTS}`)
