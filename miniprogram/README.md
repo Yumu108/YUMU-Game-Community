@@ -90,11 +90,11 @@ npm run build:mp-weixin     # → dist/build/mp-weixin
 ```bash
 cd miniprogram
 
-# ① 单测：拆解器 20 项 + 正文解析 15 项（直接 import 被测源码）
+# ① 单测：拆解器 25 项 + 正文解析 15 项（直接 import 被测源码）
 node --experimental-default-type=module tests/stepParser.test.mjs
 node --experimental-default-type=module tests/content.test.mjs
 
-# ② 浏览器回归 45 项（打在**真实构建产物**上）
+# ② 浏览器回归 60 项（打在**真实构建产物**上）
 npm run build:h5
 node tests/serve-h5.mjs &                       # 起在 http://localhost:5199/m/
 NODE_PATH="<repo>/tests/.pw/node_modules" node tests/verify-miniprogram.cjs
@@ -162,8 +162,26 @@ python tools/gen-tabbar-icons.py     # → src/static/tabbar/*.png（81×81，�
    所以排查时别往 nginx / 后端方向找。`API_BASE` 则**不需要**改（`uni.request` 的 `/api/...` 由浏览器
    按文档 URL 解析，`/` 开头即根相对）。
    回归里有 G4a/G4b 直接盯住这点：**断言不允许出现 `/m/api/files/*`，且图片响应必须全 200 + `image/*`**。
+8. 🚨 **`GET /posts/{id}/replies` 的 `data` 是「裸数组」，不是分页体。**
+   实测 `Result.data` 直接是 `list`（且 `current`/`size` 会被服务端忽略，一次给全部）。
+   详情页原来按分页体读 `r.records` / `r.total` ⇒ 两个字段恒 `undefined`
+   ⇒ **回复区永远显示「还没有回复」、标题永远「回复 0」**，27 条回复的讨论串一条都看不到，
+   而且它伪装成正常的空态，线上挂了很久才被发现。
+   归一化统一收在 `api/community.js#fetchReplies`（返回 `{records,total}`，同时兼容分页体），
+   **不要在页面里直接读 `data.records`**。回复总数以帖子的 `replyCount` 为准。
+   📌 同类接口 `POST /posts/{id}/tags` 也返回裸数组（该处已有 `Array.isArray` 防御）。
+9. 🚨 **拆解器不许静默丢内容**（`utils/stepParser.js`）。
+   2026-09-17 内容富化后，真实长文把三处**静默丢失**全打了出来，都不会报错、不会空屏，
+   只是让用户看到一篇「看起来完整、其实少了内容」的文章：
+   · `MAX_ITEMS = 12` 硬截断 —— 线上那篇原文 16 条，第 13~16 条整段消失；
+   · 「首个序号之前的前言直接丢弃」—— 丢的是交代背景的**导语**；
+   · `【第一梯队：不做会直接卡关】` 这类**分组标题行**被丢弃 —— 文章的组织结构整个没了。
+   现在：导语 → `intro`；分组标题 → 条目的 `section`（页面渲染成小节）；
+   上限放宽到 60，**真截断时会返回 `truncated`/`omitted` 并由页面显式提示**。
+   · 顺带一条：**长条目必须拆成「标题 + 描述」**，不能整行当标题 ——
+     标题有 30 字展示上限，会被 `tidy` 截掉，实测那篇因此只保住 55% 的正文（现在 97%）。
 
-### 两条工程约定（评审最容易问的地方）
+### 三条工程约定（评审最容易问的地方）
 
 - **「请求失败」≠「结果为 0」。** 所有列表页失败的归宿是 `ErrorState`（含重试按钮），
   只有「请求成功且为空」才允许走 `EmptyState`。原来四个页面都把异常 `catch` 成空数组，
@@ -172,6 +190,15 @@ python tools/gen-tabbar-icons.py     # → src/static/tabbar/*.png（81×81，�
 - **不做假动作。** 本端不登录，所以底部操作条只保留真的能做的「收藏 / 分享」，
   点赞数改为作者行只读展示；`我的` 页写「访客模式」而不是「未登录」。
   （原点赞按钮点了弹「点赞需登录，第二期开放」—— 等于当面告诉评审这功能没做完。）
+- 🚨 **凡是被「兜底 / 空态」掩盖的故障，必须有直接断言。**
+  本项目连续踩了三次同一类坑，每次都是**回归全绿但用户看到的东西是坏的**：
+  | 故障 | 被什么掩盖 | 现在的直接断言 |
+  |---|---|---|
+  | 图片全挂（`/m/api/files/*`） | `@error` 把破图画成正常色块 | `G4a/G4b` 查**网络响应**，不看 DOM |
+  | 请求失败 | `catch` 清空数组 → 空态 | `H1~H6` 断网后断言出现「重试」而非空态话术 |
+  | 回复读错字段（恒空） | 渲染成空态「还没有回复」 | `B13~B20` **拿接口条数对 DOM 条数** |
+  判据要落在**事实**上（网络响应、接口返回的条数），而不是「页面上有没有这个元素」——
+  因为这类故障的特征恰恰是「页面看起来很正常」。
 
 
 ## 视觉基调

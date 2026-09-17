@@ -135,5 +135,81 @@ check('F3 HTML 单段多句 → point', '<p>前期要多刷野。中期别单带
   titles: ['前期要多刷野', '中期别单带太深', '后期别硬打团']
 })
 
+/**
+ * 结构性断言 —— 验 `intro` / `section` / `truncated` 这些**不是标题数组**的字段。
+ * 单靠上面那种「比标题数组」的方式抓不到「内容被悄悄切掉」。
+ */
+function checkShape(name, input, verify) {
+  let ok = false
+  let detail = ''
+  try {
+    const r = parseReading(input)
+    const res = verify(r)
+    if (res === true) {
+      ok = true
+      detail = 'ok'
+    } else {
+      ok = !!(res && res.ok)
+      detail = (res && res.detail) || JSON.stringify(r && { kind: r.kind })
+    }
+  } catch (e) {
+    detail = '断言异常：' + e.message
+  }
+  if (ok) pass += 1
+  else fail += 1
+  console.log(`${ok ? '✅' : '❌'} ${name}\n     ${detail}`)
+}
+
+console.log('\n===== G. 内容保全（导语 / 分组 / 不截断）=====')
+/**
+ * 🚨 这一组针对 2026-09-17 内容富化后暴露的三处**静默丢内容** ——
+ *   导语被丢、分组标题被丢、条目超过 12 条被硬截断。
+ *   它们都不报错、不空屏，只是让用户看到一篇「看起来完整、其实少了内容」的文章，
+ *   比报错危险得多。所以必须有**直接**断言，而不是只数卡片张数。
+ */
+checkShape('G1 首个条目之前的内容保留为 intro（原来丢弃）', 'DLC 的难度是按你打完本体的后期强度设计的。\n1. 把等级推到 130 以上\n2. 圣杯瓶强化到 +8', (r) =>
+  r && r.kind === 'step' && r.intro.includes('DLC 的难度') && r.items.length === 2
+    ? true
+    : { ok: false, detail: `intro=「${r && r.intro}」 items=${r && r.items.length}` }
+)
+
+checkShape('G2 「【分组】」识别为 section，不占序号也不丢', '【第一梯队：不做会直接卡关】\n1. 把等级推到 130 以上\n2. 圣杯瓶强化到 +8\n【第二梯队：显著降低难度】\n3. 拿到减伤护符\n4. 备一套抗性护甲', (r) =>
+  r &&
+  r.items.length === 4 &&
+  r.items[0].section === '第一梯队：不做会直接卡关' &&
+  r.items[2].section === '第二梯队：显著降低难度'
+    ? true
+    : {
+        ok: false,
+        detail: `items=${r && r.items.length} sections=${JSON.stringify(r && r.items.map((x) => x.section))}`
+      }
+)
+
+checkShape(
+  'G3 条目超过 12 条不再被硬截断',
+  Array.from({ length: 18 }, (_, i) => `${i + 1}. 第 ${i + 1} 条要点内容`).join('\n'),
+  (r) =>
+    r && r.items.length === 18 && r.truncated === false && r.omitted === 0
+      ? true
+      : { ok: false, detail: `items=${r && r.items.length} truncated=${r && r.truncated} omitted=${r && r.omitted}` }
+)
+
+checkShape(
+  'G4 长条目拆成「标题 + 描述」，一个字都不丢',
+  '1. 把等级推到 130 以上。这不是玄学，DLC 的敌人基础血量与伤害是按一个明确曲线拉的，中期配置会非常难受\n2. 圣杯瓶强化到 +8 以上。DLC 里的长距离探索段明显变多',
+  (r) => {
+    if (!r || r.items.length !== 2) return { ok: false, detail: `items=${r && r.items.length}` }
+    const first = r.items[0]
+    const full = (first.title || '') + (first.desc || '')
+    return full.length > 40 && full.includes('明确曲线') && first.title.length <= 30
+      ? true
+      : { ok: false, detail: `title=「${first.title}」 desc 长度=${(first.desc || '').length}` }
+  }
+)
+
+checkShape('G5 无导语时 intro 是空串（不是 undefined）', '1. 打开设置\n2. 调整画质\n3. 重启游戏', (r) =>
+  r && r.intro === '' && r.truncated === false ? true : { ok: false, detail: `intro=${JSON.stringify(r && r.intro)}` }
+)
+
 console.log(`\n=== 结果：${pass}/${pass + fail} 通过 ===`)
 process.exit(fail === 0 ? 0 : 1)

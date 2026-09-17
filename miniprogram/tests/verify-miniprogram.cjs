@@ -181,6 +181,103 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
   assert('B11 打开不存在的帖子 → 失败态而非永久骨架屏', (await count('.err')) >= 1 && (await count('.sk')) === 0, `err=${await count('.err')}`)
   assert('B12 失败态给出了原因', /已被删除|隐藏|不存在|网络/.test(deadTxt), '')
 
+  /* ========== B-reply. 详情页回复区 ==========
+     🚨 2026-09-17 修的 P0：`GET /posts/{id}/replies` 的 `Result.data` 是**裸数组**，
+       而详情页按分页体读 `.records` / `.total` ⇒ 两者恒为 undefined ⇒
+       回复区永远「还没有回复」、标题永远「回复 0」。线上 27 条的讨论串一条都看不到。
+     这个盲区与 G4（图片）是同一类毛病：**故障被空态伪装成「本来就没有」**。
+       所以下面必须**拿接口返回的条数去对 DOM** —— 只断言「有没有 .reply 元素」抓不到它，
+       因为真正的坏法是「元素一个都没有，但页面看起来很正常」。
+  */
+  console.log('\n--- B-reply. 详情页回复区（含楼中楼）---')
+  const rp = await page.evaluate(async () => {
+    const r = await fetch('/api/posts?sort=reply&current=1&size=1').then((x) => x.json())
+    const p = r.data.records[0]
+    const rep = await fetch(`/api/posts/${p.id}/replies`).then((x) => x.json())
+    const list = Array.isArray(rep.data) ? rep.data : (rep.data && rep.data.records) || []
+    return {
+      id: p.id,
+      replyCount: p.replyCount,
+      apiN: list.length,
+      nested: list.filter((x) => x.replyToName).length,
+      floors: list.filter((x) => x.floor).length
+    }
+  })
+  await goto(`/pages/post/detail?id=${rp.id}`)
+  const replyHead = await text('.mp-sec__title')
+  const replyN = await count('.reply')
+  assert(
+    'B13 回复标题显示真实条数',
+    replyHead.includes(String(rp.replyCount)),
+    `页面「${replyHead}」 接口 replyCount=${rp.replyCount}`
+  )
+  assert('B14 回复真的渲染出来了（不再是恒空）', replyN > 0, `DOM=${replyN} 接口=${rp.apiN}`)
+  assert('B15 有回复时不得出现「还没有回复」', !(await page.content()).includes('还没有回复'))
+
+  const REPLY_PAGE = 12
+  const expectN = Math.min(rp.apiN, REPLY_PAGE)
+  assert('B16 默认只渲染前 12 条（长讨论串不撑爆页面）', replyN === expectN, `DOM=${replyN} 期望=${expectN} 接口=${rp.apiN}`)
+  if (rp.apiN > REPLY_PAGE) {
+    assert('B17 出现「展开全部 N 条」', (await text('.more')).includes(String(rp.apiN)), (await text('.more')).trim())
+    await page.click('.more')
+    await sleep(1000)
+    const expanded = await count('.reply')
+    assert('B18 点「展开全部」后渲染完整', expanded === rp.apiN, `DOM=${expanded} 接口=${rp.apiN}`)
+  } else {
+    assert('B17 回复未超一页，无需展开', true, `apiN=${rp.apiN}`)
+    assert('B18 回复未超一页，无需展开', true, `apiN=${rp.apiN}`)
+  }
+  assert('B19 渲染楼层号 #N', rp.floors === 0 ? true : (await count('.reply__floor')) > 0, `含 floor 的回复=${rp.floors}`)
+  assert('B20 楼中楼标出「回复 @某人」', rp.nested === 0 ? true : (await count('.reply__to')) > 0, `嵌套回复=${rp.nested}`)
+  await page.screenshot({ path: path.join(SHOTS, 'B-reply.png') })
+
+  /* ========== B-card. 拆解卡不得静默丢内容 ==========
+     原实现三处静默丢失（内容富化后才暴露）：
+       ① `MAX_ITEMS=12` 硬截断 —— 线上那篇原文有 16 条，第 13~16 条整段消失；
+       ② 首个条目之前的**导语**被直接丢弃；
+       ③ `【第一梯队：…】` 这类**分组标题行**被丢弃，12 张平等的卡看不出层次。
+     `stepParser.test.mjs` 只能验解析规则，**验不了「线上真实长文是否被切少了」**，
+     所以这里直接拿线上最长的那类帖子对数量。
+  */
+  console.log('\n--- B-card. 拆解卡：导语 / 分组 / 不截断 ---')
+  const deep = await page.evaluate(async () => {
+    // ⚠️ 必须**分页**抓：后端对 size 有上限 100（传 200/500 同样只回 100 条），
+    //    而「【第一梯队…】+ 编号条目」这种结构集中在攻略板块后段（长文是最后一批入库的），
+    //    只抓一页会取不到候选 —— 那不是功能坏了，是取样没取到。
+    for (let cur = 1; cur <= 4; cur++) {
+      const r = await fetch(`/api/posts?boardId=1&current=${cur}&size=100`).then((x) => x.json())
+      const rec = (r.data && r.data.records) || []
+      for (const p of rec) {
+        const plain = String(p.content || '').replace(/<[^>]+>/g, '')
+        const blocks = plain.split(/\n+/).map((s) => s.trim()).filter(Boolean)
+        const pureSec = blocks.filter((b) => /^【[^】]{1,24}】$/.test(b))
+        const numbered = blocks.filter((b) => /^\s*\d{1,2}\s*[.、)）]/.test(b))
+        if (pureSec.length >= 2 && numbered.length >= 2) {
+          return { id: p.id, secs: pureSec.length, numbered: numbered.length, title: p.title }
+        }
+      }
+      if (!rec.length) break
+    }
+    return null
+  })
+  if (deep) {
+    await goto(`/pages/post/detail?id=${deep.id}`)
+    const secN = await count('.sect')
+    assert('B21 原文的分组标题渲染成小节（不再被丢弃）', secN >= 2, `sect=${secN} 原文分组=${deep.secs}`)
+    assert('B22 导语段被保留（不再「首个序号之前直接丢弃」）', (await count('.intro')) >= 1)
+    const cardN = await count('.step')
+    // 关键：原来 MAX_ITEMS=12 会把 16 条切到 12 条，且**页面完全看不出来**
+    if (deep.numbered >= 13) {
+      assert('B23 卡片数突破旧上限 12（不再静默截断）', cardN >= 13, `DOM=${cardN} 原文编号条目=${deep.numbered}`)
+    } else {
+      assert('B23 候选帖条目不足 13，无法验证截断', true, `numbered=${deep.numbered}`)
+    }
+    assert('B24 未触发截断时不显示「已省略」', !(await page.content()).includes('已省略'))
+    await page.screenshot({ path: path.join(SHOTS, 'B-card.png') })
+  } else {
+    for (const n of ['B21', 'B22', 'B23', 'B24']) assert(`${n} 依赖带分组的帖子`, false, '本次未取到候选')
+  }
+
   /* ================= C. 游戏库 ================= */
   console.log('\n--- C. 游戏库 ---')
   await goto('/pages/games/games')
@@ -190,17 +287,28 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
   await page.screenshot({ path: path.join(SHOTS, 'C-games.png') })
 
   // 筛选 PC
+  // 🚨 原来断言「数量必须变化」，这是个**脆弱**判据：PC 是最大的平台，
+  //    第一页只有 12 个位置，筛选前后条数完全可能都是 12（游戏库涨到 80 款后就这样了）
+  //    —— 功能完全正常却报红。改成核对**请求真的带上了 platform 参数**，与数据分布无关。
   const chips = await page.$$('.chip')
+  let pcChip = null
   for (const c of chips) {
-    const t = (await c.innerText()).trim()
-    if (t === 'PC') {
-      await c.click()
-      break
-    }
+    if ((await c.innerText()).trim() === 'PC') pcChip = c
   }
-  await sleep(2200)
+  const [pcReq] = await Promise.all([
+    page
+      .waitForRequest((r) => r.url().includes('/api/games') && /platform=pc/i.test(r.url()), { timeout: 9000 })
+      .catch(() => null),
+    pcChip ? pcChip.click() : Promise.resolve()
+  ])
+  await sleep(2000)
   const gPc = await count('.gitem')
-  assert('C3 选「PC」后列表刷新且数量变化', gPc > 0 && gPc !== g0, `before=${g0} after=${gPc}`)
+  assert(
+    'C3 选「PC」后请求带上 platform=PC',
+    !!pcReq,
+    pcReq ? pcReq.url().replace(/^https?:\/\/[^/]+/, '') : '未捕获到筛选请求'
+  )
+  assert('C3b 筛选后仍有结果', gPc > 0, `gitem=${gPc}`)
   await page.screenshot({ path: path.join(SHOTS, 'C-games-pc.png') })
 
   // 上拉加载（current 自增）—— 单独用一次**干净导航**，避免与上面的筛选相互干扰
@@ -319,6 +427,21 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
   assert('H3 点重试后恢复出数据', (await count('.gitem')) >= 10, `gitem=${await count('.gitem')}`)
   assert('H4 恢复后失败态消失', (await count('.err')) === 0)
   await page.screenshot({ path: path.join(SHOTS, 'Z-recovered-games.png') })
+
+  // H5/H6 「回复加载失败」不得伪装成「没有回复」—— 与 G4（图片）同类：
+  //      故障被空态/兜底说成「本来就没有」，用户与评审都看不出来。
+  //      只 abort `/replies`，正文必须照常可读（回复失败不该拖垮整页）。
+  const rpId = await page.evaluate(async () => {
+    const r = await fetch('/api/posts?sort=reply&current=1&size=1').then((x) => x.json())
+    return r.data.records[0].id
+  })
+  await page.route('**/replies**', (r) => r.abort())
+  await goto(`/pages/post/detail?id=${rpId}`)
+  const offBody = await page.content()
+  assert('H5 回复失败 → 不说成「还没有回复」', !offBody.includes('还没有回复'), offBody.includes('还没有回复') ? '把故障说成了事实' : '')
+  assert('H6 回复失败不拖垮正文（仍能读到内容）', (await count('.step')) + (await count('.content__p')) > 0)
+  await page.screenshot({ path: path.join(SHOTS, 'Z-offline-reply.png') })
+  await page.unroute('**/replies**')
 
   await browser.close()
   console.log(`\n=== 结果：${pass}/${pass + fail} 通过 ===`)

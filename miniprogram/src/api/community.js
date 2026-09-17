@@ -39,9 +39,24 @@ export const fetchPosts = ({ boardId, gameId, sort = SORT.LATEST, current = 1, s
 /** 帖子详情（`view` 传 true 时后端会自增浏览数） */
 export const fetchPostDetail = (id) => get(`/posts/${id}`)
 
-/** 回帖列表 */
-export const fetchReplies = (postId, { current = 1, size = 20 } = {}) =>
-  get(`/posts/${postId}/replies`, { current, size })
+/**
+ * 回帖列表 —— **返回已归一化的 `{ records, total }`**。
+ *
+ * 🚨 2026-09-17 实测（P0）：`GET /posts/{id}/replies` 的 `Result.data` 是**裸数组**，
+ *   不是分页体（且 `current` / `size` 会被服务端忽略，一次给全部 27 条）。
+ *   详情页原来按分页体读 `r.records` / `r.total` ⇒ 两个字段恒为 `undefined`
+ *   ⇒ 回复区永远渲染「还没有回复」、标题永远「回复 0」，
+ *   27 条回复的讨论串**一条都看不到**，而且它伪装成正常的空态，线上挂了很久没人发现。
+ *
+ * 处理方式：在**这一层**归一化，调用方拿到的形状永远一致；
+ *   同时保留对分页体的兼容 —— 后端将来真改成 PageResult 也不会再让页面空掉。
+ */
+export const fetchReplies = async (postId, { current = 1, size = 100 } = {}) => {
+  const raw = await get(`/posts/${postId}/replies`, { current, size })
+  const records = Array.isArray(raw) ? raw : (raw && raw.records) || []
+  const total = !Array.isArray(raw) && raw && raw.total ? raw.total : records.length
+  return { records, total }
+}
 
 /** 帖子标签 */
 export const fetchPostTags = (postId) => get(`/posts/${postId}/tags`)
