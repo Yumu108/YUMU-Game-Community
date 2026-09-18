@@ -80,7 +80,15 @@ const pick = (obj, keys) => keys.reduce((o, k) => { o[k] = obj?.[k]; return o },
     await ins.nth(0).fill(user)
     await ins.nth(1).fill(pwd)
     await page.click('.submit')
-    await page.waitForTimeout(2000)
+    // ⚠️ 别用固定 sleep：本机几百 ms，线上（走公网）可能要好几秒 —— 固定 2s 会让
+    //    「线上验收」偶发假失败。这里轮询等 token 落地，最多 20s。
+    for (let i = 0; i < 20; i++) {
+      await page.waitForTimeout(1000)
+      if (await page.evaluate(() => !!localStorage.getItem('token'))) return
+    }
+    const toast = await page.evaluate(() =>
+      [...document.querySelectorAll('.el-message')].map((e) => e.textContent.trim()).join(' | '))
+    console.log('  ⚠️ 未拿到 token，页面提示：', toast || '(无)')
   }
   const openSettings = async () => {
     await page.goto(BASE + '/my', { waitUntil: 'domcontentloaded' }).catch(() => {})
