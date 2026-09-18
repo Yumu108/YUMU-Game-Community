@@ -697,6 +697,19 @@ export async function getUserProfile(id) {
 }
 
 // ---- 修改个人资料（昵称/头像/签名/爱好/常看板块） ----
+/**
+ * ⚠️ 返回值**不是**一份完整的用户信息 —— 别拿它整体覆盖 userStore.userInfo！
+ *
+ * 后端 `PUT /users/me/profile` 走的是 `UserServiceImpl.toVO()`，那份 UserInfoVO：
+ *   · `badge` / `badgeColor` / `badgeText` / `activityTitle` —— 完全不 set（null）
+ *   · `roles` —— 恒为 `List.of()`（空数组）
+ *   · 其余（username/nickname/email/bio/points/moderator*…）才有值
+ * 只有 `GET /auth/me`（`AuthServiceImpl.toVO()`）才会跑 BadgeService 算徽章、查真实角色。
+ *
+ * 踩过的坑（9-18）：保存资料后手写白名单覆盖 store，既漏了 username，
+ * 又差点把 badge/roles 抹掉 ⇒ 「账号id:—」空白 + 管理员标消失。
+ * ⇒ 保存成功后请用 `syncMe()`（GET /auth/me）做权威校正，不要从本返回值拼 store。
+ */
 export async function updateProfile(payload) {
   const res = await request.put('/users/me/profile', payload)
   return res.data || {}

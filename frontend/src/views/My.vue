@@ -759,19 +759,40 @@ async function saveProfile() {
       favoriteGameIds: (profileForm.value.favGameIdsArr || []).join(',')
     }
     const updated = await updateProfile(payload)
-    // 同步到 store / localStorage（保留原有字段，并补回 name）
+    // 🚨 9-18 修：这里原先手写了一个「只含 7 个字段的白名单」对象去整体覆盖 store，
+    //    没有展开 base —— 保存资料后 username / nickname / badge / email /
+    //    canChangeUsername / nextUsernameChangeAt / moderator* 全被静默抹掉，
+    //    用户看到的就是（实测截图完全吻合）：
+    //      · 用户卡片「账号id:—」空白、🛡️ 管理员标消失
+    //      · 右侧「当前账号」变空白
+    //      · 改账号入口因 canChangeUsername 变 undefined（falsy）被判成
+    //        「今年已改过」而锁死，提示「账号每年可修改一次，下次可修改时间：」后无值
+    //    ⚠️ 后端数据一直是好的，这是纯前端展示态丢失 —— 刷新页面/重新登录即自愈
+    //       （onMounted → syncMe() 会用 /auth/me 补全），所以表现得像"账号被改坏了"。
+    //    坑根：Login.vue 9-16 已踩过同一类（只写昵称没写账号），这是孪生位置。
+    //
+    //    ⚠️ 注意：**不能**直接用 updateProfile 的返回值整体覆盖 store！
+    //       PUT /users/me/profile 走的是 UserServiceImpl.toVO()，那份 VO
+    //       **不含 badge、roles 恒为 []**（与 GET /auth/me 的 AuthServiceImpl.toVO
+    //       不是同一个实现）。照搬会把「管理员」徽章抹成 null、roles 抹成空数组，
+    //       连带 isAdmin/isModerator 这些权限 getter 一起失效 —— 问题比现在还大。
+    //
+    //    所以这里分两步（既不漏字段、也不信任不完整的返回值）：
+    //      ① patchUserInfo 做**合并**写回的乐观更新，保证点保存后界面立刻变；
+    //      ② 再用权威接口 /auth/me 重拉一次校正（与 onMounted 走同一条 syncMe()）。
     const base = userStore.userInfo || {}
-    const merged = {
-      id: base.id,
+    userStore.patchUserInfo({
       name: updated.nickname || base.name,
+      nickname: updated.nickname,
       avatar: updated.avatar || base.avatar,
-      roles: base.roles,
-      bio: updated.bio ?? base.bio,
-      favoriteBoardIds: updated.favoriteBoardIds ?? base.favoriteBoardIds,
-      favoriteGameIds: updated.favoriteGameIds ?? base.favoriteGameIds,
-      favoriteGames: updated.favoriteGames ?? base.favoriteGames
-    }
-    userStore.setUserInfo(merged)
+      bio: updated.bio,
+      favoriteBoardIds: updated.favoriteBoardIds,
+      favoriteGameIds: updated.favoriteGameIds,
+      favoriteGames: updated.favoriteGames
+    })
+    // ② 权威校正：补齐 username / badge / roles / canChangeUsername / moderator* 等
+    //    只有 /auth/me 才有的字段。失败不抛（资料已保存成功，不该因此报错）。
+    await syncMe()
     ElMessage.success('资料已保存')
   } catch (e) {
     ElMessage.error(e?.response?.data?.message || '保存失败')

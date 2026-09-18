@@ -53,9 +53,38 @@ export const useUserStore = defineStore('user', {
       this.token = token
       localStorage.setItem('token', token)
     },
+    /**
+     * ⚠️ 整体覆盖 userInfo —— **只允许在登录/注册拿到全新用户对象时用**。
+     *    其它「改完某个字段再写回」的场景一律用下面的 patchUserInfo()。
+     */
     setUserInfo(info) {
       this.userInfo = info
       localStorage.setItem('userInfo', JSON.stringify(info))
+    },
+    /**
+     * 🚨 局部更新用户信息（合并写回）。**新增「登录后要用」的字段时优先用它**，
+     *    不要自己手写一个白名单对象去调 setUserInfo —— 整体覆盖会把白名单里
+     *    没列出的字段（username / nickname / badge / email / roles /
+     *    canChangeUsername / nextUsernameChangeAt / moderator* …）**静默抹掉**。
+     *
+     *    同一个坑踩过两次，症状完全一样（像是"账号被改坏了"，其实后端数据一直是好的）：
+     *      · 9-16 Login.vue：只写了昵称没写账号 ⇒ 个人中心左栏「账号id:—」、「当前账号」空白
+     *      · 9-18 My.vue 保存资料：手写 7 字段白名单 ⇒ 「账号id:—」+ 管理员标消失 +
+     *        改账号入口被误判成「今年已改过」而锁死
+     *    两者都是**刷新 / 重新登录就自愈**（onMounted 的 syncMe() 会用 /users/me 补全），
+     *    所以更像"账号出问题了"，实际只是前端内存里那份用户信息被覆盖残了。
+     *
+     * @param {object} partial 只写要改的字段，其余原样保留
+     */
+    patchUserInfo(partial = {}) {
+      // 🚨 过滤掉 undefined：调用方常写 `nickname: updated.nickname`，而接口未必返回该字段；
+      //    若让 undefined 参与合并，会把 base 里已有的值覆盖成空 —— 那正是本次 bug 的
+      //    另一种触发方式。这里等价于旧代码里逐个 `?? base.xxx` 的语义，但不用再手写。
+      //    （null 会被保留：它代表"接口明确说这个字段为空"，例如清空个性签名。）
+      const clean = Object.fromEntries(
+        Object.entries(partial).filter(([, v]) => v !== undefined)
+      )
+      this.setUserInfo({ ...(this.userInfo || {}), ...clean })
     },
     /**
      * 同步积分 + 今日签到状态。
