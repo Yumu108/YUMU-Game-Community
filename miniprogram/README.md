@@ -285,6 +285,11 @@ python tools/gen-tabbar-icons.py     # → src/static/tabbar/*.png（81×81，�
   因为这类故障的特征恰恰是「页面看起来很正常」。
   📌 历史教训：上一版这里还写着「`B13~B20` 拿接口条数对 DOM 条数」——那是**回复区**的断言。
   定位调整后回复区已按产品口径移除，该组断言随之变成「回复元素必须为 0」（`B16~B18`）。
+12. 🚨 **微信 AppID 不进 Git**（2026-09-18 GitHub 密钥扫描告警后清史重写）。
+   仓库里 `src/manifest.json` 的 `mp-weixin.appid` **永远是 `""`**；真实 AppID 只存本机
+   `.env.local`（已被 `.gitignore` 覆盖）。要用微信开发者工具 / 出 mp-weixin 包时：
+   `npm run appid:inject` 注入 → 用完 `npm run appid:restore` 还原（**提交/发版前必须还原**，
+   否则工作区脏会被拒发）。别再手写 `"appid": "wx…"` 进任何被跟踪的文件。
 
 
 ## 视觉基调
