@@ -18,6 +18,8 @@
  *     且「相关攻略」接住了原本在页面底部的位置（读完有下一条，而不是只有返回）。
  *  ③ **H5 宽屏**：主交付渠道是 H5，1440px 下内容栏必须有宽度上限（原来被拉到 1412px）。
  *  ④ 沿用既有的「故障 ≠ 空数据」纪律：断网时必须出失败态 + 重试，不能说成「没有内容」。
+ *  ⑤ **R 组（2026-09-20 新增）**：主动制造「静默空响应 / 历史坏缓存」这两种事故环境，
+ *     验证平台分类不再被一份空数据锁死（详见文件末尾 R 段注释）。
  */
 const path = require('path')
 const fs = require('fs')
@@ -65,6 +67,10 @@ const LABEL_TO_VALUE = { 手游: '手机', 多平台: '多平台', PC: 'PC', 主
       fileReqs.push({ url: u, status: r.status(), ct: r.headers()['content-type'] || '' })
     }
   })
+
+  // 全程收集请求 URL：R0 用它扫「query 里有没有 undefined 串」（2026-09-20 事故入口）
+  const allReqUrls = new Set()
+  page.on('request', (r) => allReqUrls.add(r.url()))
 
   const count = async (sel) => page.$$eval(sel, (els) => els.length)
   const text = async (sel) => ((await page.$(sel)) ? await page.$eval(sel, (el) => el.innerText) : '')
@@ -171,6 +177,14 @@ const LABEL_TO_VALUE = { 手游: '手机', 多平台: '多平台', PC: 'PC', 主
   })
   assert('A6 各平台按钮数字 = 接口独立统计', badCount.length === 0, badCount.join('；') || JSON.stringify(pageCounts))
   assert('A7 「全部」数字 = 干货池总量', pageCounts['全部'] === truth.total, `页面=${pageCounts['全部']} 接口=${truth.total}`)
+  // A7b：每一篇都必须有平台归属（各档之和 = 全部）。事故态下四档全是 0、只剩「全部 254」，
+  //      这条会立刻报红；同时也防「平台映射漏了一批 gameId」这种半坏的情况。
+  const platSum = Object.keys(LABEL_TO_VALUE).reduce((n, label) => n + (pageCounts[label] || 0), 0)
+  assert(
+    'A7b 各平台篇数之和 = 干货池总量（无「平台未知」的漏网帖子）',
+    platSum === truth.total,
+    `和=${platSum} 全部=${truth.total}`
+  )
 
   assert('A8 首屏渲染帖子卡', (await count('.pc')) >= 8, `pc=${await count('.pc')}`)
   assert('A9 首屏卡片带平台角标', (await count('.pc__plat')) >= 8, `plat=${await count('.pc__plat')}`)
@@ -408,8 +422,41 @@ const LABEL_TO_VALUE = { 手游: '手机', 多平台: '多平台', PC: 'PC', 主
   await goto('/pages/games/games')
   assert('C1 游戏列表渲染', (await count('.gitem')) >= 10, `gitem=${await count('.gitem')}`)
   assert('C2 平台筛选条 5 档', (await count('.pf__btn')) === 5)
+
+  // 🚨 C2a-C2c（2026-09-20「分类全 0」事故新增）：这三条锁的是**数字本身是不是真的**。
+  //    事故里页面把「全部 0 / 各平台 0」渲染得毫无异常（不报错、有空态文案），
+  //    纯看 DOM 结构完全看不出问题 —— 必须把「数字与独立算出来的总量对上」写成断言。
+  const gamesTabTexts = await page.$$eval('.pf__btn', (els) =>
+    els.map((e) => e.innerText.replace(/\s+/g, ' ').trim())
+  )
+  const gCounts = {}
+  gamesTabTexts.forEach((t) => {
+    const m = t.match(/^(\S+)\s*(\d+)?$/)
+    if (m) gCounts[m[1]] = m[2] === undefined ? undefined : Number(m[2])
+  })
+  assert(
+    'C2a 游戏库「全部」数字 = 接口游戏总数',
+    gCounts['全部'] === truth.games,
+    `页面=${gCounts['全部']} 接口=${truth.games}`
+  )
+  const gZero = Object.keys(LABEL_TO_VALUE).filter((label) => !(gCounts[label] > 0))
+  assert('C2b 各平台款数均 > 0（空响应/坏缓存会让它变 0）', gZero.length === 0, gZero.join(',') || JSON.stringify(gCounts))
+  const gSum = Object.keys(LABEL_TO_VALUE).reduce((n, label) => n + (gCounts[label] || 0), 0)
+  assert(
+    'C2c 各平台款数之和 ≤ 全部（未重复计数，且有平台归属）',
+    gSum > 0 && gSum <= (gCounts['全部'] || 0),
+    `和=${gSum} 全部=${gCounts['全部']}`
+  )
+
   const genreN = await count('.chip')
-  assert('C3 类型筛选条渲染（含「全部类型」）', genreN >= 6, `chip=${genreN}`)
+  // C3a/C3b：「全部类型」这个占位 chip 已按用户反馈移除（清空类型改为再点一次已选类型）
+  assert('C3a 类型筛选条渲染（≥6 种，且无「全部类型」占位）', genreN >= 6, `chip=${genreN}`)
+  const chipTexts = await page.$$eval('.chip', (els) => els.map((e) => e.innerText.replace(/\s+/g, '')))
+  assert(
+    'C3b 类型 chip 不再有「全部类型」',
+    !chipTexts.some((t) => t.startsWith('全部类型')),
+    chipTexts.slice(0, 4).join(' | ')
+  )
   await page.screenshot({ path: path.join(SHOTS, 'C-games.png') })
 
   // 筛选 PC —— 判据是「请求真的带上了 platform=PC」，与数据分布无关（原来断言数量变化太脆）
@@ -428,13 +475,13 @@ const LABEL_TO_VALUE = { 手游: '手机', 多平台: '多平台', PC: 'PC', 主
   assert('C4 选「PC」后请求带上 platform=PC', !!pcReq, pcReq ? pcReq.url().replace(/^https?:\/\/[^/]+/, '') : '未捕获到筛选请求')
   assert('C5 筛选后仍有结果', (await count('.gitem')) > 0, `gitem=${await count('.gitem')}`)
 
-  // 类型筛选：请求要带上 genre
+  // 类型筛选：请求要带上 genre；**再点一次同一个类型 = 取消**（原「全部类型」按钮的替代交互）
   await goto('/pages/games/games')
   const genreChips = await page.$$('.chip')
   let someGenre = null
   for (const c of genreChips) {
     const t = (await c.innerText()).replace(/\s+/g, '')
-    if (!t.startsWith('全部类型')) {
+    if (/\d$/.test(t)) {
       someGenre = { el: c, name: t.replace(/\d+$/, '') }
       break
     }
@@ -446,8 +493,24 @@ const LABEL_TO_VALUE = { 手游: '手机', 多平台: '多平台', PC: 'PC', 主
     ])
     await sleep(1600)
     assert('C6 选类型后请求带上 genre 参数', !!gReq, `类型=${someGenre.name}`)
+
+    // C6b：选中态角标从「数量」变成「✕」（告诉用户可再点一次取消）
+    const onChip = await page.$$eval('.chip--on', (els) => els.map((e) => e.innerText.replace(/\s+/g, '')))
+    assert('C6b 选中的类型 chip 显示 ✕（可取消的可见提示）', onChip.length === 1 && onChip[0].includes('✕'), onChip.join('|'))
+
+    // C6c：再点一次 = 清空类型，请求里不再带 genre=真实类型值
+    const [clearReq] = await Promise.all([
+      page.waitForRequest((r) => r.url().includes('/api/games') && !/genre=[^&\s]/.test(r.url()), { timeout: 9000 }).catch(() => null),
+      (await page.$('.chip--on')) ? (await page.$('.chip--on')).click() : Promise.resolve()
+    ])
+    await sleep(1200)
+    assert('C6c 再点一次取消类型筛选（请求不再带 genre）', !!clearReq, clearReq ? clearReq.url().replace(/^https?:\/\/[^/]+/, '') : '未捕获到清空请求')
+    assert('C6d 取消后没有选中态 chip', (await count('.chip--on')) === 0)
   } else {
     assert('C6 选类型后请求带上 genre 参数', false, '没找到类型 chip')
+    assert('C6b 选中的类型 chip 显示 ✕（可取消的可见提示）', false)
+    assert('C6c 再点一次取消类型筛选（请求不再带 genre）', false)
+    assert('C6d 取消后没有选中态 chip', false)
   }
   await page.screenshot({ path: path.join(SHOTS, 'C-games-genre.png') })
 
@@ -745,6 +808,95 @@ const LABEL_TO_VALUE = { 手游: '手机', 多平台: '多平台', PC: 'PC', 主
     `opened=${JSON.stringify(opened)}`
   )
   await page.screenshot({ path: path.join(SHOTS, 'L-register-agree.png') })
+
+  /* ================= R. 「平台分类全 0」事故回归（2026-09-20） =================
+   * 真机事故的完整链条（详见 miniprogram/src/utils/apiGuard.js 头部复盘）：
+   *   ① query 里混进 `undefined` → 被后端当成真筛选值 ⇒ `code:200` + `records:[]` 的**空成功**；
+   *   ② 元数据缓存不校验内容 ⇒ 把「80 款游戏」缓存成「0 款」（map:{}，TTL 24h）；
+   *   ③ 帖子索引（TTL 10min）拿空映射反复重建 ⇒ 254 篇平台归属全落成 '' ⇒ 每个平台都是 0。
+   *
+   * 🚨 为什么原来那 94 项全绿却漏了这个：**H5 每次都是干净存储**，
+   *    一上来就重新同步，永远走不到「读坏缓存」那条路；而真机上缓存是持久的。
+   *    所以本节**主动制造事故环境**（注入空响应 / 注入坏缓存），把修复行为钉死：
+   *      R1 空响应不落盘、页面明说失败（而不是安静地把「全部」显示成 0）
+   *      R2 历史坏缓存（map:{}）读时判废 ⇒ 自动重新同步 ⇒ 数字自愈
+   *      R3 全程请求 query 里不出现 "undefined"
+   */
+  console.log('\n--- R. 静默空响应 / 坏缓存自愈 ---')
+
+  // R0：全局扫一遍真实请求 —— query 里不许出现 `=undefined`
+  const undefUrls = Array.from(allReqUrls).filter((u) => /[?&][^=]+=undefined(&|$)/.test(u))
+  assert('R0 全程请求 query 无 undefined（cleanParams 生效）', undefUrls.length === 0, undefUrls.slice(0, 3).join(' , ') || `${allReqUrls.size} 个请求已扫`)
+
+  const rCtx = await browser.newContext({ viewport: { width: 390, height: 844 } })
+  const rPage = await rCtx.newPage()
+  const readMetaCache = () =>
+    rPage.evaluate(() => {
+      const raw = localStorage.getItem('yumu_game_platform_v2')
+      if (!raw) return null
+      let v = raw
+      try { v = JSON.parse(raw) } catch (e) {}
+      if (v && v.data !== undefined) v = v.data // uni-app H5 的 {type,data} 信封
+      return { mapKeys: Object.keys((v && v.map) || {}).length, platforms: (v && v.platforms) || null }
+    })
+
+  // —— 注入「空成功」的游戏元数据响应（只拦 size=100 那次，列表请求照常放行）——
+  let emptyServed = 0
+  await rPage.route('**/api/games**', (route) => {
+    const u = route.request().url()
+    if (/size=100/.test(u)) {
+      emptyServed += 1
+      return route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ code: 200, message: 'ok', data: { current: 1, size: 100, pages: 0, total: 0, records: [] } })
+      })
+    }
+    return route.continue()
+  })
+  await rPage.goto(BASE + '/#/pages/games/games', { waitUntil: 'domcontentloaded' }).catch(() => {})
+  await new Promise((r) => setTimeout(r, 6000))
+  const rWarn = await rPage.$$eval('.warn__text', (els) => els.map((e) => e.innerText.replace(/\s+/g, '')))
+  const rTabs = await rPage.$$eval('.pf__btn', (els) => els.map((e) => e.innerText.replace(/\s+/g, ' ').trim()))
+  const rAllTab = rTabs.find((t) => t.startsWith('全部')) || ''
+  assert('R1a 空响应被拦下：界面明说筛选数据加载失败', rWarn.length >= 1, rWarn.join('|') || '无提示')
+  assert(
+    'R1b 「全部」不显示假的 0（宁可不显示数字）',
+    emptyServed >= 1 && !/\b0\b/.test(rAllTab),
+    `拦截=${emptyServed} 全部档=「${rAllTab}」`
+  )
+  const badCache = await readMetaCache()
+  assert('R2 空结果绝不落盘（缓存里没有空 map）', !badCache || badCache.mapKeys > 0, JSON.stringify(badCache))
+  await rPage.screenshot({ path: path.join(SHOTS, 'R1-empty-response.png') })
+
+  // —— 注入历史坏缓存（空 map + platforms {'':0}，与真机那份形状一致）——
+  await rPage.unroute('**/api/games**')
+  await rPage.evaluate(async () => {
+    const bad = { at: Date.now(), map: {}, genres: [], platforms: { '': 0 } }
+    const uni = window.uni
+    if (uni && uni.setStorageSync) uni.setStorageSync('yumu_game_platform_v2', bad)
+    else localStorage.setItem('yumu_game_platform_v2', JSON.stringify({ type: 'object', data: bad }))
+  })
+  // ⚠️ 本段必须**整页重载**才能触发「读缓存 → 判废 → 重新同步」：query 一定要放在 `#` 之前。
+  //    写错成 `#/pages/xxx?t=…` 只是 hash 变了，SPA 不会重新加载文档、onLoad 不会再跑，
+  //    于是上一段的失败态原样留着 —— 症状就是「自愈断言假失败」（本脚本 2026-09-20 实测踩到）。
+  await rPage.goto(BASE + '/?t=' + Date.now() + '#/pages/games/games', { waitUntil: 'domcontentloaded' }).catch(() => {})
+  await new Promise((r) => setTimeout(r, 7000))
+  const healedTabs = await rPage.$$eval('.pf__btn', (els) => els.map((e) => e.innerText.replace(/\s+/g, ' ').trim()))
+  const healed = {}
+  healedTabs.forEach((t) => {
+    const m = t.match(/^(\S+)\s*(\d+)?$/)
+    if (m) healed[m[1]] = m[2] === undefined ? undefined : Number(m[2])
+  })
+  const healedPlat = ['多平台', 'PC', '主机', '手游'].filter((k) => !(healed[k] > 0))
+  assert('R3a 坏缓存读时判废 → 自动重新同步（不再信任空 map）', healedPlat.length === 0, `档位=${JSON.stringify(healed)}`)
+  assert('R3b 「全部」恢复为真实游戏总数', healed['全部'] === truth.games, `页面=${healed['全部']} 接口=${truth.games}`)
+  const goodCache = await readMetaCache()
+  assert('R3c 重新同步后写入的是完好的映射', !!goodCache && goodCache.mapKeys > 0, JSON.stringify(goodCache))
+  const healedGenres = await rPage.$$eval('.chip', (els) => els.length)
+  assert('R3d 类型条随自愈一起恢复（不再是空条）', healedGenres >= 6, `chip=${healedGenres}`)
+  await rPage.screenshot({ path: path.join(SHOTS, 'R2-self-heal.png') })
+  await rCtx.close()
 
   await browser.close()
   console.log(`\n=== 结果：${pass}/${pass + fail} 通过 ===`)

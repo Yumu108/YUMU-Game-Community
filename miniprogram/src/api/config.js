@@ -60,10 +60,18 @@ export const STORAGE_KEYS = {
   LIKES: 'yumu_likes',
   /** 本机已举报的帖子 id 列表（防重复举报入口，见 utils/store.js） */
   REPORTED: 'yumu_reported',
-  /** 端内聚合索引（帖子池 + 平台归属），见 utils/guideIndex.js */
-  GUIDE_INDEX: 'yumu_guide_index',
-  /** 全部游戏的 `gameId → platform` 映射（变化很慢，单独长缓存） */
-  GAME_PLATFORM: 'yumu_game_platform'
+  /**
+   * 端内聚合索引（帖子池 + 平台归属），见 utils/guideIndex.js。
+   *
+   * 🚨 键名带 `_v2` 是**故意的**（2026-09-20）：v1 曾经把一份「游戏元数据为空」的
+   *   坏缓存（`map:{}`）写进用户真机，导致平台分类整整坏一天、且自愈不了。
+   *   改键名 = 让所有已经中毒的设备**下一次启动就重新同步**，不用等 TTL。
+   *   以后凡改动缓存的**语义或结构**，都照此升版本，别只改 TTL。
+   *   （新代码另有读时校验兜底：`utils/apiGuard.js#isUsableMeta` 会把空 map 判废。）
+   */
+  GUIDE_INDEX: 'yumu_guide_index_v2',
+  /** 全部游戏的 `gameId → platform` 映射（变化很慢，单独长缓存；同样带 `_v2`，理由同上） */
+  GAME_PLATFORM: 'yumu_game_platform_v2'
 }
 
 /**

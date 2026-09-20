@@ -4,6 +4,8 @@
  * 保留的关键行为：
  *  ① 自动注入 `Authorization: Bearer <token>`；
  *  ② **HTTP 状态码恒为 200**，成败一律看响应体的 `code` 字段（后端统一 Result 包装）；
+ *  ②' GET 的 query 统一过 `cleanParams`（丢 `undefined` / `null`）—— 见下方 `payload`，
+ *      `?platform=undefined` 会被后端当成真筛选、静默返回空集，属「看着成功的空响应」；
  *  ③ 401 分三类处理（**与主站 `classify401` 口径一致**，2026-09-17 接入登录时补齐）：
  *     · silent —— `/auth/refresh`、`/auth/logout`：静默失败，绝不弹「登录已过期」刷屏；
  *     · toast  —— `/auth/login`、`/auth/register`、`/auth/email-code`、`/auth/reset-password`：
@@ -18,6 +20,7 @@
  *    活跃会话里收到 401 会自动续签重放，用户无感；闲置超 2h 才需要重新登录。
  */
 import { API_BASE, STORAGE_KEYS } from './config'
+import { cleanParams } from '../utils/apiGuard'
 
 /* ---------------- token / 会话存取 ---------------- */
 
@@ -121,10 +124,16 @@ export function request(opt = {}) {
     const header = { 'Content-Type': 'application/json' }
     if (token) header.Authorization = `Bearer ${token}`
 
+    // 🚨 GET 的 query 必须先过一遍 `cleanParams`（丢 undefined / null）：
+    //    各运行时对 undefined 的序列化行为并不一致（H5 变空串、小程序可能变字符串 "undefined"），
+    //    而本后端会把 `platform=undefined` 当成**真实筛选值** ⇒ 一条都不匹配却仍返回 200/total:0。
+    //    这种「看着成功的空响应」正是「平台分类全 0」事故的入口，见 utils/apiGuard.js 头部复盘。
+    const payload = method === 'GET' ? cleanParams(data) : data
+
     uni.request({
       url: API_BASE + url,
       method,
-      data,
+      data: payload,
       header,
       timeout: 15000,
       success: async (res) => {
