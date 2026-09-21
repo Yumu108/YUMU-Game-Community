@@ -253,7 +253,13 @@ INSERT INTO post_tag (post_id, tag_id) VALUES
 (3031, 5), (3031, 10), (3032, 3), (3033, 6), (3034, 2), (3035, 4), (3036, 1);
 
 -- ---------- 7. 计数与真实行对齐（帖子回帖/点赞、板块/游戏/标签计数） ----------
-UPDATE post p SET reply_count = (SELECT COUNT(*) FROM reply r WHERE r.post_id = p.id AND r.deleted = 0);
+-- 🚨 reply_count 必须只算「可见回帖」= deleted=0 **AND status=0**：
+--    ReplyServiceImpl.setHidden() 隐藏回帖时是 reply_count-1、恢复时 +1，
+--    所以 status=1（被版主/管理员隐藏）的回帖**不计入**。漏掉 status=0 会把隐藏回帖
+--    也数进去 ⇒ 每有一篇隐藏回帖就多 1（2026-09-21 实测：线上 69 篇隐藏回帖 ⇒
+--    68 篇帖的 reply_count 比「仅 deleted=0」口径少 1，曾被误判成数据 bug）。
+--    同口径见 db-seed/gen_seed.py 的 reply_count 重算。
+UPDATE post p SET reply_count = (SELECT COUNT(*) FROM reply r WHERE r.post_id = p.id AND r.deleted = 0 AND r.status = 0);
 UPDATE post p SET like_count  = (SELECT COUNT(*) FROM likes l WHERE l.target_type = 1 AND l.target_id = p.id AND l.deleted = 0);
 UPDATE board b SET post_count = (SELECT COUNT(*) FROM post p WHERE p.board_id = b.id AND p.status = 0 AND p.deleted = 0);
 UPDATE game  g SET post_count = (SELECT COUNT(*) FROM post p WHERE p.game_id = g.id AND p.status = 0 AND p.deleted = 0);
