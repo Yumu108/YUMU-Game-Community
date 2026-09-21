@@ -52,15 +52,24 @@ public class GameController {
         return Result.success(gameService.listHotGames(limit));
     }
 
+    /**
+     * 某游戏的帖子列表 —— 游戏详情页「攻略 / 资讯」两个 Tab 的数据源。
+     *
+     * 🚨 `boardId`（2026-09-21 补上）：此前本方法**没有这个参数**，而小程序一直在传
+     *   `/games/{id}/posts?boardId=1|4`，Spring 会**静默丢弃**未知的查询参数 ——
+     *   于是两个 Tab 拿到一模一样的列表（用户截图反馈「攻略和资讯混在一起了」）。
+     *   这类"参数写了没效果"的故障排查入口：先确认后端方法签名里有没有这个参数。
+     */
     @GetMapping("/{id}/posts")
     public Result<PageResult<PostVO>> posts(
             @PathVariable Long id,
+            @RequestParam(required = false) Long boardId,
             @RequestParam(defaultValue = "1") long current,
             @RequestParam(defaultValue = "10") long size,
             @AuthenticationPrincipal CustomUserDetails details) {
         gameService.getById(id); // 校验游戏可见（禁用/删除 → 404）
         Long uid = details != null ? details.getUserId() : null;
-        return Result.success(postService.pagePostsByGame(id, current, size, uid));
+        return Result.success(postService.pagePostsByGame(id, boardId, current, size, uid));
     }
 
     /** 某游戏的活跃玩家：按在该游戏下的发帖数降序。公开接口（无需登录）。 */

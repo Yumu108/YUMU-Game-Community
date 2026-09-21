@@ -57,7 +57,7 @@
       <EmptyState
         v-if="!filtered.length"
         icon="📰"
-        :text="platform ? `「${platName(platform)}」还没有官方资讯` : '还没有官方资讯'"
+        :text="platform ? `「${platName(platform)}」还没有资讯` : '还没有资讯'"
         sub="换个平台看看"
       />
       <view v-if="filtered.length" class="footer" @click="loadMore">{{ footerText }}</view>
@@ -67,13 +67,14 @@
 
 <script setup>
 /**
- * 资讯页 = **官方情报站**：只看官方账号发布的游戏官方公告（board 4 · type 2）。
+ * 资讯页 = **资讯速递频道**（board 4 全量）。
  *
  * 与首页的关系：两者共用同一份端内索引（`utils/guideIndex.js`）⇒ 切过来**零请求**；
- * 但**内容池互不相交**（2026-09-21 起按发帖账号分流）：
- *   · 本页 = 官方账号的帖（由 `db-seed/fetch_official.py` 抓 Steam 官方公告 + AI 改写）；
- *   · 首页 = 其余全部（攻略心得 + 资讯速递里的玩家投稿）。
- * 改造前本页只是首页的子集（165 篇全部在首页出现过），用户反馈「重复、没用」。
+ * 内容池按板块**硬切、零重叠**（2026-09-21 起）：
+ *   · 本页 = 资讯速递（board 4）全部：官方公告（`db-seed/fetch_official.py` 抓 Steam
+ *     官方公告 + AI 改写）+ 玩家投稿；
+ *   · 首页 = 攻略心得（board 1）全部。
+ * 官方帖默认置顶 + 加精（落库），所以总是排在本页最前。
  *
  * ⚠️ 平台筛选与「今日精选」沿用原逻辑；官方帖也带 gameId ⇒ 平台归类同样有效。
  */
@@ -81,7 +82,7 @@ import { ref, computed } from 'vue'
 import { onLoad, onReachBottom, onPullDownRefresh } from '@dcloudio/uni-app'
 import { ensureIndex, queryIndex, countByPlatform } from '../../utils/guideIndex'
 import { fetchDailyPicks } from '../../api/community'
-import { PLATFORM_TABS, PLATFORM_HINT, SORT, BOARD, OFFICIAL_UID } from '../../api/config'
+import { PLATFORM_TABS, PLATFORM_HINT, SORT, BOARD } from '../../api/config'
 import { platformLabel } from '../../utils/format'
 import PlatformFilter from '../../components/PlatformFilter.vue'
 import PostCard from '../../components/PostCard.vue'
@@ -108,20 +109,26 @@ const visibleCount = ref(PAGE)
 const picks = ref([])
 
 /**
- * 本页的内容池 = 索引里「资讯速递」板块中**由官方账号发布**的帖子。
+ * 本页的内容池 = 索引里 **「资讯速递」(board 4) 的全部帖**。
  *
- * 2026-09-21 改造：本页从「资讯速递板块的分平台视图」变成**独立的官方情报站** ——
- * 只出官方账号（`OFFICIAL_UID`）从游戏官方公告抓取 + 改写而来的资讯；
- * 资讯速递里原有的玩家投稿**留在首页攻略页**，两边不再重叠。
+ * 🚨 2026-09-21 二次调整（口径变更，别再按老注释理解）：
+ *   上一版本页是「官方情报站」—— 只出官方账号从游戏官网抓取改写的公告，
+ *   资讯速递里的玩家投稿被推回首页。但首页当时是「攻略心得 + 资讯速递」聚合，
+ *   于是「攻略」里能看到资讯速递的内容，用户看到的仍是**混在一起**。
+ *   现在改成**按板块硬切**：
+ *     · 本页 = 资讯速递（board 4）**全部**帖（官方公告 + 玩家投稿）；
+ *     · 首页「攻略」页 = 攻略心得（board 1）**全部**帖。
+ *   两页**零重叠**。
  *
- * ⚠️ 用 `Number(...)` 归一化再比较：索引经存储往返后 userId 可能是字符串，
- *   直接全等会让本页**筛不出任何帖子**（页面空、但不报错，属静默错）。
+ * 官方帖怎么凸显（都不在本文件里做判断）：
+ *   · `is_top=1` / `is_essence=1` 是**落库字段**，由 `db-seed/fetch_official.py` 写入，
+ *     所以官方帖天然排在本页最前，并带「置顶 / 精华」角标；
+ *   · 「官方」角标由 `PostCard` 按 `OFFICIAL_UID` 渲染。
+ *
+ * ⚠️ 用 `Number(...)` 归一化再比较：索引经存储往返后 boardId 可能是字符串，
+ *   直接全等会让本页**一篇都筛不出来**（页面空、但不报错，属静默错）。
  */
-const pool = computed(() =>
-  items.value.filter(
-    (it) => Number(it.boardId) === BOARD.NEWS && Number(it.userId) === OFFICIAL_UID
-  )
-)
+const pool = computed(() => items.value.filter((it) => Number(it.boardId) === BOARD.NEWS))
 const counts = computed(() => countByPlatform(pool.value))
 const platTabs = computed(() =>
   PLATFORM_TABS.map((t) => ({ ...t, count: counts.value[t.value] || 0 }))

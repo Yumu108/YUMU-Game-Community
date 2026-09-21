@@ -439,10 +439,16 @@ def main():
         L.append(
             "INSERT IGNORE INTO `post` (`id`,`user_id`,`board_id`,`game_id`,`title`,`content`,`summary`,"
             "`cover`,`type`,`status`,`is_top`,`is_essence`,`view_count`,`reply_count`,`like_count`,"
-            "`created_at`,`updated_at`,`deleted`) VALUES (%d,%d,%d,%d,%s,%s,%s,%s,%d,0,0,0,0,0,0,"
+            "`created_at`,`updated_at`,`deleted`) VALUES (%d,%d,%d,%d,%s,%s,%s,%s,%d,0,1,1,0,0,0,"
             "FROM_UNIXTIME(%d),FROM_UNIXTIME(%d),0);"
             % (pid, OFFICIAL_UID, BOARD_NEWS, r['game_id'], q(r['title']), q(r['content']),
                q(r['summary']), q(cover), POST_TYPE_NEWS, r['date'], r['date']))
+    # ↑ status=0（直发可见）· is_top=1（置顶）· is_essence=1（精华）
+    #   官方资讯帖默认置顶 + 加精（产品口径，2026-09-21）：
+    #   资讯页现在是「资讯速递」板块全量，官方帖靠 置顶+精华+官方角标 三重标识凸显，
+    #   而不是独占整个页面。这两个字段是**落库**的 ——
+    #   `PostServiceImpl.pagePostsByGame` / `pagePosts` 的 ORDER BY 都以 is_top 打头，
+    #   前端 `guideQuery.cmpLatest` 同样把 isTop 排首位，所以置顶两端都自动生效。
     # 计数列重算（与 gen_seed 同口径：deleted=0 AND status=0）
     L.append('')
     L.append("UPDATE `board` b LEFT JOIN (SELECT board_id, COUNT(*) c FROM `post` "

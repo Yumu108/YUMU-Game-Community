@@ -28,12 +28,19 @@
  *     —— 「搜『资讯』搜出《仙剑奇侠传》」就是它把发行商「大宇**资讯**」匹配上了）。
  *     现在关键词先由端内解析成类型 / 平台**精确值**（`utils/keywordFilter.js`，
  *     与游戏库页共用），再把命中原因回显到卡片上。F5-F15 锁这些行为。
- *  ⑧ **资讯页改为「官方情报站」（2026-09-21）**：内容池从「资讯速递板块的视图」
- *     改为**按发帖账号分流** —— 官方账号（`OFFICIAL_UID`）抓取 Steam 官方公告并
- *     AI 改写的帖子只进资讯页；资讯速递里的玩家投稿留在首页攻略页。
- *     改造前资讯页 165 篇**全部**在首页出现过（是首页的子集），用户反馈「重复、没用」。
- *     D6/D7 与 A 组的「首页池」断言锁这个分流；`truth` 现在同时独立算出
- *     「首页池」与「官方帖」两套事实，避免只用页面自证。
+ *  ⑧ **内容按板块硬切：攻略页 board1 / 资讯页 board4（2026-09-21 二次调整）**：
+ *     上一版是「按发帖账号分流」（官方帖只进资讯页），但首页当时仍聚合两个板块，
+ *     于是「攻略」里照样能看到资讯速递的玩家投稿 —— 用户截图反馈「攻略和资讯混在一起」。
+ *     现在改为**按板块硬切、两页零重叠**：
+ *       · 首页「攻略」页 = 攻略心得(board 1) 全部帖；
+ *       · 底部「资讯」页 = 资讯速递(board 4) 全部帖（官方公告 + 玩家投稿）。
+ *     官方帖改靠 **落库的 `is_top=1` / `is_essence=1`** + 「官方」角标凸显，不再独占页面。
+ *     `truth` 现在独立算出三套事实：攻略池(board1) / 资讯池(board4) / 官方帖数。
+ *
+ *     🚨 **同一次改造里挖出的真 bug**：游戏详情页的「攻略 / 资讯」两个 Tab 拿到的是
+ *     **完全相同的列表**。根因不在前端 —— 小程序一直在传 `/games/{id}/posts?boardId=1|4`，
+ *     但后端 `GameController#posts` **根本没有 `boardId` 参数**，Spring 静默丢弃未知查询参数。
+ *     F 组断言专门锁这个回归（它必须靠**接口按板块过滤后的真值**来判，页面自证是抓不到的）。
  */
 const path = require('path')
 const fs = require('fs')
@@ -146,19 +153,16 @@ const OFFICIAL_UID = 20142
       const k = String(g.genre || '').trim()
       if (k) genreCounts[k] = (genreCounts[k] || 0) + 1
     })
-    // ② 干货池 = 攻略心得(1) + 资讯速递(4)，逐板块翻页拉全
-    //
-    // 2026-09-21：端内已按**发帖账号**分流（官方帖只进资讯页、不进首页），
-    // 所以这里必须同时算出两套事实，且都以**接口真值**为准，不能拿页面自证：
-    //   · counts/total  = 「首页池」= 全部干货帖 **减掉官方帖**（A 组断言对的是它）；
-    //   · official      = 官方帖数（D 组断言对的是它）；
-    //   · rawTotal      = 含官方帖的干货池总量（P0 的规模检查用）。
+    // ② 两个板块各自拉全 —— 2026-09-21 起页面**按板块硬切**，所以这里必须按板块分别算真值：
+    //   · counts / total = 「攻略池」= 攻略心得(board 1) 全部（A 组断言对的是它）；
+    //   · news           = 「资讯池」= 资讯速递(board 4) 全部（D 组断言对的是它）；
+    //   · official       = 资讯池里由官方账号发布的条数（角标 / 置顶断言用）。
     const counts = { '': 0, 多平台: 0, PC: 0, 主机: 0, 手机: 0 }
-    /** 每个板块各自的篇数：资讯页(D) 与首页(A) 的口径差异就靠它核对 */
+    /** 每个板块各自的篇数：攻略页(A) 与资讯页(D) 的口径差异就靠它核对 */
     const byBoard = {}
-    let rawTotal = 0   // 干货池总量（攻略 + 资讯，含官方帖）
-    let official = 0   // 其中由官方账号发布的
-    let homeTotal = 0  // 首页池 = rawTotal - official
+    const boardRecs = {}
+    let official = 0
+    let homeTotal = 0
     for (const b of [1, 4]) {
       const got = []
       for (let c = 1; c <= 3; c++) {
@@ -168,34 +172,83 @@ const OFFICIAL_UID = 20142
         if (!rec.length || got.length >= (d.total || 0)) break
       }
       byBoard[b] = got.length
-      rawTotal += got.length
-      got.forEach((p) => {
-        // Number() 归一化：接口返回的是数字，但索引经存储往返可能是字符串
-        if (Number(p.userId) === OFFICIAL_UID) {
-          official += 1
-          return
-        }
-        homeTotal += 1
-        const k = gm[p.gameId]
-        if (k) counts[k] = (counts[k] || 0) + 1
-      })
+      boardRecs[b] = got
+      if (b === 4) {
+        // Number() 归一化：接口返回数字，但端内索引经存储往返可能是字符串
+        official = got.filter((p) => Number(p.userId) === OFFICIAL_UID).length
+      } else {
+        homeTotal = got.length
+        got.forEach((p) => {
+          const k = gm[p.gameId]
+          if (k) counts[k] = (counts[k] || 0) + 1
+        })
+      }
     }
     counts[''] = homeTotal
+
+    // ③ 挑一款**两个板块都有帖**的游戏，供 F 组验证游戏详情页的两个 Tab 真的分了板块。
+    //    两边的期望值都取 `/games/{id}/posts?boardId=X` 的接口真值 ——
+    //    这个接口过去会忽略 boardId（F 组就是为它加的），所以必须独立取数。
+    let detail = null
+    const b1Games = new Set((boardRecs[1] || []).map((p) => p.gameId))
+    for (const p of boardRecs[4] || []) {
+      if (!b1Games.has(p.gameId)) continue
+      const g1 = await api(`/games/${p.gameId}/posts?boardId=1&sort=latest&current=1&size=100`)
+      const g4 = await api(`/games/${p.gameId}/posts?boardId=4&sort=latest&current=1&size=100`)
+      detail = {
+        id: Number(p.gameId),
+        b1: ((g1 && g1.records) || []).map((x) => String(x.title || '').trim()),
+        b4: ((g4 && g4.records) || []).map((x) => String(x.title || '').trim())
+      }
+      break
+    }
+
+    // ④ 再挑一款官方帖所在的游戏，用来验证「官方 / 置顶 / 精华」三重标识。
+    //    优先挑「board1 一篇都没有」的 —— 那正是用户截图里的场景
+    //    （三角洲行动：攻略 Tab 空态、资讯 Tab 全是官方公告）。
+    //    ⚠️ 不打这个偏好也没关系：F 组会按 b1Total 自适应断言，不会误报。
+    let officialGame = null
+    const offRecs = (boardRecs[4] || []).filter((p) => Number(p.userId) === OFFICIAL_UID)
+    const triedG = new Set()
+    for (const pass of [0, 1]) {
+      for (const p of offRecs) {
+        if (triedG.has(p.gameId)) continue
+        triedG.add(p.gameId)
+        const c1 = await api(`/games/${p.gameId}/posts?boardId=1&sort=latest&current=1&size=1`)
+        const b1Total = (c1 && c1.total) || 0
+        if (pass === 0 && b1Total !== 0) continue
+        officialGame = {
+          id: Number(p.gameId),
+          b1Total,
+          officialCount: offRecs.filter((x) => x.gameId === p.gameId).length
+        }
+        break
+      }
+      if (officialGame) break
+    }
+
     return {
       counts,
       total: homeTotal,
-      rawTotal,
+      news: byBoard[4],
       official,
       byBoard,
+      detail,
+      officialGame,
       games: games.length,
       genres: genreCounts
     }
   }, OFFICIAL_UID)
   assert(
-    'P0 独立算出干货池规模（攻略+资讯，已按账号拆出官方帖）',
-    truth.total >= 200 && truth.games >= 50 && truth.rawTotal > truth.total,
-    `首页池=${truth.total} 官方帖=${truth.official} 总量=${truth.rawTotal} 游戏=${truth.games}`
+    'P0 独立算出两板块规模（攻略 board1 / 资讯 board4）',
+    truth.total >= 100 && truth.games >= 50 && truth.news > 0 && truth.official > 0,
+    `攻略池=${truth.total} 资讯池=${truth.news} 官方帖=${truth.official} 游戏=${truth.games}`
       + ` 分布=${JSON.stringify(truth.counts)} 板块=${JSON.stringify(truth.byBoard)}`
+  )
+  assert(
+    'P0b 内容池按板块互斥（攻略 board1 与资讯 board4 各自独立）',
+    truth.byBoard[1] > 0 && truth.byBoard[4] > 0 && truth.total === truth.byBoard[1],
+    `board1=${truth.byBoard[1]} board4=${truth.byBoard[4]} 攻略池=${truth.total}`
   )
 
   /* ================= A. 首页 = 攻略聚合页 ================= */
@@ -240,15 +293,16 @@ const OFFICIAL_UID = 20142
   assert('A8 首屏渲染帖子卡', (await count('.pc')) >= 8, `pc=${await count('.pc')}`)
   assert('A9 首屏卡片带平台角标', (await count('.pc__plat')) >= 8, `plat=${await count('.pc__plat')}`)
   assert('A10 结果计数与「全部」一致', (await text('.bar__count')).includes(String(truth.total)), await text('.bar__count'))
-  // A10b 分流（2026-09-21）：官方帖只进资讯页，**首页一篇都不许有**。
-  //     判据是卡片上的「官方」标签 —— 它按账号 uid 渲染，绕不过去。
-  //     若哪天有人把 guideIndex 的 KEEP 里 userId 去掉、或忘了升缓存键版本，
-  //     这条会立刻报红（否则分流会静默失效：页面看着正常，只是又重叠了）。
+  // A10b 板块硬切（2026-09-21 二次调整）：本页现在**只放攻略心得(board 1)**，
+  //     官方帖发在 board 4 ⇒ 首页一篇都不该有。判据取卡片上的「官方」标签 ——
+  //     它按账号 uid 渲染，绕不过去。
+  //     「条数恰好等于 board1」已由 A7/A10 锁住（它们对的是 truth.total = board1 真值），
+  //     这条补的是**反向证据**：资讯侧的内容没漏进来。
   //     ⚠️ 编号用 A10b 而不是 A11 —— A11..A16 已被下面的平台/公告断言占用，
   //        直接叫 A11 会重名（插在中间又不想把后面全部重编号）。
   const homeOfficial = await count('.pc__badge--official')
   assert(
-    'A10b 首页不含官方资讯帖（官方帖已分流到资讯页）',
+    'A10b 首页不含官方资讯帖（官方帖全部归资讯页）',
     truth.official > 0 && homeOfficial === 0,
     `首页官方标签=${homeOfficial} 接口官方帖=${truth.official}`
   )
@@ -607,16 +661,14 @@ const OFFICIAL_UID = 20142
   assert('C10 底部状态文案存在', (await text('.footer')).length > 0, await text('.footer'))
 
   /* ================= D. 资讯 ================= */
-  console.log('\n--- D. 资讯（官方情报站：只出官方账号的帖）---')
+  console.log('\n--- D. 资讯（资讯速递频道 = board 4 全量）---')
   await goto('/pages/news/news')
   assert('D1 资讯列表渲染', (await count('.pc')) >= 1, `pc=${await count('.pc')}`)
   assert('D2 平台筛选条 5 档', (await count('.pf__btn')) === 5)
   assert('D3 排序 chip 3 档', (await count('.sortchip')) === 3)
-  // D4 资讯页的口径：只出「资讯速递」，不混进攻略
+  // D4 资讯卡片带平台角标（官方帖也带 gameId ⇒ 平台归类同样有效）
   const dPlat = await page.$$eval('.pc__plat', (els) => els.map((e) => e.innerText.trim()))
   assert('D4 资讯卡片带平台角标', dPlat.length >= 1, `${dPlat.length} 个角标`)
-  // 判据取**事实**：页面「共 N 篇」要等于独立打接口算出的 board4 篇数，
-  // 且 board4 必须是干货池的**真子集**（攻略心得那批不能混进来）。
   //
   // ⚠️ 旧写法是直接 JSON.parse(localStorage.getItem('yumu_guide_index')) 读端内索引，
   //    结果恒为 0 —— 因为 uni-app H5 的 uni.setStorageSync 会给对象套一层
@@ -624,28 +676,134 @@ const OFFICIAL_UID = 20142
   //    这是**脚本自身的坑**（已改成读接口真值），不是产品问题。
   const newsCountText = await text('.bar__count')
   const newsPageNum = Number((newsCountText.match(/\d+/) || [])[0])
-  // D5（2026-09-21 改造）：资讯页不再是「board4 的视图」，而是**只出官方账号的帖**。
-  //    所以判据从「= board4 篇数」改成「= 接口独立统计的官方帖数」。
+  // D5（2026-09-21 二次调整）：本页不再是「官方情报站」，而是**资讯速递频道** ——
+  //    出 board 4 的**全部**帖（官方公告 + 玩家投稿）。判据 = 接口独立统计的 board4 篇数。
+  //    上一版这里是 `=== truth.official`（只出官方帖），就是被这次调整替换掉的旧口径。
   assert(
-    'D5 资讯页只出官方帖（条数 = 接口独立统计的官方账号帖数）',
-    truth.official > 0 && newsPageNum === truth.official,
-    `页面「${newsCountText}」 接口官方帖=${truth.official}（board4 共 ${truth.byBoard[4]}）`
+    'D5 资讯页 = 资讯速递全量（条数 = 接口独立统计的 board4 篇数）',
+    truth.news > 0 && newsPageNum === truth.news,
+    `页面「${newsCountText}」 接口 board4=${truth.news}（其中官方帖 ${truth.official}）`
   )
-  // D6 反向确认：资讯页里的**每一张**卡片都必须是官方帖，不能混进玩家投稿。
+  // D6 官方帖**默认置顶**（落库 is_top=1，2026-09-21 新增口径）：
+  //    官方帖按 is_top 优先排在列表最前，所以首屏 PAGE=12 张里应当**全是**官方帖
+  //    （官方帖不足 12 条时即为官方帖总数）。这条同时验证
+  //    `db-seed/fetch_official.py` 写入的 is_top=1 真的生效 ——
+  //    端内权重排序走 `guideQuery.cmpLatest`（isTop 排首位），与后端 ORDER BY 同口径。
+  //    ⚠️ `newsPc` 数的是整页所有 `.pc`（含顶部「今日精选」卡片）；线上该接口返回空数组、
+  //       这块不渲染，所以当前等价于主列表卡片数。
   const newsPc = await count('.pc')
   const newsOfficial = await count('.pc__badge--official')
+  const expectTop = Math.min(12, truth.official)
   assert(
-    'D6 资讯页每张卡片都带「官方」标签（无玩家帖混入）',
-    newsPc > 0 && newsOfficial === newsPc,
-    `卡片=${newsPc} 官方标签=${newsOfficial}`
+    'D6 官方帖默认置顶：资讯页首屏卡片全部为官方帖',
+    expectTop >= 1 && newsOfficial === expectTop,
+    `首屏卡片=${newsPc} 其中官方=${newsOfficial} 期望=${expectTop}（官方帖共 ${truth.official}）`
   )
-  // D7 官方帖必须都在资讯速递板块内（否则是分流写反了：官方帖跑去了攻略心得）
+  // D7 官方帖必须都在资讯速递板块内（否则是把官方帖发错了板块，或分流写反了）
   assert(
     'D7 官方帖数不超过 board4 篇数（未跑到攻略心得板块）',
     truth.official <= truth.byBoard[4],
     `官方帖=${truth.official} board4=${truth.byBoard[4]}`
   )
   await page.screenshot({ path: path.join(SHOTS, 'D-news.png') })
+
+  /* ====== F. 游戏详情页：攻略 / 资讯 必须按板块分开（2026-09-21 新增） ====== */
+  //
+  // 🚨 这一组是用户截图反馈的直接回归防线：「三角洲行动」详情页的
+  //    「攻略」「资讯」两个 Tab 拿到**完全相同的列表**。
+  //    根因不在前端 —— 小程序一直传 `/games/{id}/posts?boardId=1|4`，
+  //    但后端 `GameController#posts` **没有 `boardId` 参数**，Spring 静默丢弃未知查询参数。
+  //
+  //    ⚠️ 这类「参数写了没效果」的故障，**页面自证是抓不到的** —— 两个 Tab 都渲染得好好的，
+  //       不比不知道。所以期望值必须取**接口按板块过滤后的真值**（truth.detail 独立打接口算）。
+  console.log('\n--- F. 游戏详情页（攻略=board1 / 资讯=board4，两 Tab 不得相同）---')
+  if (!truth.detail) {
+    assert('F0 找到「两板块都有帖」的游戏用于交叉验证', false, '接口没返回可用于验证的游戏')
+  } else {
+    const gid = truth.detail.id
+    const titlesOf = () =>
+      page.$$eval('.pc__title', (els) => els.map((e) => e.innerText.replace(/\s+/g, ' ').trim()))
+
+    // 详情页 pageSize=10（usePagedList 默认），故两边都只比首屏 10 条
+    await goto(`/pages/game/detail?id=${gid}`)
+    await waitFor('.pc', 12000)
+    const guideTitles = await titlesOf()
+    const wantGuide = truth.detail.b1.slice(0, 10)
+    assert(
+      'F1 攻略 Tab 只出「攻略心得」（卡片标题全在 board1 真值内）',
+      wantGuide.length > 0 && guideTitles.length === wantGuide.length &&
+        guideTitles.every((t) => wantGuide.includes(t)),
+      `页面=${guideTitles.length} 期望=${wantGuide.length} 尾部「${await text('.footer')}」`
+    )
+
+    // 切到「资讯」Tab（.tabs 下第 2 个 titem）
+    await page.click('.tabs__item:nth-child(2)')
+    await sleep(2200)
+    const newsTitles = await titlesOf()
+    const wantNews = truth.detail.b4.slice(0, 10)
+    assert(
+      'F2 资讯 Tab 只出「资讯速递」（卡片标题全在 board4 真值内）',
+      wantNews.length > 0 && newsTitles.length === wantNews.length &&
+        newsTitles.every((t) => wantNews.includes(t)),
+      `页面=${newsTitles.length} 期望=${wantNews.length}`
+    )
+
+    // F3 两 Tab 内容必须**真的不同** —— 这条就是用户看到的问题本身。
+    //    重合数要与「真值之间的重合数」一致：真值本身有重合时不能用 0 当判据，
+    //    否则会误报；而后端一旦又丢掉 boardId，页面重合数会远大于真值重合数 ⇒ 报红。
+    const overlap = newsTitles.filter((t) => guideTitles.includes(t)).length
+    const wantOverlap = wantNews.filter((t) => wantGuide.includes(t)).length
+    assert(
+      'F3 两个 Tab 内容不再混在一起（页面重合数 = 真值重合数）',
+      guideTitles.length > 0 && newsTitles.length > 0 && overlap === wantOverlap,
+      `攻略=${guideTitles.length} 资讯=${newsTitles.length} 重合=${overlap} 真值重合=${wantOverlap}`
+    )
+    await page.screenshot({ path: path.join(SHOTS, 'F-detail-news.png') })
+  }
+
+  // F4/F5 官方帖所在的那款游戏：攻略 Tab 不得夹带官方帖；资讯 Tab 官方帖三重标识
+  if (!truth.officialGame) {
+    console.log('   ⏭ F4/F5 跳过：board4 里没找到官方帖所在的游戏')
+    assert('F4 找到官方帖所在的游戏', false, 'board4 里没有官方帖')
+  } else {
+    const og = truth.officialGame
+    await goto(`/pages/game/detail?id=${og.id}`)
+    await waitFor('.empty, .pc', 12000)
+    const gCards = await count('.pc')
+    const gOfficial = await count('.pc__badge--official')
+    if (og.b1Total === 0) {
+      // 用户截图场景：该游戏只有官方公告、没有攻略
+      assert(
+        'F4 攻略 Tab 空态（该游戏 board1 确实无帖）',
+        gCards === 0 && (await count('.empty')) === 1,
+        `卡片=${gCards} 空态=${await count('.empty')} 文案「${await text('.empty__text')}」`
+      )
+    } else {
+      assert(
+        'F4 攻略 Tab 只有攻略心得、不含官方帖',
+        gCards > 0 && gOfficial === 0,
+        `卡片=${gCards} 官方标签=${gOfficial}（该游戏 board1 共 ${og.b1Total} 条）`
+      )
+    }
+
+    await page.click('.tabs__item:nth-child(2)')
+    await sleep(2200)
+    const ogCards = await count('.pc')
+    const ogOfficial = await count('.pc__badge--official')
+    const ogTop = await count('.pc__badge--top')
+    const ogBest = await count('.pc__badge--best')
+    // 官方帖按 is_top=1 置顶 ⇒ 资讯 Tab 的**前 officialCount 张**必然是官方帖
+    // （条数不足一屏时就是全部卡片）。因此这三个角标的数量应等于 min(卡片数, 官方帖数)。
+    const wantBadges = Math.min(ogCards, og.officialCount)
+    assert(
+      'F5 资讯 Tab 官方帖带「官方+置顶+精华」三重标识（且置顶在最前）',
+      ogCards > 0 && wantBadges >= 1 &&
+        ogOfficial === wantBadges && ogTop === wantBadges && ogBest === wantBadges,
+      `卡片=${ogCards} 官方=${ogOfficial} 置顶=${ogTop} 精华=${ogBest}`
+        + ` 期望=${wantBadges}（该游戏官方帖 ${og.officialCount} 条 / board1 ${og.b1Total} 条）`
+    )
+    await page.screenshot({ path: path.join(SHOTS, 'F-official-game-news.png') })
+  }
 
   /* ================= E. 我的 ================= */
   console.log('\n--- E. 我的 ---')

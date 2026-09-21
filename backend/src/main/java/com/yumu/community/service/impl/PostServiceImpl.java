@@ -196,11 +196,20 @@ public class PostServiceImpl implements PostService {
     }
 
     @Override
-    public PageResult<PostVO> pagePostsByGame(Long gameId, long current, long size, Long viewerId) {
+    public PageResult<PostVO> pagePostsByGame(Long gameId, Long boardId, long current, long size, Long viewerId) {
         Page<Post> page = new Page<>(clampCurrent(current), clampSize(size));
         com.baomidou.mybatisplus.core.conditions.query.QueryWrapper<Post> qw = new com.baomidou.mybatisplus.core.conditions.query.QueryWrapper<>();
         qw.eq("game_id", gameId);
+        // 板块过滤（2026-09-21 新增）：
+        //   游戏详情页的「攻略 / 资讯」两个 Tab 分别对应 攻略心得(board=1) / 资讯速递(board=4)。
+        //   此前本方法**没有 boardId 参数**，前端传了也被 Spring 丢弃 ——
+        //   于是两个 Tab 拿到完全相同的列表（用户实测反馈「攻略和资讯混在一起了」）。
+        //   这里为 null 时不限板块，保持老调用方的行为不变。
+        if (boardId != null) {
+            qw.eq("board_id", boardId);
+        }
         qw.eq("status", 0);
+        // 官方帖在业务上默认置顶（is_top=1）⇒ 这里最先命中，排在本游戏其余帖之前
         qw.orderByDesc("is_top");
         qw.orderByDesc("created_at");
         qw.orderByDesc("id");

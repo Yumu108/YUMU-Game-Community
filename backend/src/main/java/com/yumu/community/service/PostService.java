@@ -124,8 +124,13 @@ public interface PostService {
     /** 用户主页 TA 的帖子：按用户 ID 过滤，仅可见（status=0）。viewerId 用于附带 liked/favorited。 */
     PageResult<PostVO> postsByUser(Long userId, long current, long size, Long viewerId);
 
-    /** 游戏详情页：按 gameId 聚合帖子，仅可见（status=0）。viewerId 用于附带 liked/favorited。 */
-    PageResult<PostVO> pagePostsByGame(Long gameId, long current, long size, Long viewerId);
+    /**
+     * 游戏详情页：按 gameId 聚合帖子，仅可见（status=0）。viewerId 用于附带 liked/favorited。
+     *
+     * `boardId` 为 null 时不限板块（历史行为）；非 null 时按板块过滤 ——
+     * 游戏详情页的「攻略 / 资讯」两个 Tab 就靠它区分（攻略心得 / 资讯速递）。
+     */
+    PageResult<PostVO> pagePostsByGame(Long gameId, Long boardId, long current, long size, Long viewerId);
 
     /**
      * 个性化订阅流：聚合当前用户订阅的板块帖子 + 命中订阅关键词的帖子，仅可见（status=0）。

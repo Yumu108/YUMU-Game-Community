@@ -12,11 +12,11 @@
     -->
     <view class="hero">
       <text class="hero__title">多平台游戏攻略库</text>
-      <text class="hero__sub">聚合 PC / 主机 / 手游 的攻略与情报 · 只收干货</text>
+      <text class="hero__sub">聚合 PC / 主机 / 手游 的攻略心得 · 只收干货</text>
       <view class="hero__stats">
         <view class="hero__stat">
           <text class="hero__num">{{ statText(stats.total) }}</text>
-          <text class="hero__label">干货篇数</text>
+          <text class="hero__label">攻略篇数</text>
         </view>
         <view class="hero__divider" />
         <view class="hero__stat">
@@ -117,14 +117,16 @@
  * 与旧版的区别（定位调整）：
  *   · 旧版是「社区消费端首页」：热门游戏 + 最新资讯 + 推荐攻略 三块拼盘，无筛选能力；
  *   · 新版是「多平台攻略库」：**平台筛选是主交互**，内容来自端内聚合索引
- *     （攻略心得 + 资讯速递 两个板块，见 utils/guideIndex.js），
- *     切换平台/排序**零请求**，按钮上的数字与列表条数同源、必然一致。
+ *     （与「资讯」页共用同一份索引 ⇒ 两页间切换零请求）。
+ *
+ * 🚨 内容口径（2026-09-21 起）：本页**只放「攻略心得」(board 1)** 的帖子。
+ *   资讯速递整体归底部「资讯」页，两页零重叠 —— 详见下方 `pool` 处注释。
  */
 import { ref, computed } from 'vue'
 import { onLoad, onReachBottom, onPullDownRefresh } from '@dcloudio/uni-app'
 import { ensureIndex, queryIndex, countByPlatform, indexStats } from '../../utils/guideIndex'
 import { fetchAnnouncements } from '../../api/community'
-import { PLATFORM_TABS, PLATFORM_HINT, SORT, OFFICIAL_UID } from '../../api/config'
+import { PLATFORM_TABS, PLATFORM_HINT, SORT, BOARD } from '../../api/config'
 import { platformLabel, formatTime } from '../../utils/format'
 import PlatformFilter from '../../components/PlatformFilter.vue'
 import PostCard from '../../components/PostCard.vue'
@@ -154,18 +156,21 @@ const topNotice = ref(null)
 const noticeOpen = ref(null)
 
 /**
- * 攻略页内容池 = 端内索引 **排除官方资讯帖**。
+ * 攻略页内容池 = 端内索引里 **只取「攻略心得」(board 1)** 的帖子。
  *
- * 2026-09-21：资讯速递板块原本与攻略心得一起并进首页，导致「资讯」页内容
- * 完全是首页的子集（用户实测反馈「资讯这一块重复、没用」）。现在按**发帖账号**分流：
- *   · 官方账号（`OFFICIAL_UID`）发的 → 只进「资讯」页；
- *   · 其余玩家帖（含资讯速递里的玩家投稿）→ 留在本页。
- * 这样两侧不再重叠，且**首页内容总量不变**（原资讯速递里的玩家帖照旧在这）。
+ * 🚨 2026-09-21 二次调整（口径变更，别再按老注释理解）：
+ *   上一版的做法是「聚合攻略心得 + 资讯速递，再排除官方账号的帖」——
+ *   结果攻略页里仍混着资讯速递的玩家投稿，用户看到「攻略和资讯混在一起」。
+ *   现在改成**按板块硬切**：
+ *     · 本页 = 攻略心得（board 1）**全部**帖（含各类作者的攻略长文）；
+ *     · 「资讯」页（`pages/news`）= 资讯速递（board 4）**全部**帖。
+ *   两页**零重叠**，官方帖天然只会出现在资讯侧（它发在 board 4），
+ *   所以这里不再需要按 `OFFICIAL_UID` 做排除 —— 板块过滤已经蕴含了这层语义。
  *
- * ⚠️ 用 `Number(...) !== OFFICIAL_UID` 而不是 `!==`：索引从存储里读出来时
- *   userId 可能是字符串（JSON 往返），直接全等比较会**静默漏掉所有官方帖**。
+ * ⚠️ 用 `Number(...)` 归一化再比较：索引经存储往返后 boardId 可能是字符串，
+ *   直接全等会让本页**一篇都筛不出来**（页面空、但不报错，属静默错）。
  */
-const pool = computed(() => items.value.filter((it) => Number(it.userId) !== OFFICIAL_UID))
+const pool = computed(() => items.value.filter((it) => Number(it.boardId) === BOARD.GUIDE))
 
 const stats = computed(() => indexStats(pool.value))
 const counts = computed(() => countByPlatform(pool.value))
