@@ -72,6 +72,9 @@ Thumbs.db
 NVIDIA/
 *.lnk
 /start.bat
+# 个人 pytest 练习工程（作者本人练接口自动化用，与项目交付无关）——不入库
+/start-practice.bat
+/tests/pytest-practice/
 /YUMU社区知识库.md
 /yumu游戏社区助手-修订版.md
 /上线前必做清单.md
