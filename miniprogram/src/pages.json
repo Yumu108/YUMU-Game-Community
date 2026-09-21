@@ -75,16 +75,16 @@
         "selectedIconPath": "static/tabbar/home-on.png"
       },
       {
-        "pagePath": "pages/games/games",
-        "text": "游戏库",
-        "iconPath": "static/tabbar/games.png",
-        "selectedIconPath": "static/tabbar/games-on.png"
-      },
-      {
         "pagePath": "pages/news/news",
         "text": "资讯",
         "iconPath": "static/tabbar/news.png",
         "selectedIconPath": "static/tabbar/news-on.png"
+      },
+      {
+        "pagePath": "pages/games/games",
+        "text": "游戏库",
+        "iconPath": "static/tabbar/games.png",
+        "selectedIconPath": "static/tabbar/games-on.png"
       },
       {
         "pagePath": "pages/my/my",

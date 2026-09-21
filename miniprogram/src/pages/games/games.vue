@@ -1,6 +1,6 @@
 <template>
   <view class="mp-page">
-    <!-- 关键词搜索（带防抖，见 script） -->
+    <!-- 关键词搜索（带防抖，见 script）。可搜游戏名，也可搜**类型名**（如 MMORPG / RPG / 策略）。 -->
     <view class="search">
       <text class="search__icon">🔍</text>
       <input
@@ -8,7 +8,7 @@
         v-model="keyword"
         type="text"
         confirm-type="search"
-        placeholder="搜索游戏名"
+        placeholder="搜索游戏名或类型"
         placeholder-class="search__ph"
         @confirm="onSearchNow"
       />
@@ -27,34 +27,21 @@
     </view>
 
     <!--
-      🚨 筛选元数据（各平台款数 + 类型清单）加载失败时必须**明说**。
+      🚨 元数据（各平台款数 + 类型清单）加载失败时必须**明说**。
       2026-09-20 真机事故里，这块数据取回来后是「空的」，
-      页面却只是安静地把「全部」渲染成 0、把类型条整行藏掉 —— 看起来像「库里本来就没游戏」，
+      页面却只是安静地把「全部」渲染成 0 —— 看起来像「库里本来就没游戏」，
       完全没有失败的样子，用户只能看出「统计不对」。宁可不显示数字，也不要显示假的 0。
     -->
     <view v-if="metaFailed" class="warn" @click="loadMeta">
-      <text class="warn__text">⚠️ 平台 / 类型筛选数据加载失败，点此重试（不影响下面列表浏览）</text>
+      <text class="warn__text">⚠️ 平台统计加载失败，点此重试（不影响下面列表浏览）</text>
     </view>
 
-    <!-- 类型筛选（30+ 种类型，按收录量倒序，横滑）。
-      🚨 2026-09-20 去掉了行首的「全部类型」chip：上面平台档位里已经有「全部」，
-         再来一个同义按钮纯属占位（用户反馈「实质并没有用处」）。
-         清空类型的入口改为**再点一次已选中的类型**（选中态的角标从数量变成 ✕，给出可见提示）。
-         类型清单为空时整行隐藏 —— 原来会渲染出一个只剩「全部类型」的孤零零空条。
+    <!--
+      🚨 2026-09-20 移除「类型」二次分类筛选行（用户反馈：不必显示这些标签、也不必用标签二次分类）。
+         类型不再当筛选器，改为**搜索即达**：在上面的搜索框输入类型名（MMORPG / RPG / 策略…），
+         端内把它解析成 genre 走 `/games?genre=` 精确筛选。
+         为什么必须端内转换：后端 `/games` 的 `keyword` 只 like 名称/简介，**不匹配 genre**。
     -->
-    <scroll-view v-if="genres.length" scroll-x class="chips" :show-scrollbar="false">
-      <view class="chips__inner">
-        <view
-          v-for="g in genres"
-          :key="g.name"
-          class="chip"
-          :class="{ 'chip--on': genre === g.name }"
-          @click="pickGenre(g.name)"
-        >
-          {{ g.name }}<text class="chip__n">{{ genre === g.name ? '✕' : g.count }}</text>
-        </view>
-      </view>
-    </scroll-view>
 
     <!-- 列表 -->
     <Skeleton v-if="loading" :rows="3" />
@@ -97,10 +84,12 @@
 <script setup>
 /**
  * 游戏库 = 「多平台」这个定位的**第二入口**：
- * 首页按「文章」切平台，这里按「游戏」切平台 + 类型。
+ * 首页按「文章」切平台，这里按「游戏」切平台；**类型（标签）不再做二次分类筛选**，
+ * 改为「搜索即达」—— 输入类型名（MMORPG / RPG / 策略…）由端内解析成 genre（见下方 genreHit）。
  *
  * 两处筛选的差别（容易混，写清楚）：
- *   · 这里的平台/类型筛选走**后端**（`/games?platform=&genre=`，接口原生支持）⇒ 真·服务端分页；
+ *   · 这里的平台筛选走**后端**（`/games?platform=`）⇒ 真·服务端分页；
+ *     类型名搜索最终也落到后端的 `genre=` 精确筛选；
  *   · 首页的文章平台筛选只能走**端内索引**（`/posts` 没有 platform 参数）。
  *   数量都取自同一份游戏元数据缓存，口径一致。
  */
@@ -119,7 +108,6 @@ import ErrorState from '../../components/ErrorState.vue'
 
 const keyword = ref('')
 const platform = ref('')
-const genre = ref('')
 const genres = ref([])
 const platCount = ref({})
 /** 元数据（平台档位数 + 类型清单）是否加载失败 —— 失败时页面必须明说，不能静默显示 0 */
@@ -133,15 +121,44 @@ const platHint = computed(() =>
 )
 const platName = (v) => platformLabel(v)
 
+/**
+ * 类型（标签）只作为**搜索词**：输入类型名（MMORPG / RPG / 策略…）时，
+ * 端内解析成对应的 genre，改走后端 `/games?genre=` 精确筛选。
+ *
+ * 为什么必须端内转换：后端 `/games` 的 `keyword` 只 `like(name/description)`，
+ * **不匹配 genre**（`/search?type=game` 会匹配 genre，但它不分页、也丢了平台筛选）。
+ * 2026-09-20 去掉类型筛选行后，类型改为「搜索即达」，靠这里补上。
+ *
+ * 匹配优先级：完全相等 → 前缀（≥2 字）→ 包含（≥2 字），均不区分大小写。
+ * 单字只认「完全相等」，避免输入「a」时把所有 ACT / AVG / MMO… 一起捞出来。
+ */
+const genreHit = computed(() => {
+  const kw = keyword.value.trim().toLowerCase()
+  if (!kw || !genres.value.length) return ''
+  const names = genres.value.map((g) => g.name)
+  const exact = names.find((n) => n.toLowerCase() === kw)
+  if (exact) return exact
+  if (kw.length >= 2) {
+    const pre = names.find((n) => n.toLowerCase().startsWith(kw))
+    if (pre) return pre
+    const inc = names.find((n) => n.toLowerCase().includes(kw))
+    if (inc) return inc
+  }
+  return ''
+})
+
 const { list, loading, failed, footerText, reload, loadMore, retryMore } = usePagedList(
-  ({ current, size }) =>
-    fetchGames({
+  ({ current, size }) => {
+    // 命中类型名时改走 genre 精确筛选（此时不再传 keyword，避免被 name/description 的 like 反抢）
+    const hit = genreHit.value
+    return fetchGames({
       current,
       size,
-      keyword: keyword.value || undefined,
+      keyword: hit ? undefined : keyword.value || undefined,
       platform: platform.value || undefined,
-      genre: genre.value || undefined
-    }),
+      genre: hit || undefined
+    })
+  },
   { pageSize: 12, unit: '款' }
 )
 
@@ -171,17 +188,7 @@ function clearKeyword() {
 }
 
 /**
- * 点类型 chip：选中 / **再点一次取消**（原来只能靠行首那个「全部类型」清空，
- * 而那个按钮在未选中时毫无作用，已被移除 —— 见模板注释）。
- */
-function pickGenre(g) {
-  const next = genre.value === g ? '' : g
-  genre.value = next
-  reload()
-}
-
-/**
- * 拉「全部游戏」的元数据：各平台收录款数（档位上的数字）+ 类型清单（chip 条）。
+ * 拉「全部游戏」的元数据：各平台收录款数（档位上的数字）+ 类型清单（供搜索把类型名解析成 genre）。
  * 与首页的端内索引共用同一份缓存（`utils/guideIndex.js#ensureGameMeta`）。
  *
  * 失败时**清空数字并置 metaFailed**（而不是留 0）—— 0 是会被当真的假数据。
@@ -245,38 +252,6 @@ function goGame(g) {
 
 .pfwrap {
   margin-top: 22rpx;
-}
-
-.chips {
-  white-space: nowrap;
-  width: 100%;
-  margin: 0 0 24rpx;
-}
-.chips__inner {
-  display: inline-flex;
-}
-.chip {
-  flex: none;
-  padding: 10rpx 26rpx;
-  border-radius: 30rpx;
-  background: #231f31;
-  font-size: 24rpx;
-  color: #c8c3d6;
-  border: 1rpx solid transparent;
-  margin-right: 14rpx;
-}
-.chip--on {
-  background: rgba(124, 92, 255, 0.2);
-  border-color: #7c5cff;
-  color: #cbbdff;
-}
-.chip__n {
-  font-size: 20rpx;
-  color: #8b8599;
-  margin-left: 6rpx;
-}
-.chip--on .chip__n {
-  color: #cbbdff;
 }
 
 .gitem {

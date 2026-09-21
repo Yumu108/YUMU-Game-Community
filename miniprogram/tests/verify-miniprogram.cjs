@@ -20,6 +20,9 @@
  *  ④ 沿用既有的「故障 ≠ 空数据」纪律：断网时必须出失败态 + 重试，不能说成「没有内容」。
  *  ⑤ **R 组（2026-09-20 新增）**：主动制造「静默空响应 / 历史坏缓存」这两种事故环境，
  *     验证平台分类不再被一份空数据锁死（详见文件末尾 R 段注释）。
+ *  ⑥ **类型改为「搜索即达」（2026-09-20 二次调整）**：游戏库去掉类型「二次分类」筛选行，
+ *     标签改为通过搜索框输入命中（请求带 `genre=` 精确筛选）；底部导航互换为
+ *     攻略 → 资讯 → 游戏库 → 我的。
  */
 const path = require('path')
 const fs = require('fs')
@@ -118,6 +121,12 @@ const LABEL_TO_VALUE = { 手游: '手机', 多平台: '多平台', PC: 'PC', 主
     games.forEach((g) => {
       gm[g.id] = g.platform || ''
     })
+    /** 类型（genre）分布：给 C 组的「搜索类型名」断言挑一个真实存在的类型（独立于页面自证） */
+    const genreCounts = {}
+    games.forEach((g) => {
+      const k = String(g.genre || '').trim()
+      if (k) genreCounts[k] = (genreCounts[k] || 0) + 1
+    })
     // ② 干货池 = 攻略心得(1) + 资讯速递(4)，逐板块翻页拉全
     const counts = { '': 0, 多平台: 0, PC: 0, 主机: 0, 手机: 0 }
     /** 每个板块各自的篇数：资讯页(D) 与首页(A) 的口径差异就靠它核对 */
@@ -139,7 +148,7 @@ const LABEL_TO_VALUE = { 手游: '手机', 多平台: '多平台', PC: 'PC', 主
       })
     }
     counts[''] = total
-    return { counts, total, byBoard, games: games.length }
+    return { counts, total, byBoard, games: games.length, genres: genreCounts }
   })
   assert(
     'P0 独立算出干货池规模（攻略+资讯）',
@@ -418,7 +427,7 @@ const LABEL_TO_VALUE = { 手游: '手机', 多平台: '多平台', PC: 'PC', 主
   }
 
   /* ================= C. 游戏库 ================= */
-  console.log('\n--- C. 游戏库（平台 + 类型）---')
+  console.log('\n--- C. 游戏库（平台筛选 + 类型搜索）---')
   await goto('/pages/games/games')
   assert('C1 游戏列表渲染', (await count('.gitem')) >= 10, `gitem=${await count('.gitem')}`)
   assert('C2 平台筛选条 5 档', (await count('.pf__btn')) === 5)
@@ -449,13 +458,13 @@ const LABEL_TO_VALUE = { 手游: '手机', 多平台: '多平台', PC: 'PC', 主
   )
 
   const genreN = await count('.chip')
-  // C3a/C3b：「全部类型」这个占位 chip 已按用户反馈移除（清空类型改为再点一次已选类型）
-  assert('C3a 类型筛选条渲染（≥6 种，且无「全部类型」占位）', genreN >= 6, `chip=${genreN}`)
-  const chipTexts = await page.$$eval('.chip', (els) => els.map((e) => e.innerText.replace(/\s+/g, '')))
+  // C3a/C3b（2026-09-20 二次调整）：类型不再做「二次分类筛选」。
+  //   整行类型 chip 已按用户反馈**完全移除**，标签改为只能通过搜索命中（见 C6*）。
+  assert('C3a 类型筛选行已移除（不再有二次分类 chip）', genreN === 0, `chip=${genreN}`)
   assert(
-    'C3b 类型 chip 不再有「全部类型」',
-    !chipTexts.some((t) => t.startsWith('全部类型')),
-    chipTexts.slice(0, 4).join(' | ')
+    'C3b 类型行容器也不在了（无 .chips）',
+    (await count('.chips')) === 0,
+    `chips=${await count('.chips')}`
   )
   await page.screenshot({ path: path.join(SHOTS, 'C-games.png') })
 
@@ -475,42 +484,46 @@ const LABEL_TO_VALUE = { 手游: '手机', 多平台: '多平台', PC: 'PC', 主
   assert('C4 选「PC」后请求带上 platform=PC', !!pcReq, pcReq ? pcReq.url().replace(/^https?:\/\/[^/]+/, '') : '未捕获到筛选请求')
   assert('C5 筛选后仍有结果', (await count('.gitem')) > 0, `gitem=${await count('.gitem')}`)
 
-  // 类型筛选：请求要带上 genre；**再点一次同一个类型 = 取消**（原「全部类型」按钮的替代交互）
+  // 类型改为「搜索即达」（2026-09-20）：在搜索框输入类型名，端内解析成 genre，
+  //   请求要带上 `genre=<类型>`、**且不再带 keyword**；结果卡片角标必须全部是该类型。
+  //   类型从**独立算出的类型分布**里挑（挑收录最多的那个），不看页面自证。
   await goto('/pages/games/games')
-  const genreChips = await page.$$('.chip')
-  let someGenre = null
-  for (const c of genreChips) {
-    const t = (await c.innerText()).replace(/\s+/g, '')
-    if (/\d$/.test(t)) {
-      someGenre = { el: c, name: t.replace(/\d+$/, '') }
-      break
+  const topGenre =
+    Object.keys(truth.genres || {}).sort((a, b) => truth.genres[b] - truth.genres[a])[0] || ''
+  if (topGenre) {
+    const hitReq = (r) => {
+      const u = decodeURIComponent(r.url())
+      return u.includes('/api/games') && u.includes('genre=' + topGenre)
     }
-  }
-  if (someGenre) {
-    const [gReq] = await Promise.all([
-      page.waitForRequest((r) => r.url().includes('/api/games') && /genre=/.test(r.url()), { timeout: 9000 }).catch(() => null),
-      someGenre.el.click()
+    const [geReq] = await Promise.all([
+      page.waitForRequest(hitReq, { timeout: 9000 }).catch(() => null),
+      page.fill('input.uni-input-input', topGenre).catch(() => {})
     ])
-    await sleep(1600)
-    assert('C6 选类型后请求带上 genre 参数', !!gReq, `类型=${someGenre.name}`)
+    await sleep(1800)
+    const geUrl = geReq ? decodeURIComponent(geReq.url().replace(/^https?:\/\/[^/]+/, '')) : ''
+    assert('C6 搜索类型名 → 请求带 genre 精确筛选', !!geReq, geUrl || `未捕获（类型=${topGenre}）`)
+    assert('C6b 类型搜索不再发 keyword（避免被名称 like 反抢）', !!geReq && !/[?&]keyword=/.test(geUrl), geUrl)
 
-    // C6b：选中态角标从「数量」变成「✕」（告诉用户可再点一次取消）
-    const onChip = await page.$$eval('.chip--on', (els) => els.map((e) => e.innerText.replace(/\s+/g, '')))
-    assert('C6b 选中的类型 chip 显示 ✕（可取消的可见提示）', onChip.length === 1 && onChip[0].includes('✕'), onChip.join('|'))
-
-    // C6c：再点一次 = 清空类型，请求里不再带 genre=真实类型值
-    const [clearReq] = await Promise.all([
-      page.waitForRequest((r) => r.url().includes('/api/games') && !/genre=[^&\s]/.test(r.url()), { timeout: 9000 }).catch(() => null),
-      (await page.$('.chip--on')) ? (await page.$('.chip--on')).click() : Promise.resolve()
-    ])
-    await sleep(1200)
-    assert('C6c 再点一次取消类型筛选（请求不再带 genre）', !!clearReq, clearReq ? clearReq.url().replace(/^https?:\/\/[^/]+/, '') : '未捕获到清空请求')
-    assert('C6d 取消后没有选中态 chip', (await count('.chip--on')) === 0)
+    // 结果判据：卡片上「非平台」的角标（= 类型角标）必须全部等于该类型
+    const badgeGenres = await page.$$eval('.gitem__tags .mp-tag:not(.mp-tag--purple)', (els) =>
+      els.map((e) => e.innerText.trim())
+    )
+    assert(
+      `C6c 搜索结果全部属于类型「${topGenre}」`,
+      badgeGenres.length > 0 && badgeGenres.every((t) => t.toLowerCase() === topGenre.toLowerCase()),
+      badgeGenres.slice(0, 4).join('|') || '无类型角标'
+    )
+    const shownG = await count('.gitem')
+    assert(
+      'C6d 结果条数 ≤ 该类型真实总数（独立分布）',
+      shownG <= truth.genres[topGenre],
+      `页面 ${shownG} ≤ 接口 ${truth.genres[topGenre]}`
+    )
   } else {
-    assert('C6 选类型后请求带上 genre 参数', false, '没找到类型 chip')
-    assert('C6b 选中的类型 chip 显示 ✕（可取消的可见提示）', false)
-    assert('C6c 再点一次取消类型筛选（请求不再带 genre）', false)
-    assert('C6d 取消后没有选中态 chip', false)
+    assert('C6 搜索类型名 → 请求带 genre 精确筛选', false, '没算出任何类型（接口异常？）')
+    assert('C6b 类型搜索不再发 keyword（避免被名称 like 反抢）', false)
+    assert('C6c 搜索结果全部属于该类型', false)
+    assert('C6d 结果条数 ≤ 该类型真实总数（独立分布）', false)
   }
   await page.screenshot({ path: path.join(SHOTS, 'C-games-genre.png') })
 
@@ -626,6 +639,25 @@ const LABEL_TO_VALUE = { 手游: '手机', 多平台: '多平台', PC: 'PC', 主
   })
   assert('G5a tabBar 有 4 个图标', tbIcons.n === 4, `n=${tbIcons.n}`)
   assert('G5b tabBar 图标真实解码', tbIcons.decoded === 4, `decoded=${tbIcons.decoded}`)
+  // G5c（2026-09-20）：底部导航顺序调整为 攻略 → 资讯 → 游戏库 → 我的（游戏库与资讯互换）。
+  //   用「相对次序」而不是精确字符串，避免受 tabBar 内部空白/换行影响。
+  const tbTxt = await page.evaluate(() => {
+    const el = document.querySelector('uni-tabbar') || document.querySelector('.uni-tabbar')
+    if (!el) return ''
+    const labels = Array.from(el.querySelectorAll('.uni-tabbar__label, .uni-tabbar__text'))
+    const s = labels
+      .map((x) => (x.innerText || x.textContent || '').trim())
+      .filter(Boolean)
+      .join(' ')
+    return s || (el.innerText || el.textContent || '').replace(/\s+/g, ' ').trim()
+  })
+  const iNews = tbTxt.indexOf('资讯')
+  const iGames = tbTxt.indexOf('游戏库')
+  assert(
+    'G5c 底部导航顺序：资讯 在 游戏库 之前',
+    iNews >= 0 && iGames >= 0 && iNews < iGames,
+    tbTxt || '未读到 tabBar 文本'
+  )
 
   /* ---- G6 H5 宽屏：内容栏必须有宽度上限 ----
      本项目的**主交付渠道是 H5**（小程序不上架）。改版前实测 1440px 下帖子卡被拉到 1412px，
@@ -837,7 +869,11 @@ const LABEL_TO_VALUE = { 手游: '手机', 多平台: '多平台', PC: 'PC', 主
       let v = raw
       try { v = JSON.parse(raw) } catch (e) {}
       if (v && v.data !== undefined) v = v.data // uni-app H5 的 {type,data} 信封
-      return { mapKeys: Object.keys((v && v.map) || {}).length, platforms: (v && v.platforms) || null }
+      return {
+        mapKeys: Object.keys((v && v.map) || {}).length,
+        platforms: (v && v.platforms) || null,
+        genreCount: Array.isArray(v && v.genres) ? v.genres.length : 0
+      }
     })
 
   // —— 注入「空成功」的游戏元数据响应（只拦 size=100 那次，列表请求照常放行）——
@@ -893,8 +929,13 @@ const LABEL_TO_VALUE = { 手游: '手机', 多平台: '多平台', PC: 'PC', 主
   assert('R3b 「全部」恢复为真实游戏总数', healed['全部'] === truth.games, `页面=${healed['全部']} 接口=${truth.games}`)
   const goodCache = await readMetaCache()
   assert('R3c 重新同步后写入的是完好的映射', !!goodCache && goodCache.mapKeys > 0, JSON.stringify(goodCache))
-  const healedGenres = await rPage.$$eval('.chip', (els) => els.length)
-  assert('R3d 类型条随自愈一起恢复（不再是空条）', healedGenres >= 6, `chip=${healedGenres}`)
+  // R3d：类型行已移除（类型改为搜索即达），改为断言**类型数据本身**随自愈恢复 ——
+  //   自愈重写后的缓存里 genres 必须是一份非空清单（搜索框把类型名解析成 genre 就靠它）。
+  assert(
+    'R3d 类型清单随自愈一起恢复（缓存里 genres 非空）',
+    !!goodCache && goodCache.genreCount >= 6,
+    `genres=${goodCache ? goodCache.genreCount : 'null'}`
+  )
   await rPage.screenshot({ path: path.join(SHOTS, 'R2-self-heal.png') })
   await rCtx.close()
 
