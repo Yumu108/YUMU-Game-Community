@@ -137,6 +137,7 @@ import { ref, computed } from 'vue'
 import { login, register, sendEmailCode, resetPassword } from '../../api/auth'
 import { setToken } from '../../api/request'
 import { setUser } from '../../utils/store'
+import { clearIndexCache } from '../../utils/guideIndex'
 import { LEGAL_LINKS } from '../../api/config'
 
 // mode：login（登录）/ register（注册）/ forgot（忘记密码）
@@ -331,6 +332,11 @@ async function onSubmit() {
     // 与主站登录响应结构一致：{ token, user }
     setToken(data.token)
     setUser(data.user)
+    // 🚨 端内索引带**当前用户**的 liked / favorited（「我的」页的收藏/点赞列表靠它），
+    //    刚登录的这份缓存是**上一个身份（或游客）**的 ⇒ 必须丢弃，让「我的」页重新同步。
+    //    不清的话，登录后 10 分钟（索引 TTL）内会看到「收藏/点赞是空的」——
+    //    页面看起来完全正常，只是数据是别人的。
+    clearIndexCache()
     uni.showToast({ title: '登录成功', icon: 'success' })
     setTimeout(() => uni.navigateBack({ fail: () => uni.switchTab({ url: '/pages/my/my' }) }), 600)
   } catch (e) {

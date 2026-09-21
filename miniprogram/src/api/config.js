@@ -65,25 +65,34 @@ export const STORAGE_KEYS = {
    *   结构不同，复用会互相覆盖。
    */
   SEARCH_HISTORY: 'yumu_search_history',
-  FAVORITES: 'yumu_favorites',
-  LIKES: 'yumu_likes',
+  /**
+   * ⚠️ 已废弃（2026-09-21）：`yumu_favorites` / `yumu_likes` 两个键**不再读写**。
+   *   点赞与收藏改为「登录后才能用 + 数据在服务端」，本机不再保存这两类记录。
+   *   老设备里残留的旧数据无害（没人再读它），也不要写迁移逻辑 —— 那批数据
+   *   本身就是「不真实的点赞」（没进服务端、没算进 likeCount）。
+   */
   /** 本机已举报的帖子 id 列表（防重复举报入口，见 utils/store.js） */
   REPORTED: 'yumu_reported',
   /**
-   * 端内聚合索引（帖子池 + 平台归属），见 utils/guideIndex.js。
+   * 端内聚合索引（帖子池 + 平台归属 + **当前用户的 liked/favorited**），见 utils/guideIndex.js。
    *
-   * 🚨 键名带 `_v3` 是**故意的**（2026-09-21）：v2 → v3 是因为索引记录**新增了 `userId`**
-   *   字段（用于端内区分官方帖与玩家帖）。
-   *   若不升版本，老设备上仍是那份没有 `userId` 的 v2 缓存 ⇒ 官方帖识别全部落空
-   *   （攻略页不排除官方帖、资讯页筛不出官方帖），而且在 TTL 到期前**看起来一切正常**。
-   *   改键名 = 让所有设备下一次启动就重新同步，不用等 TTL。
+   * 🚨 键名带版本号是**故意的**，每次改缓存结构都要升。历史：
+   *   v2 → v3（9-21）：记录新增 `userId`（端内识别官方帖）。不升版本的话，
+   *     老设备那份没有 `userId` 的缓存会让官方角标全部落空 —— 属于「静默错」。
+   *   v3 → v4（9-21，**本次**）：记录新增 `liked` / `favorited`（「我的」页的收藏/点赞列表
+   *     由端内索引给出）。不升版本的话，老设备那份**没有这两个字段**的缓存会让
+   *     收藏页、点赞页恒为空 —— 页面看起来就是「你还没收藏过」，而真相是缓存过期货。
+   *   更早的 v1 曾把一份「游戏元数据为空」的坏缓存写进真机，导致平台分类整整坏一天、
+   *   且**自愈不了**（详见 utils/apiGuard.js 头部复盘）。
+   *   ⇒ 以后凡改动缓存的**语义或结构**，都照此升版本，别只改 TTL。
+   *   （另有读时校验兜底：`utils/apiGuard.js#isUsableMeta` 会把空 map 判废。）
    *
-   *   历史：v1 曾经把一份「游戏元数据为空」的坏缓存（`map:{}`）写进用户真机，
-   *   导致平台分类整整坏一天、且自愈不了。
-   *   以后凡改动缓存的**语义或结构**，都照此升版本，别只改 TTL。
-   *   （新代码另有读时校验兜底：`utils/apiGuard.js#isUsableMeta` 会把空 map 判废。）
+   * ⚠️ 这份索引**带当前用户的点赞/收藏状态**（登录态下接口才下发），所以
+   *   **登录 / 退出后必须清掉它重新同步**（`utils/guideIndex.js#clearIndexCache`，
+   *   调用点在 pages/login 与 pages/my 的退出流程）—— 否则「我的」页那两份列表
+   *   在 TTL（10 分钟）内会显示上一个身份的数据。
    */
-  GUIDE_INDEX: 'yumu_guide_index_v3',
+  GUIDE_INDEX: 'yumu_guide_index_v4',
   /** 全部游戏的 `gameId → platform` 映射（变化很慢，单独长缓存；同样带 `_v2`，理由同上） */
   GAME_PLATFORM: 'yumu_game_platform_v2'
 }

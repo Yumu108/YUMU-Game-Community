@@ -21,6 +21,14 @@
  *   · 新帖要等下一次同步（TTL 10 分钟过期 / 下拉刷新强刷）才会出现；
  *   · 内容池涨到几千帖时应改成后端加 platform 查询参数（join game 表即可，无需改表结构）。
  *
+ * ── ⚠️ 这份索引**带当前用户的点赞/收藏状态**（2026-09-21 起）──────────────
+ *   记录里多了 `liked` / `favorited`（后端在带 token 的列表请求里下发），
+ *   「我的」页的收藏/点赞两个列表就是从这里筛的。由此带来两条**必须遵守**的纪律：
+ *     ① 登录 / 退出登录 → `clearIndexCache()`（换身份了，缓存是上一个身份的）；
+ *     ② 点赞 / 收藏成功 → `patchIndexFlag()`（把服务端确认的结果写回缓存，
+ *        否则「我的」页会滞后到下次同步）。
+ *   缓存键已相应升到 `_v4`。游客态下这两个字段是 `undefined`（接口不下发）。
+ *
  * ── 🚨 2026-09-20 真机事故：这一层曾经把「平台分类」整体锁死一天 ──────────
  *   现象：攻略/资讯的平台计数全 0、游戏库「全部 0」+ 类型条空。
  *   根因：一条**看着成功的空响应**（`code:200` + `records:[]`，见 `utils/apiGuard.js`）
@@ -57,6 +65,15 @@ const MAX_PAGES = 6
  *   官方帖天然只落在资讯侧。`userId` 现在只服务角标判定。
  *   🚨 当初加这个字段时同步把缓存键升到了 `_v3`（`STORAGE_KEYS.GUIDE_INDEX`）：
  *   不升版本的话，老设备上那份**没有 `userId`** 的缓存会让角标全部落空 —— 属于「静默错」。
+ *
+ * ⚠️ `liked` / `favorited`（2026-09-21 新增）必须留着：这是**当前用户的**点赞/收藏状态，
+ *   「我的」页的「收藏 / 点赞」两个列表就是从这里筛出来的（游客为 undefined）。
+ *   后端在带 token 的列表请求里会填这两个字段（`PostServiceImpl#toVOList` 批量查
+ *   likes / favorite 表），所以**索引是登录态相关的**：
+ *     · 登录 / 退出后必须 `clearIndexCache()` 重新同步（见该函数注释）；
+ *     · 本机点赞/收藏成功后要 `patchIndexFlag()` 就地写回，否则「我的」页会滞后到下次同步。
+ *   同步把缓存键升到了 `_v4` —— 老缓存没有这两个字段，会让收藏/点赞页**恒为空**，
+ *   而页面上看起来只是「你还没收藏过」，属于同一类静默错。
  */
 const KEEP = [
   'id',
@@ -74,7 +91,9 @@ const KEEP = [
   'viewCount',
   'isEssence',
   'isTop',
-  'authorName'
+  'authorName',
+  'liked',
+  'favorited'
 ]
 
 function readCache(key) {
@@ -188,6 +207,58 @@ function toIndexItem(p, platformMap) {
 export function readCachedIndex() {
   const c = readCache(STORAGE_KEYS.GUIDE_INDEX)
   return isUsableIndex(c) ? c : null
+}
+
+/* ==================== 登录态相关的缓存维护（2026-09-21 新增） ==================== */
+
+/**
+ * 丢弃端内索引缓存，逼下一次 `ensureIndex` 重新同步。
+ *
+ * 🚨 **登录 / 退出登录后必须调用**：索引记录带**当前用户**的 `liked` / `favorited`
+ *   （见 `KEEP` 注释），换身份后那份缓存就是**上一个身份的数据**。
+ *   不清的话「我的」页的收藏/点赞列表在 TTL（10 分钟）内会一直显示别人的/空的，
+ *   而且页面看起来完全正常（就是一份「你还没收藏过」）—— 典型的静默错。
+ *
+ * 为什么是「删缓存」而不是「force 重新拉一次」：
+ *   · 登录页在 `navigateBack` 前拉索引会让登录动作多等一次网络往返（3~4 个请求）；
+ *   · 而用户登录后未必立刻去「我的」页，真正的同步时机应该交给那个页面。
+ *   删掉缓存后，谁先要谁同步 —— 语义上更准。
+ *
+ * 📌 调用点只有两处：`pages/login`（登录/注册成功后）与 `pages/my` 的退出登录。
+ *   **不需要**在 `api/request.js#clearSession` 里也加一遍（401 自动清会话那条路）：
+ *   会话被 401 清掉后，页面上 `logged` 变为 false，**根本不会再去读索引里的
+ *   liked / favorited**；而重新建立会话的**唯一入口就是登录页**，那里已经清过了。
+ *   （在请求层去知道索引的存在反而是层次倒挂。）
+ */
+export function clearIndexCache() {
+  try {
+    uni.removeStorageSync(STORAGE_KEYS.GUIDE_INDEX)
+  } catch (e) {
+    /* 删不掉也不阻断：读侧还有 TTL 与形态校验兜底 */
+  }
+}
+
+/**
+ * 就地写回索引缓存里某条帖子的字段（目前只用于 `liked` / `favorited`）。
+ *
+ * 📌 为什么需要它：点赞/收藏成功后会立刻 `navigateBack` 到「我的」页，
+ *   而那时索引缓存还带着**旧的**标记（TTL 10 分钟）⇒ 刚收藏的内容不会出现在列表里。
+ *   在这里写回，等于把「服务端已确认的结果」同步进缓存，列表即刻正确。
+ *
+ * ⚠️ 缓存不存在 / 帖不在缓存里（如缓存只覆盖攻略+资讯两个板块）时**静默不做任何事** ——
+ *   这不是错误：没有缓存时下次 `ensureIndex` 自然会拿到最新数据。
+ *
+ * @param {number|string} id 帖子 id
+ * @param {object} patch 要合并的字段，如 `{ favorited: true }`
+ */
+export function patchIndexFlag(id, patch) {
+  const pid = Number(id)
+  if (!pid || !patch) return
+  const c = readCache(STORAGE_KEYS.GUIDE_INDEX)
+  if (!isUsableIndex(c)) return
+  const items = c.items.map((it) => (Number(it.id) === pid ? { ...it, ...patch } : it))
+  // `at` 保持不变：这是「本地已知事实的修正」，不是一次重新同步，不该刷新 TTL
+  writeCache(STORAGE_KEYS.GUIDE_INDEX, { at: c.at, items })
 }
 
 /** 并发去重：首页多个模块同时要索引时，只发一轮请求 */

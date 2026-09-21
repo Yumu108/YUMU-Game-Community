@@ -503,28 +503,51 @@ const OFFICIAL_UID = 20142
       assert('B6 切回后卡片恢复', false)
     }
 
-    // 操作条：点赞 / 收藏 / 分享（三个都必须能点亮或可点）
+    // 操作条：点赞 / 收藏 / 分享
     const fabBtns = await page.$$('.fab__btn')
     assert('B7 操作条按钮数为 3（点赞 / 收藏 / 分享）', fabBtns.length === 3, `n=${fabBtns.length}`)
-    const likeTxtBefore = ((await text('.fab')) || '').replace(/\s+/g, '')
-    assert('B8 默认未点赞', likeTxtBefore.includes('点赞') && !likeTxtBefore.includes('已赞'), likeTxtBefore)
+    const fabBefore = ((await text('.fab')) || '').replace(/\s+/g, '')
+    assert(
+      'B8 游客默认未点赞、未收藏',
+      fabBefore.includes('点赞') && fabBefore.includes('收藏') &&
+        !fabBefore.includes('已赞') && !fabBefore.includes('已收藏'),
+      fabBefore
+    )
+
+    /* 🚨 口径变更（2026-09-21 用户明确）：点赞 / 收藏由「本机 localStorage 记录」改为
+       **服务端真实接口 + 登录门禁**。游客点击必须 ① 不点亮 ② 跳登录页 ③ 不发写请求。
+       三条判据缺一不可：只断文案看不出有没有偷偷写数据；只断 hash 看不出按钮是不是先亮了；
+       只断请求看不出门禁是否只挂在网络层（那样用户根本不知道自己被拦了）。 */
+    const gateReqs = []
+    const onGateReq = (r) => { if (/\/posts\/\d+\/(like|favorite)(\?|$)/.test(r.url())) gateReqs.push(r.url()) }
+    page.on('request', onGateReq)
 
     await fabBtns[0].click()
-    await sleep(600)
-    const afterLike = ((await text('.fab')) || '').replace(/\s+/g, '')
-    assert('B9 点「点赞」后点亮（本机记录）', afterLike.includes('已赞'), afterLike)
+    await sleep(1500)
+    const hashLike = await page.evaluate(() => location.hash)
+    assert('B9 游客点「点赞」→ 跳登录页（不写数据）', /pages\/login\/login/.test(hashLike), `hash=${hashLike}`)
 
-    await fabBtns[1].click()
-    await sleep(600)
-    const afterFav = ((await text('.fab')) || '').replace(/\s+/g, '')
-    assert('B10 点「收藏」后文案变「已收藏」', afterFav.includes('已收藏'), afterFav)
-    await fabBtns[1].click()
-    await sleep(600)
-    assert('B11 再点取消收藏', !(((await text('.fab')) || '').replace(/\s+/g, '')).includes('已收藏'))
+    // 逐个验证：每次点完都先回到详情页（点赞已经把人带去登录页了）
+    await goto('/pages/post/detail?id=' + hit.id)
+    const btnsFav = await page.$$('.fab__btn')
+    if (btnsFav[1]) {
+      await btnsFav[1].click()
+      await sleep(1500)
+    }
+    const hashFav = await page.evaluate(() => location.hash)
+    assert('B10 游客点「收藏」→ 跳登录页（不写数据）', /pages\/login\/login/.test(hashFav), `hash=${hashFav}`)
+    page.off('request', onGateReq)
+    assert(
+      'B11 游客点赞 / 收藏未发出写请求（网络事实）',
+      gateReqs.length === 0,
+      gateReqs.length ? gateReqs.join(',') : '未发出 like/favorite 请求'
+    )
 
-    // B12 不能出现「功能没做完」式文案（原来点赞会弹「点赞需登录，第二期开放」）
-    const fabTxt = await text('.fab')
-    assert('B12 操作条不含「第二期开放 / 点赞需登录」', !/第二期|点赞需登录/.test(fabTxt), fabTxt.replace(/\s+/g, ' '))
+    // 回到详情页再检查操作条文案与作者区（上一步停在登录页）
+    await goto('/pages/post/detail?id=' + hit.id)
+    // B12 不能出现「功能没做完」式文案（历史遗留：曾弹「点赞需登录，第二期开放」）
+    const fabTxt = (await text('.fab')) || ''
+    assert('B12 操作条不含「第二期开放」这类没做完的文案', !/第二期/.test(fabTxt), fabTxt.replace(/\s+/g, ' '))
     assert('B13 详情页渲染了作者头像或首字占位', (await count('.author__avatar')) + (await count('.author__ph')) >= 1)
   } else {
     for (const n of ['B2', 'B3', 'B4', 'B5', 'B6', 'B7', 'B8', 'B9', 'B10', 'B11', 'B12', 'B13']) {
@@ -923,19 +946,31 @@ const OFFICIAL_UID = 20142
   console.log('\n--- E. 我的 ---')
   await goto('/pages/my/my')
   assert('E1 账号区渲染', (await count('.user')) === 1)
-  assert('E2 收藏 / 点赞 / 历史 三 Tab', (await count('.tabs__item')) === 3, `tab=${await count('.tabs__item')}`)
+  /* 🚨 口径变更（2026-09-21）：游客（未登录）在「我的」页**只有浏览历史**。
+     收藏 / 点赞是账号数据（服务端），游客拿不到；摆两个永远空着的 Tab
+     只会让人以为「我明明收藏过」—— 那正是本项目最忌讳的「静默骗人」。 */
+  assert(
+    'E2 游客只有「历史」一个 Tab（收藏 / 点赞需登录）',
+    (await count('.tabs__item')) === 1,
+    `tab=${await count('.tabs__item')}`
+  )
   const myContent = await page.content()
-  assert('E3 明确说明记录保存在本机', /本机/.test(myContent))
+  assert('E3 游客态给出登录引导', (await count('.user__login')) === 1 && /登录/.test(myContent), '')
   assert('E4 不出现「未登录」这种像坏掉的文案', !myContent.includes('未登录'))
   await page.screenshot({ path: path.join(SHOTS, 'E-my.png') })
-  // E5 上一节点赞过的内容要出现在「我赞过的」里（同一浏览器上下文，localStorage 是共享的）
-  const likeTab = (await page.$$('.tabs__item'))[1]
-  if (likeTab) {
-    await likeTab.click()
+  // E5 游客必须能看自己的浏览历史（用户明确要求保留这一项）；B 组已经浏览过详情页，此处应有记录
+  const hisTab = (await page.$$('.tabs__item'))[0]
+  if (hisTab) {
+    await hisTab.click()
     await sleep(600)
-    assert('E5 「点赞」Tab 可切换且有内容（本机点赞可见）', (await count('.item')) >= 1, `item=${await count('.item')}`)
+    const onTxt = ((await text('.tabs__item--on')) || '').replace(/\s+/g, '')
+    assert(
+      'E5 游客可切到「历史」且看得到记录（且无收藏 / 点赞 Tab）',
+      /历史/.test(onTxt) && (await count('.tabs__item')) === 1 && (await count('.item')) >= 1,
+      `on=${onTxt} item=${await count('.item')}`
+    )
   } else {
-    assert('E5 「点赞」Tab 可切换且有内容（本机点赞可见）', false)
+    assert('E5 游客可切到「历史」且看得到记录（且无收藏 / 点赞 Tab）', false, '无 Tab')
   }
 
   /* ================= F. 搜索 ================= */
@@ -1299,6 +1334,71 @@ const OFFICIAL_UID = 20142
     `opened=${JSON.stringify(opened)}`
   )
   await page.screenshot({ path: path.join(SHOTS, 'L-register-agree.png') })
+
+  /* ================= M. 游客只读门禁（2026-09-21 新增） =================
+   * 口径（用户明确）：游客**只能看** —— 攻略 / 资讯 / 游戏库 / 搜索 / 帖子详情 + 浏览历史；
+   *   点赞 / 收藏 / 举报一律先登录；**分享不设门禁**（不写数据、不绑身份，保留给游客）。
+   *
+   * 为什么单独开一个匿名 context，而不是复用主 page：
+   *   ① 点「分享」会触发剪贴板 API（headless 下可能报权限错）。主 context 的 pageerror
+   *      会汇进 `errors` 数组、被 G2「无 JS 运行时错误」当成硬错误 —— 那会造成假失败。
+   *      独立 context 的报错只收进本地数组（`void mErrs`），不污染全局判定。
+   *   ② 与主流程的登录态彻底隔离，「游客」场景才是真游客。
+   *
+   * B 组只验了**前端门禁**（提示 + 跳登录 + 不发请求）。这里补上**后端闸门**：
+   *   前端门禁是体验层，能被绕过；真正的闸门必须在服务端 —— 匿名直接打接口必须 401。
+   */
+  console.log('\n--- M. 游客只读门禁 ---')
+  const mCtx = await browser.newContext({ viewport: { width: 390, height: 844 } })
+  const mPage = await mCtx.newPage()
+  const mErrs = []
+  mPage.on('pageerror', (e) => mErrs.push(String(e)))
+  const mGoto = async (h) => {
+    await mPage.goto(`${BASE}/?t=${Date.now()}#${h}`, { waitUntil: 'domcontentloaded' }).catch(() => {})
+    await sleep(3200)
+  }
+
+  await mGoto('/pages/post/detail?id=' + candIds[0])
+  const mTitle = (await mPage.$eval('.title', (e) => e.innerText).catch(() => '')) || ''
+  assert('M1 游客可正常浏览详情正文（只读可用）', mTitle.trim().length > 4, `title=${mTitle.slice(0, 24)}`)
+
+  // M2 分享不设门禁：点了必须仍留在详情页（不跳登录页）
+  const mFab = await mPage.$$('.fab__btn')
+  let mHashShare = '(未点到按钮)'
+  if (mFab[2]) {
+    await mFab[2].click()
+    await sleep(1200)
+    mHashShare = await mPage.evaluate(() => location.hash)
+  }
+  assert('M2 游客点「分享」→ 不跳登录页（分享保留给游客）', !!mFab[2] && !/pages\/login\/login/.test(mHashShare), `hash=${mHashShare}`)
+
+  /* M3-M5 后端闸门：匿名直接打接口（绕开前端 UI）。
+     ⚠️ 判据取 **HTTP 状态码**（不是响应体里的 code）：SecurityConfig 对未认证请求
+     直接 401。只断「code=401」会漏掉「HTTP 200 但 body 说 401」这种错配。 */
+  const mApi = await mPage.evaluate(async (id) => {
+    const out = {}
+    for (const act of ['like', 'favorite']) {
+      const r = await fetch(`/api/posts/${id}/${act}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' }
+      }).catch(() => null)
+      out[act] = r ? r.status : 'ERR'
+    }
+    const d = await fetch(`/api/posts/${id}`).then((x) => x.json()).catch(() => null)
+    out.readCode = d && d.code
+    out.liked = d && d.data ? d.data.liked : '?'
+    out.favorited = d && d.data ? d.data.favorited : '?'
+    return out
+  }, candIds[0])
+  assert('M3 匿名 POST /posts/{id}/like → 401（闸门在后端）', String(mApi.like) === '401', `status=${mApi.like}`)
+  assert('M4 匿名 POST /posts/{id}/favorite → 401', String(mApi.favorite) === '401', `status=${mApi.favorite}`)
+  assert(
+    'M5 匿名读详情成功且 liked / favorited 均为 false',
+    mApi.readCode === 200 && mApi.liked !== true && mApi.favorited !== true,
+    `readCode=${mApi.readCode} liked=${mApi.liked} favorited=${mApi.favorited}`
+  )
+  await mCtx.close()
+  void mErrs
 
   /* ================= R. 「平台分类全 0」事故回归（2026-09-20） =================
    * 真机事故的完整链条（详见 miniprogram/src/utils/apiGuard.js 头部复盘）：

@@ -2,9 +2,10 @@
   <view v-if="post" class="mp-page">
     <!--
       非公开帖（status=1 隐藏 / 2 待审）横幅。
-      🚨 说明：小程序端**不登录**，后端对匿名访问这类帖直接 404（可见性矩阵见 PostServiceImpl#getDetail），
-        所以正常拿不到；这里按 `status/previewOnly` 兜底，是为了万一将来接入登录后
-        不会把「审核中」的帖子当成正常帖渲染 —— 按主站规则它应当**完全只读**。
+      🚨 说明：后端对**匿名**访问这类帖直接 404（可见性矩阵见 PostServiceImpl#getDetail），
+        所以游客正常拿不到；登录后（2026-09-17 起本端已接入与主站通用的账号）作者本人 /
+        管理员可能拿到预览态，这里按 `status/previewOnly` 兜底渲染 —— 按主站规则它应当
+        **完全只读**（底部操作条与举报入口都由 `isNonPublic` 拦掉）。
     -->
     <view v-if="flagText" class="flag">
       <text class="flag__text">{{ flagText }}</text>
@@ -136,13 +137,14 @@
     </view>
 
     <!--
-      底部操作条：**点赞 / 收藏 / 分享** 三个动作，全部是本端真能做的。
-      🚨 关于「点赞」的口径（别写成假按钮、也别虚增数据）：
-        · 后端 `POST /posts/{id}/like` 在 SecurityConfig 里是 `authenticated()`，
-          必须有登录态；本端是零登录的内容浏览端，**拿不到真点赞**；
-        · 所以这里与「收藏」用同一套**本机记录**模型：可点亮、可回看、可取消，
-          页面展示的 `likeCount` 仍是服务端真实数字，**不做 +1 伪装**；
-        · 「我的」页有「我赞过的」列表，用户能看见自己点过的内容。
+      底部操作条：**点赞 / 收藏 / 分享**。
+      🚨 2026-09-21 口径变更（别再按老理解读这里）：
+        · 点赞、收藏**需要登录**，且是**服务端真实接口**（`POST /posts/{id}/like|favorite`）——
+          原来它们是「本机记录」（零登录也能点，但不改服务端数据、换设备即丢）。
+          现在未登录点击 → 提示 + 跳登录页，不写任何数据（见 `utils/authGate.js`）。
+        · **分享不设门禁**：它不写数据也不绑身份，游客照样能复制链接 / 转发
+          —— 对内容展示端反而是利好（用户 2026-09-21 明确保留）。
+        · 展示的 `likeCount` 始终是服务端数字，点赞成功后用接口回传值刷新，**不做 +1 伪装**。
     -->
     <view v-if="!isNonPublic" class="fab">
       <view class="fab__btn" :class="{ 'fab__btn--on': liked }" @click="onLike">
@@ -197,15 +199,16 @@
 <script setup>
 import { ref, computed } from 'vue'
 import { onLoad, onShareAppMessage } from '@dcloudio/uni-app'
-import { fetchPostDetail } from '../../api/community'
+import { fetchPostDetail, togglePostLike, togglePostFavorite } from '../../api/community'
 import { ASSET_BASE } from '../../api/config'
 import { resolveImage, formatTime, platformLabel } from '../../utils/format'
 import { contentBlocks } from '../../utils/content'
 import { parseReading } from '../../utils/stepParser'
-import { addHistory, isFavorite, toggleFavorite, isLiked, toggleLike, getUser, isReported, markReported } from '../../utils/store'
+import { addHistory, isReported, markReported } from '../../utils/store'
+import { requireLogin } from '../../utils/authGate'
 import { submitReport } from '../../api/auth'
 import { REPORT_REASONS } from '../../api/config'
-import { ensureIndex, relatedOf } from '../../utils/guideIndex'
+import { ensureIndex, relatedOf, patchIndexFlag } from '../../utils/guideIndex'
 import PostCard from '../../components/PostCard.vue'
 import StepCard from '../../components/StepCard.vue'
 import Skeleton from '../../components/Skeleton.vue'
@@ -222,6 +225,8 @@ const errMsg = ref('')
 const avatarOk = ref(true)
 const badImgs = ref({})
 const postId = ref(0)
+/** 底部操作条在途标记：点赞/收藏都是网络请求，防止连点打出重复 toggle */
+const fabBusy = ref(false)
 
 /* ==================== 举报（2026-09-17 新增） ==================== */
 
@@ -240,10 +245,9 @@ function onReportTap() {
   if (reported.value) {
     return uni.showToast({ title: '这篇内容你已举报过，管理员会尽快处理', icon: 'none' })
   }
-  if (!getUser()) {
-    // 未登录：先去登录（账号与主站通用），登录成功 navigateBack 自动回到本页
-    uni.showToast({ title: '举报需要先登录（与主站账号通用）', icon: 'none' })
-    return setTimeout(() => uni.navigateTo({ url: '/pages/login/login' }), 600)
+  if (!requireLogin('举报需要先登录（与主站账号通用）')) {
+    // 未登录：提示 + 跳登录页（统一走 utils/authGate.js），登录后 navigateBack 自动回到本页
+    return
   }
   reportReasonIdx.value = -1
   reportSheet.value = true
@@ -372,8 +376,12 @@ async function load() {
     //   **不要**调 `GET /posts/{id}/tags`：后端该路径只注册了 PUT（发帖人改标签），
     //   GET 会 405「请求方法不支持：GET」（2026-09-17 实测踩坑）。
     tags.value = (d && Array.isArray(d.tags)) ? d.tags : []
-    faved.value = isFavorite(id)
-    liked.value = isLiked(id)
+    // 点赞 / 收藏的初始态**以服务端为准**（2026-09-21 起）：
+    //   登录态下 `PostVO` 才带 `liked` / `favorited`（后端批量查 likes / favorite 表），
+    //   游客拿到的是 undefined ⇒ 一律按「未点赞 / 未收藏」渲染 —— 与门禁口径一致，
+    //   也**不能**再退回本机记录去猜（那正是这次要去掉的东西）。
+    faved.value = !!d && d.favorited === true
+    liked.value = !!d && d.liked === true
     reported.value = isReported(id)
     if (d) addHistory(d) // 记录浏览历史（本地）
   } catch (e) {
@@ -425,29 +433,51 @@ onLoad((q = {}) => {
 })
 
 /**
- * 点赞 —— **本机记录**（后端点赞接口需要登录态，本端零登录）。
- * 展示的 `likeCount` 仍是服务端真实数字，不做 +1 伪装；写满 200 条时如实提示而非静默丢弃。
+ * 点赞 —— **服务端真实接口**（2026-09-21 口径变更：原来只是「本机记录」）。
+ *
+ * 三件事必须守住：
+ *  ① **未登录先拦下**：`requireLogin` 给提示并跳登录页，**不写任何数据**；
+ *  ② 状态以**接口返回值**为准（`r.liked` / `r.likeCount`），不在本地自己取反 ——
+ *     后端是 toggle 语义，连点两下时本地推演会漂；
+ *  ③ 成功后用 `patchIndexFlag` 把结果写回端内索引缓存，否则「我的」页的点赞列表
+ *     要等到下一次同步（TTL 10 分钟）才更新。
+ *
+ * ⚠️ 不做乐观更新：失败时本地状态保持不变。这个项目对「把失败伪装成成功」零容忍，
+ *   一个先亮起来、失败后不回滚的点赞按钮正是那类伪装。
  */
-function onLike() {
-  if (!post.value) return
-  const r = toggleLike(post.value)
-  liked.value = r.on
-  if (r.full) {
-    uni.showToast({ title: '本机点赞已满 200 条，请先到「我的」清理', icon: 'none', duration: 2000 })
-    return
+async function onLike() {
+  if (!post.value || fabBusy.value) return
+  if (!requireLogin('点赞需要先登录（与主站账号通用）')) return
+  fabBusy.value = true
+  try {
+    const r = await togglePostLike(post.value.id)
+    liked.value = r.liked === true
+    // 服务端回传的才是真值（页面一直展示服务端数字，这里同步成最新）
+    if (typeof r.likeCount === 'number') post.value.likeCount = r.likeCount
+    patchIndexFlag(post.value.id, { liked: liked.value })
+    uni.showToast({ title: liked.value ? '已点赞' : '已取消点赞', icon: 'none', duration: 1500 })
+  } catch (e) {
+    /* 失败文案已由请求层 toast 后端原文；本地状态保持不变 */
+  } finally {
+    fabBusy.value = false
   }
-  uni.showToast({ title: r.on ? '已点赞（记录在本机）' : '已取消点赞', icon: 'none', duration: 1500 })
 }
 
-function onFav() {
-  if (!post.value) return
-  const r = toggleFavorite(post.value)
-  faved.value = r.on
-  if (r.full) {
-    uni.showToast({ title: '本机收藏已满 200 条，请先到「我的」清理', icon: 'none', duration: 2000 })
-    return
+/** 收藏 —— 同 `onLike`（服务端真实接口 + 登录门禁 + 回写索引） */
+async function onFav() {
+  if (!post.value || fabBusy.value) return
+  if (!requireLogin('收藏需要先登录（与主站账号通用）')) return
+  fabBusy.value = true
+  try {
+    const r = await togglePostFavorite(post.value.id)
+    faved.value = r.favorited === true
+    patchIndexFlag(post.value.id, { favorited: faved.value })
+    uni.showToast({ title: faved.value ? '已加入收藏' : '已取消收藏', icon: 'none', duration: 1500 })
+  } catch (e) {
+    /* 同上 */
+  } finally {
+    fabBusy.value = false
   }
-  uni.showToast({ title: r.on ? '已加入收藏' : '已取消收藏', icon: 'none', duration: 1500 })
 }
 
 function onShare() {

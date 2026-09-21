@@ -1,15 +1,23 @@
 /**
- * 本地存储 —— 收藏与浏览历史。
+ * 本机存储 —— **浏览历史 / 登录会话 / 举报去重标记**。
  *
- * 第一期**不依赖登录**：数据全在 `uni.setStorageSync`，换设备会丢，
- * 但换来「零登录成本、打开即用」。等接入登录后可平滑升级为
- * 「本地镜像 + 服务端 `/posts/{id}/favorite` 双写」。
+ * 🚨 2026-09-21 口径变更（重要，别再按老理解读这里）：
+ *   **收藏与点赞不再走本机**。原先它们和浏览历史一样存在 `uni.setStorageSync`
+ *   （零登录也能点、换了设备就丢、还**不会**计入帖子真实的 `likeCount`）。
+ *   现在改为「登录后才能用、数据落在服务端」：
+ *     · 点赞  `POST /posts/{id}/like`      → `{liked, likeCount}`（真实计入赞数）
+ *     · 收藏  `POST /posts/{id}/favorite`  → `{favorited}`
+ *     · 未登录点击 → `utils/authGate.js#requireLogin` 提示 + 跳登录页
+ *   列表侧则由端内索引给出（索引记录带 `liked` / `favorited`，见 utils/guideIndex.js）。
+ *   旧的 `yumu_favorites` / `yumu_likes` 两个键**已废弃**，不再读写。
+ *
+ *   为什么这个模型站不住：点赞/收藏天然是「账号资产」，走本机就等于
+ *   既不真实（不改服务端数据）、又不可靠（换设备即失）。登录接入后（9-17）它的
+ *   存在理由已经消失，留着只会让人以为「登录了还是只在这台设备」。
  */
 import { STORAGE_KEYS } from '../api/config'
 
 const MAX_HISTORY = 50
-const MAX_FAVORITES = 200
-const MAX_LIKES = 200
 
 function read(key, fallback) {
   try {
@@ -28,7 +36,7 @@ function write(key, value) {
   }
 }
 
-/* ==================== 浏览历史 ==================== */
+/* ==================== 浏览历史（本机，游客也可用） ==================== */
 
 export function getHistory() {
   const list = read(STORAGE_KEYS.HISTORY, [])
@@ -37,6 +45,10 @@ export function getHistory() {
 
 /**
  * 记录一次浏览（去重后置顶）。
+ *
+ * 📌 这是**唯一对游客开放**的写入动作 —— 它不绑身份、不影响服务端数据，
+ *   属于「本机便利功能」，所以不加登录门禁（用户 2026-09-21 明确口径）。
+ *
  * @param {{id:number,title:string,boardName?:string,gameName?:string}} post
  */
 export function addHistory(post) {
@@ -55,86 +67,6 @@ export function addHistory(post) {
 
 export function clearHistory() {
   write(STORAGE_KEYS.HISTORY, [])
-}
-
-/* ==================== 收藏 ==================== */
-
-export function getFavorites() {
-  const list = read(STORAGE_KEYS.FAVORITES, [])
-  return Array.isArray(list) ? list : []
-}
-
-export function isFavorite(id) {
-  return getFavorites().some((x) => x.id === id)
-}
-
-/**
- * 切换收藏状态。
- *
- * 🚨 2026-09-17 修：原来超上限时 `slice(0, MAX)` **静默丢弃最旧的一条** ——
- *   用户点了「收藏」，提示「已加入收藏」，但另一条悄无声息地没了。
- *   这与本项目的三条工程约定同族（故障/损失被伪装成正常）。
- *   现在改为：**不再静默丢弃**，写满时不动原有数据，把 `full: true` 交回调用方去提示。
- *
- * @returns {{on:boolean, full:boolean}} on=切换后是否已收藏；full=因写满而未能收藏
- */
-export function toggleFavorite(post) {
-  if (!post || !post.id) return { on: false, full: false }
-  const list = getFavorites()
-  const idx = list.findIndex((x) => x.id === post.id)
-  if (idx >= 0) {
-    list.splice(idx, 1)
-    write(STORAGE_KEYS.FAVORITES, list)
-    return { on: false, full: false }
-  }
-  if (list.length >= MAX_FAVORITES) return { on: false, full: true }
-  list.unshift(toBrief(post))
-  write(STORAGE_KEYS.FAVORITES, list)
-  return { on: true, full: false }
-}
-
-/* ==================== 点赞（本机记录） ==================== */
-
-/**
- * 点赞 —— **仅存本机，不上传**。
- *
- * 🚨 为什么不做「真点赞」：后端 `POST /posts/{id}/like` 落在
- *   `SecurityConfig` 的 `.anyRequest().authenticated()` 里，**必须有登录态**；
- *   而本端定位是零登录的内容浏览端（见 docs/方案设计.md §二）。
- *   所以这里与「收藏」采用**同一套本地模型**：可点亮、可回看、可取消，
- *   但**不会**去篡改帖子真实的 `likeCount`（页面展示的仍是服务端数字）。
- *   如实标注「本机记录」，不做假按钮、不虚增数据。
- */
-export function getLikes() {
-  const list = read(STORAGE_KEYS.LIKES, [])
-  return Array.isArray(list) ? list : []
-}
-
-export function isLiked(id) {
-  return getLikes().some((x) => x.id === id)
-}
-
-/**
- * 切换点赞。
- * @returns {{on:boolean, full:boolean}} 语义同 toggleFavorite
- */
-export function toggleLike(post) {
-  if (!post || !post.id) return { on: false, full: false }
-  const list = getLikes()
-  const idx = list.findIndex((x) => x.id === post.id)
-  if (idx >= 0) {
-    list.splice(idx, 1)
-    write(STORAGE_KEYS.LIKES, list)
-    return { on: false, full: false }
-  }
-  if (list.length >= MAX_LIKES) return { on: false, full: true }
-  list.unshift(toBrief(post))
-  write(STORAGE_KEYS.LIKES, list)
-  return { on: true, full: false }
-}
-
-export function clearLikes() {
-  write(STORAGE_KEYS.LIKES, [])
 }
 
 /* ==================== 登录会话 ==================== */
@@ -194,16 +126,4 @@ export function markReported(id) {
 function getReported() {
   const list = read(STORAGE_KEYS.REPORTED, [])
   return Array.isArray(list) ? list : []
-}
-
-/** 本地记录只留「能在列表里显示出来」的最小字段集 */
-function toBrief(post) {
-  return {
-    id: post.id,
-    title: post.title || '',
-    boardName: post.boardName || '',
-    gameName: post.gameName || '',
-    likeCount: post.likeCount || 0,
-    at: Date.now()
-  }
 }

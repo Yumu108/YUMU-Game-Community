@@ -39,6 +39,23 @@ export const fetchPosts = ({ boardId, gameId, sort = SORT.LATEST, current = 1, s
 /** 帖子详情（`view` 传 true 时后端会自增浏览数） */
 export const fetchPostDetail = (id) => get(`/posts/${id}`)
 
+/* ---------- 点赞 / 收藏（2026-09-21 起改为**服务端真实**接口） ----------
+ *
+ * 🚨 口径变更：这两件事**必须先登录**（后端 `SecurityConfig` 里是 `authenticated()`，
+ *   未带 token 直接 401）。原先小程序端用「本机记录」绕开了这个限制 ——
+ *   结果是既不改服务端数据（`likeCount` 不动）、换个设备又全丢。
+ *   现在统一走真接口，判定交给 `utils/authGate.js#requireLogin`。
+ *
+ * ⚠️ 开关式（toggle）而非「点赞 / 取消赞」两个端点：同一接口按当前状态取反，
+ *   所以**不要**在本地自己推演状态，一律以返回值为准（并发/重复点击下本地推演会漂）。
+ */
+
+/** 点赞 / 取消点赞 → `{liked, likeCount}`（`likeCount` 是服务端真值，直接用） */
+export const togglePostLike = (id) => post(`/posts/${id}/like`)
+
+/** 收藏 / 取消收藏 → `{favorited}` */
+export const togglePostFavorite = (id) => post(`/posts/${id}/favorite`)
+
 /**
  * 回帖列表 —— **返回已归一化的 `{ records, total }`**。
  *

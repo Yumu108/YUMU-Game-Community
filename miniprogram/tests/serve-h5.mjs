@@ -6,6 +6,11 @@
  * 这里补上代理，就能在**本地验证真实生产产物**（而不是只验证 dev server）。
  *
  * 运行：node tests/serve-h5.mjs   → http://localhost:5199/m/
+ *   打本机后端：API_TARGET=http://127.0.0.1:8080 node tests/serve-h5.mjs
+ *
+ * ⚠️ 代理**转发完整 header + body**（2026-09-21 起），所以本地也能验证**登录态**链路
+ * （登录 → 点赞 → 服务端计数变化）。但会显式摘掉 `origin` / `referer`
+ * —— 后端 CORS 白名单不含 localhost，带着转发会被 403 拒掉（详见下方注释）。
  */
 import http from 'node:http'
 import fs from 'node:fs'
@@ -64,10 +69,30 @@ const server = http.createServer(async (req, res) => {
   // ---- /api 反向代理到线上后端 ----
   if (url.pathname === '/api' || url.pathname.startsWith('/api/')) {
     try {
-      // 不转发原始 Host，由 fetch 按目标 URL 生成，避免被按 Host 头拦（未备案域名场景）
+      /* 🚨 2026-09-21：由「只转发 accept」改为**转发完整 header + body**。
+         原因：旧写法把 POST body 和 `Authorization` 一起丢了 ⇒ 任何**登录态**链路
+         （点赞 / 收藏 / 发帖）在本地都验证不了，只能靠线上手工点。
+         现在本地跑通了「登录 → 点赞 → 服务端 likeCount +1 → 我的页可见」的端到端验证。
+
+         必须显式摘掉的几个头：
+           · origin / referer —— 后端 CORS 白名单不含 `localhost:5199`，带着转发会被
+             403「Invalid CORS request」直接拒掉（这是本次踩到的坑，报错信息里没有任何
+             指向代理的线索，只有一行 403）；serve-h5 本来就是「同源」语义，摘掉才对。
+           · host / content-length —— 由 fetch 按目标重新生成。
+           · accept-encoding —— 保持响应不压缩，下面直接回写 buffer，省一次解码。 */
+      const chunks = []
+      for await (const c of req) chunks.push(c)
+      const body = Buffer.concat(chunks)
+      const fwd = { ...req.headers }
+      delete fwd.host
+      delete fwd['content-length']
+      delete fwd.origin
+      delete fwd.referer
+      delete fwd['accept-encoding']
       const r = await fetch(API_TARGET + url.pathname + url.search, {
         method: req.method,
-        headers: { accept: req.headers.accept || '*/*' },
+        headers: fwd,
+        body: req.method === 'GET' || req.method === 'HEAD' ? undefined : body,
         signal: AbortSignal.timeout(25000)
       })
       res.writeHead(r.status, {
