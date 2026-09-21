@@ -7,8 +7,17 @@
           内容属性更该被第一眼看到。由发帖账号 uid 判定，不依赖昵称（昵称可改）。
         -->
         <text v-if="isOfficial" class="pc__badge pc__badge--official">官方</text>
-        <text v-if="post.isTop" class="pc__badge pc__badge--top">置顶</text>
-        <text v-if="post.isEssence" class="pc__badge pc__badge--best">精华</text>
+        <!--
+          「置顶」角标 —— **只在游戏详情页显示**（2026-09-21 用户口径：
+          「置顶改成只在游戏详情页内优先」）。
+          官方帖的 `is_top` 是**游戏内**语义：官方公告在它所属的那款游戏里置顶。
+          聚合列表（攻略页/资讯页）里它既不置顶、排序也不吃它
+          （见 `guideQuery.makeCmpLatest`），此时再挂「置顶」角标就与它所在的位置打架
+          —— 用户会看到一个标着「置顶」却排在列表中间的卡片。所以按 `inGame` 收起来。
+          普通用户/版主的置顶**不受影响**：它们在聚合列表里确实排在最前，角标照常显示。
+        -->
+        <text v-if="showTop" class="pc__badge pc__badge--top">置顶</text>
+        <text v-if="showEssence" class="pc__badge pc__badge--best">精华</text>
         <text class="pc__title" :class="{ 'pc__title--clamp': clamp }">{{ post.title }}</text>
       </view>
 
@@ -67,7 +76,13 @@ import { OFFICIAL_UID } from '../api/config'
 
 const props = defineProps({
   post: { type: Object, required: true },
-  clamp: { type: Boolean, default: true }
+  clamp: { type: Boolean, default: true },
+  /**
+   * 卡片是否处在**某一款游戏的详情页**里。
+   * 只影响「置顶」角标的显隐：官方帖的置顶是**游戏内**语义
+   * （官方公告在它所属的那款游戏里置顶），聚合列表里它并不置顶。
+   */
+  inGame: { type: Boolean, default: false }
 })
 const emit = defineEmits(['tap'])
 
@@ -76,6 +91,14 @@ const emit = defineEmits(['tap'])
  * `Number()` 归一化：索引经存储往返后 userId 可能是字符串，直接全等会漏判。
  */
 const isOfficial = computed(() => Number(props.post.userId) === OFFICIAL_UID)
+
+/**
+ * 角标显隐 —— 🚨 必须 `Number(...) === 1` 归一化，不能直接写 `v-if="post.isTop"`：
+ * 后端是 `tinyint 0/1`，索引经 localStorage 往返后可能落成字符串 `'0'`，
+ * 而 **`'0'` 在 JS 里是真值** ⇒ 没置顶的帖子也会被挂上「置顶」角标（静默错显）。
+ */
+const showTop = computed(() => Number(props.post.isTop) === 1 && (!isOfficial.value || props.inGame))
+const showEssence = computed(() => Number(props.post.isEssence) === 1)
 
 const summary = computed(() => summaryOf(props.post, 52))
 const timeText = computed(() => formatTime(props.post.createdAt))

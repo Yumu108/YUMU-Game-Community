@@ -1,5 +1,5 @@
 /**
- * 分类展示纯逻辑单元测试（26 项）。
+ * 分类展示纯逻辑单元测试（40 项）。
  *
  * 运行：
  *   cd miniprogram
@@ -110,6 +110,47 @@ ok('G3 limit 生效', relatedOf(ITEMS, ITEMS[0], 2).length === 2)
 ok('G4 同平台兜底：一篇 PC 帖也能找到别的 PC 帖', relatedOf([ITEMS[0], ITEMS[4]], ITEMS[0], 3).some((x) => x.id === 5))
 ok('G5 无有效 post 时返回空', relatedOf(ITEMS, null).length === 0 && relatedOf(ITEMS, {}).length === 0)
 ok('G6 结果不重复', new Set(rel.map((x) => x.id)).size === rel.length)
+
+/* ---------- H. 置顶作用域（官方帖的置顶只在游戏详情页生效） ---------- */
+console.log('\n===== H. 置顶作用域（scopedTopUid）=====')
+// 用户口径（2026-09-21）：「置顶改成只在游戏详情页内优先」。
+// 官方帖的 is_top 是**游戏内**语义 —— 聚合列表（攻略页/资讯页）里不该把跨游戏资讯流占满。
+// ⚠️ 但**普通置顶必须照旧生效** —— 线上「攻略心得」里有一条真置顶，不能被连带误伤。
+const OFFICIAL_UID = 20142
+const SCOPED = [
+  { id: 101, userId: OFFICIAL_UID, isTop: 1, createdAt: '2026-09-09T10:00:00', platform: 'PC', boardId: 4 },
+  { id: 102, userId: 7, isTop: 1, createdAt: '2026-09-01T10:00:00', platform: 'PC', boardId: 4 },
+  { id: 103, userId: 8, isTop: 0, createdAt: '2026-09-10T10:00:00', platform: 'PC', boardId: 4 }
+]
+const SCOPED_SNAPSHOT = JSON.stringify(SCOPED)
+// 不传参数 = 老行为（所有置顶都优先）：101、102 都置顶 → 组内按时间倒序 → 101 在前
+ok('H1 不传 scopedTopUid 时行为不变（向后兼容）', ids(queryIndex(SCOPED)) === '101,102,103', ids(queryIndex(SCOPED)))
+// 传了之后：官方帖的置顶失效，普通帖的置顶照旧 → 102 仍最前
+ok(
+  'H2 官方帖置顶失效、普通置顶照旧生效',
+  ids(queryIndex(SCOPED, { scopedTopUid: OFFICIAL_UID })) === '102,103,101',
+  ids(queryIndex(SCOPED, { scopedTopUid: OFFICIAL_UID }))
+)
+// 这条是本函数的**核心保证**：官方帖被压回按时间排，不再占满首屏
+ok(
+  'H3 官方帖回到时间序（不再被顶到首位）',
+  queryIndex(SCOPED, { scopedTopUid: OFFICIAL_UID })[0].id !== 101,
+  `首位 id=${queryIndex(SCOPED, { scopedTopUid: OFFICIAL_UID })[0].id}`
+)
+// 🚨 userId 经 localStorage 往返可能是字符串 —— 不做 Number() 归一化就会**静默失效**
+ok(
+  'H4 userId 为字符串时同样识别（防静默失效）',
+  ids(queryIndex([{ ...SCOPED[0], userId: String(OFFICIAL_UID) }, SCOPED[1], SCOPED[2]], { scopedTopUid: OFFICIAL_UID })) === '102,103,101'
+)
+// 「最热」档的兜底排序也走同一比较器 —— 只改「最新」会让两个档位顺序不一致
+ok(
+  'H5 「最热」档的兜底排序同样遵守作用域（防两档不一致）',
+  ids(queryIndex(SCOPED, { sort: 'hot', scopedTopUid: OFFICIAL_UID })) === '102,103,101',
+  ids(queryIndex(SCOPED, { sort: 'hot', scopedTopUid: OFFICIAL_UID }))
+)
+ok('H6 不改动入参（纯函数）', JSON.stringify(SCOPED) === SCOPED_SNAPSHOT)
+ok('H7 scopedTopUid 传 0/不传时等同', ids(queryIndex(SCOPED, { scopedTopUid: 0 })) === '101,102,103')
+ok('H8 通用比较器 cmpLatest 不受影响（相关推荐仍置顶优先）', cmpLatest(SCOPED[0], SCOPED[2]) < 0)
 
 console.log(`\n=== 结果：${pass}/${pass + fail} 通过 ===`)
 process.exit(fail === 0 ? 0 : 1)

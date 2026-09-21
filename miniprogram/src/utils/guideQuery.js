@@ -14,6 +14,8 @@
  *   hot     = view_count + like_count*2 + reply_count*3 + 收藏数，再按时间兜底
  *   essence = 只取 is_essence=1，按时间倒序
  * ⚠️ 端内复算**不含收藏数** —— 列表接口不下发收藏数。差别如实记录，不假装一致。
+ * ⚠️ 端内的「置顶优先」比后端多一个**作用域**限制，见 `makeCmpLatest` 的参数说明：
+ *    官方帖的置顶只在**游戏详情页**内生效，聚合列表（攻略页/资讯页）不吃。
  * 取值字面量与 `api/config.js#SORT` 一致（那边是给请求用的，这边是给本地排序用的）。
  */
 
@@ -22,16 +24,46 @@ const S = { LATEST: 'latest', HOT: 'hot', ESSENCE: 'essence' }
 /** 后端 `is_essence` / `is_top` 是 0/1，JSON 里可能是数字也可能是字符串 */
 const isOn = (v) => Number(v) === 1
 
-/** 最新：置顶优先 → 时间倒序 → id 倒序 */
-export function cmpLatest(a, b) {
-  const ta = isOn(a.isTop) ? 1 : 0
-  const tb = isOn(b.isTop) ? 1 : 0
-  if (ta !== tb) return tb - ta
-  const da = String(a.createdAt || '')
-  const db = String(b.createdAt || '')
-  if (da !== db) return da < db ? 1 : -1
-  return Number(b.id) - Number(a.id)
+/**
+ * 生成「最新」比较器：置顶优先 → 时间倒序 → id 倒序。
+ *
+ * @param {number} [scopedTopUid] 该账号的**置顶不参与排序**（传 0 = 所有置顶都生效）
+ *
+ * ── 为什么要这个参数（2026-09-21，用户要求「置顶改成只在游戏详情页内优先」）──
+ * `post.is_top` 这一列装着**两种语义**：
+ *   · 普通置顶（版主/管理员）：把某篇置顶在它所属的板块里 ⇒ 板块列表、聚合列表都该照办
+ *     （实测线上「攻略心得」里就有这样一条真置顶，不能误伤）；
+ *   · 官方帖置顶（`OFFICIAL_UID`）：官方公告是**在它所属的那款游戏里**置顶
+ *     （用户原话「默认在每个游戏里置顶和加精」）。
+ * 游戏详情页正是「一款游戏」的视图 ⇒ 官方帖该在最前。它走的是后端
+ * `/games/{id}/posts`（`ORDER BY is_top`），**根本不经过这个文件**，所以天然保留。
+ * 但攻略页/资讯页是**跨游戏的全景聚合**：20 条官方帖若在这里也按 is_top 打头，
+ * 资讯页首屏 12 张会被官方公告整屏占满、玩家投稿全被压到下面（用户实报的现象）。
+ * ⇒ 聚合列表传 `scopedTopUid = OFFICIAL_UID`，把官方帖的置顶**限定在游戏详情页内**。
+ *
+ * ⚠️ 用 `Number(...)` 比较：索引经 localStorage 往返后 userId 可能是字符串，
+ *   直接全等会**静默失效**（官方帖照旧被顶到最前，而排序看起来"正常"）。
+ */
+export function makeCmpLatest(scopedTopUid = 0) {
+  const scoped = Number(scopedTopUid) || 0
+  /** 置顶权重：官方帖在被限定作用域时按 0 计（= 不置顶） */
+  const rank = (it) => (isOn(it.isTop) && !(scoped && Number(it.userId) === scoped) ? 1 : 0)
+  return (a, b) => {
+    const ta = rank(a)
+    const tb = rank(b)
+    if (ta !== tb) return tb - ta
+    const da = String(a.createdAt || '')
+    const db = String(b.createdAt || '')
+    if (da !== db) return da < db ? 1 : -1
+    return Number(b.id) - Number(a.id)
+  }
 }
+
+/**
+ * 通用「最新」比较器 —— 所有置顶都生效。
+ * 保留两参签名：`relatedOf`（相关推荐）与 `tests/guideQuery.test.mjs` 都在用。
+ */
+export const cmpLatest = makeCmpLatest(0)
 
 /** 热门权重 —— 浏览 + 点赞×2 + 回复×3（与后端一致，差一个「收藏数」） */
 export function hotScore(it) {
@@ -41,10 +73,11 @@ export function hotScore(it) {
 /**
  * 在索引上做筛选 + 排序。
  * @param {Array}  items 索引记录
- * @param {{platform?:string, sort?:string, keyword?:string}} [opt]
+ * @param {{platform?:string, sort?:string, keyword?:string, scopedTopUid?:number}} [opt]
+ *   `scopedTopUid`：该账号的置顶不计入排序（聚合列表传 `OFFICIAL_UID`，见 `makeCmpLatest`）
  * @returns {Array} 新数组（**不改动入参**）
  */
-export function queryIndex(items, { platform = '', sort = S.LATEST, keyword = '' } = {}) {
+export function queryIndex(items, { platform = '', sort = S.LATEST, keyword = '', scopedTopUid = 0 } = {}) {
   let out = Array.isArray(items) ? items.slice() : []
   if (platform) out = out.filter((it) => it.platform === platform)
 
@@ -55,9 +88,14 @@ export function queryIndex(items, { platform = '', sort = S.LATEST, keyword = ''
     )
   }
 
-  if (sort === S.ESSENCE) return out.filter((it) => isOn(it.isEssence)).sort(cmpLatest)
-  if (sort === S.HOT) return out.sort((a, b) => hotScore(b) - hotScore(a) || cmpLatest(a, b))
-  return out.sort(cmpLatest)
+  // 🚨 三条口径共用同一个比较器（含最热/精华的**兜底排序**也是时间倒序）。
+  //    只改「最新」是不够的：「最热」在权重相同时会回落到 cmpLatest，
+  //    官方帖照样被顶上去 ⇒ 用户切一下排序就看到两套顺序，像 bug。
+  const cmp = makeCmpLatest(scopedTopUid)
+
+  if (sort === S.ESSENCE) return out.filter((it) => isOn(it.isEssence)).sort(cmp)
+  if (sort === S.HOT) return out.sort((a, b) => hotScore(b) - hotScore(a) || cmp(a, b))
+  return out.sort(cmp)
 }
 
 /**

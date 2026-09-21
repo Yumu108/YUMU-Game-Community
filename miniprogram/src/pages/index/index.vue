@@ -126,7 +126,7 @@ import { ref, computed } from 'vue'
 import { onLoad, onReachBottom, onPullDownRefresh } from '@dcloudio/uni-app'
 import { ensureIndex, queryIndex, countByPlatform, indexStats } from '../../utils/guideIndex'
 import { fetchAnnouncements } from '../../api/community'
-import { PLATFORM_TABS, PLATFORM_HINT, SORT, BOARD } from '../../api/config'
+import { PLATFORM_TABS, PLATFORM_HINT, SORT, BOARD, OFFICIAL_UID } from '../../api/config'
 import { platformLabel, formatTime } from '../../utils/format'
 import PlatformFilter from '../../components/PlatformFilter.vue'
 import PostCard from '../../components/PostCard.vue'
@@ -184,8 +184,21 @@ const platHint = computed(() =>
   platform.value ? PLATFORM_HINT[platform.value] || '' : '全部平台的内容聚合在一起'
 )
 
+/**
+ * 筛选 + 排序全部在端内完成（切平台/排序零请求）。
+ *
+ * `scopedTopUid: OFFICIAL_UID`（2026-09-21 用户口径「置顶改成只在游戏详情页内优先」）：
+ * 官方帖的 `is_top` 是**游戏内**语义（官方公告在它所属的那款游戏里置顶），
+ * 聚合列表里不计入排序。本页是 board 1，官方帖本来就不在这，
+ * 传它只为**口径统一**：哪天官方帖发到了攻略心得，也会自动遵守同一条规则。
+ * 普通置顶不受影响（本板块里那条真置顶照旧排最前）。
+ */
 const filtered = computed(() =>
-  queryIndex(pool.value, { platform: platform.value, sort: sort.value })
+  queryIndex(pool.value, {
+    platform: platform.value,
+    sort: sort.value,
+    scopedTopUid: OFFICIAL_UID
+  })
 )
 const visible = computed(() => filtered.value.slice(0, visibleCount.value))
 

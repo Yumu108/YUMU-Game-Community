@@ -30,7 +30,13 @@
 
     <Skeleton v-if="loading" :rows="3" />
     <template v-else>
-      <PostCard v-for="p in shownList" :key="p.id" :post="p" />
+      <!--
+        `:in-game="true"` —— 本页是**某一款游戏**的视图，官方帖的「置顶」
+        （`is_top=1`，语义是「在它所属的这款游戏里置顶」）正是要在这里生效：
+        排序由后端 `/games/{id}/posts` 的 `ORDER BY is_top` 保证，角标由这里放行。
+        聚合列表（攻略页/资讯页）不传，那边官方帖并不置顶，不显示该角标。
+      -->
+      <PostCard v-for="p in shownList" :key="p.id" :post="p" :in-game="true" />
       <ErrorState
         v-if="failed"
         icon="📡"

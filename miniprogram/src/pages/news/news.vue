@@ -74,7 +74,9 @@
  *   · 本页 = 资讯速递（board 4）全部：官方公告（`db-seed/fetch_official.py` 抓 Steam
  *     官方公告 + AI 改写）+ 玩家投稿；
  *   · 首页 = 攻略心得（board 1）全部。
- * 官方帖默认置顶 + 加精（落库），所以总是排在本页最前。
+ * 官方帖默认置顶 + 加精（落库）：但置顶**只在本页所属的那款游戏详情页内生效**
+ * （2026-09-21 用户口径「置顶改成只在游戏详情页内优先」），本页是跨游戏的全景聚合，
+ * 所以官方帖按时间正常排布，不再整屏占满首屏。
  *
  * ⚠️ 平台筛选与「今日精选」沿用原逻辑；官方帖也带 gameId ⇒ 平台归类同样有效。
  */
@@ -82,7 +84,7 @@ import { ref, computed } from 'vue'
 import { onLoad, onReachBottom, onPullDownRefresh } from '@dcloudio/uni-app'
 import { ensureIndex, queryIndex, countByPlatform } from '../../utils/guideIndex'
 import { fetchDailyPicks } from '../../api/community'
-import { PLATFORM_TABS, PLATFORM_HINT, SORT, BOARD } from '../../api/config'
+import { PLATFORM_TABS, PLATFORM_HINT, SORT, BOARD, OFFICIAL_UID } from '../../api/config'
 import { platformLabel } from '../../utils/format'
 import PlatformFilter from '../../components/PlatformFilter.vue'
 import PostCard from '../../components/PostCard.vue'
@@ -121,8 +123,11 @@ const picks = ref([])
  *   两页**零重叠**。
  *
  * 官方帖怎么凸显（都不在本文件里做判断）：
- *   · `is_top=1` / `is_essence=1` 是**落库字段**，由 `db-seed/fetch_official.py` 写入，
- *     所以官方帖天然排在本页最前，并带「置顶 / 精华」角标；
+ *   · `is_essence=1` 是**落库字段**（由 `db-seed/fetch_official.py` 写入）⇒ 带「精华」角标，
+ *     且在「精华」排序档里必然入选；
+ *   · `is_top=1` 同样是落库字段，但它是**游戏内**语义 —— 端内聚合列表不吃它
+ *     （见下方 `scopedTopUid` 与 `guideQuery.makeCmpLatest`）：官方公告应当在
+ *     **它所属的那款游戏的详情页**里置顶，而不是把跨游戏的资讯流整屏占满；
  *   · 「官方」角标由 `PostCard` 按 `OFFICIAL_UID` 渲染。
  *
  * ⚠️ 用 `Number(...)` 归一化再比较：索引经存储往返后 boardId 可能是字符串，
@@ -137,7 +142,21 @@ const platHint = computed(() =>
   platform.value ? PLATFORM_HINT[platform.value] || '' : '全部平台的资讯聚合在一起'
 )
 
-const filtered = computed(() => queryIndex(pool.value, { platform: platform.value, sort: sort.value }))
+/**
+ * 筛选 + 排序全部在端内完成（切平台/排序零请求）。
+ *
+ * 🚨 `scopedTopUid: OFFICIAL_UID`（2026-09-21 用户口径「置顶改成只在游戏详情页内优先」）：
+ *   官方帖的 `is_top` 是**游戏内**语义 ⇒ 本页（跨游戏的全景资讯流）不计入排序。
+ *   不传的话 20 条官方公告会把首屏 12 张全部占满、玩家投稿被整屏压到下面。
+ *   普通用户/版主的置顶不受影响。
+ */
+const filtered = computed(() =>
+  queryIndex(pool.value, {
+    platform: platform.value,
+    sort: sort.value,
+    scopedTopUid: OFFICIAL_UID
+  })
+)
 const visible = computed(() => filtered.value.slice(0, visibleCount.value))
 const noMore = computed(() => visibleCount.value >= filtered.value.length)
 const footerText = computed(() => (noMore.value ? `已加载全部 ${filtered.value.length} 篇` : '上拉加载更多'))

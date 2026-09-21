@@ -42,6 +42,17 @@
  *     但后端 `GameController#posts` **根本没有 `boardId` 参数**，Spring 静默丢弃未知查询参数。
  *     F 组断言专门锁这个回归（它必须靠**接口按板块过滤后的真值**来判，页面自证是抓不到的）。
  *     —— 组号实为 **T 组**（`F` 已被「搜索链路」那组占用，见 T 组处的说明）。
+ *  ⑨ **置顶只在游戏详情页内优先（2026-09-21 三次调整）**：官方帖的 `is_top=1` 是
+ *     **游戏内**语义（官方公告在它所属的那款游戏里置顶），但聚合列表也按它打头，
+ *     于是资讯页首屏 12 张被 20 条官方公告整屏占满、玩家投稿全被压到下面。
+ *     现在端内排序传 `scopedTopUid = OFFICIAL_UID`（`utils/guideQuery.js#makeCmpLatest`），
+ *     官方帖的置顶**不参与聚合列表排序**；游戏详情页走后端 `ORDER BY is_top`，不受影响。
+ *     `PostCard` 的「置顶」角标同步收进 `inGame` —— 聚合列表里它并未置顶，
+ *     挂着角标会与卡片的位置自相矛盾。
+ *     🔒 **普通置顶（版主/管理员）必须照旧生效**，所以 D6 改成与真值对位、
+ *        D6b 只查「官方 ∧ 置顶」的组合，A10c 专门锁 board1 那条真置顶。
+ *     作用域只做在**端内聚合列表**；主站板块列表（`frontend/`）仍按 `is_top` 置顶，
+ *     那是板块内的正常论坛行为。
  */
 const path = require('path')
 const fs = require('fs')
@@ -187,6 +198,40 @@ const OFFICIAL_UID = 20142
     }
     counts[''] = homeTotal
 
+    // ②-b 置顶相关真值（2026-09-21 新增）——
+    //      页面排序走 `guideQuery.makeCmpLatest`，这里用**同一条口径**独立复算，
+    //      免得拿页面自证（页面写错了自己也会"自洽"）。
+    //        · topByBoard     每个板块里 `is_top=1` 的条数。board1 的那条是**普通置顶**
+    //                         （版主/管理员置顶），官方帖的作用域**不能连带误伤它**；
+    //        · topRegular4    board4 里**非官方**的置顶条数（同样是普通置顶）；
+    //        · head12Official 按「普通置顶优先 → createdAt 倒序 → id 倒序」排完序后，
+    //                         前 12 条（= 资讯页首屏容量）里的官方帖条数。
+    //                         判据：官方帖的 `is_top` 在此**不计入**（只在游戏详情页生效）。
+    const topByBoard = {}
+    for (const b of [1, 4]) {
+      topByBoard[b] = (boardRecs[b] || []).filter((p) => Number(p.isTop) === 1).length
+    }
+    const topRegular4 = (boardRecs[4] || []).filter(
+      (p) => Number(p.isTop) === 1 && Number(p.userId) !== OFFICIAL_UID
+    ).length
+    const rankTop = (p) => (Number(p.isTop) === 1 && Number(p.userId) !== OFFICIAL_UID ? 1 : 0)
+    const ordered4 = (boardRecs[4] || []).slice().sort((a, b) => {
+      if (rankTop(a) !== rankTop(b)) return rankTop(b) - rankTop(a)
+      const da = String(a.createdAt || '')
+      const db = String(b.createdAt || '')
+      if (da !== db) return da < db ? 1 : -1
+      return Number(b.id) - Number(a.id)
+    })
+    const head12Official = ordered4
+      .slice(0, 12)
+      .filter((p) => Number(p.userId) === OFFICIAL_UID).length
+    // ⚠️ 还必须有**顺序**真值，不能只比条数：实测官方帖的发布时间本身就最新
+    //    （Steam 公告集中在最近一周），所以「前 12 条里有几条官方」在本地是 12/12 ——
+    //    把它当判据等于空转，`scopedTopUid` 被删掉也照样绿。逐条标题比对才真正锁住排序。
+    const head12Titles = ordered4
+      .slice(0, 12)
+      .map((p) => String(p.title || '').replace(/\s+/g, ' ').trim())
+
     // ③ 挑一款**两个板块都有帖**的游戏，供 F 组验证游戏详情页的两个 Tab 真的分了板块。
     //    两边的期望值都取 `/games/{id}/posts?boardId=X` 的接口真值 ——
     //    这个接口过去会忽略 boardId（F 组就是为它加的），所以必须独立取数。
@@ -234,6 +279,10 @@ const OFFICIAL_UID = 20142
       news: byBoard[4],
       official,
       byBoard,
+      topByBoard,
+      topRegular4,
+      head12Official,
+      head12Titles,
       detail,
       officialGame,
       games: games.length,
@@ -306,6 +355,22 @@ const OFFICIAL_UID = 20142
     'A10b 首页不含官方资讯帖（官方帖全部归资讯页）',
     truth.official > 0 && homeOfficial === 0,
     `首页官方标签=${homeOfficial} 接口官方帖=${truth.official}`
+  )
+  // A10c 「普通置顶」不能被连带误伤（2026-09-21 新增）：
+  //      把官方帖的置顶限定到游戏详情页之后，**版主/管理员的普通置顶必须照旧生效** ——
+  //      实测 board1 里就有一条真置顶（本机与线上各 1 条）。
+  //      判据：置顶角标数 = min(board1 真值置顶数, 首屏容量 12)，且它排在**第一张**卡片上。
+  //      🔒 防的是「修作用域时把置顶整个关掉」这种过头改法。
+  const homeTopBadges = await count('.pc__badge--top')
+  const wantHomeTop = Math.min(truth.topByBoard[1] || 0, 12)
+  const firstCardHasTop = await page
+    .$eval('.pc', (e) => !!e.querySelector('.pc__badge--top'))
+    .catch(() => false)
+  assert(
+    'A10c 攻略页「普通置顶」仍生效且排在首位（未被官方帖的作用域误伤）',
+    homeTopBadges === wantHomeTop && (wantHomeTop === 0 || firstCardHasTop),
+    `置顶角标=${homeTopBadges} 期望=${wantHomeTop} 首位是置顶=${firstCardHasTop}`
+      + `（board1 真值置顶 ${truth.topByBoard[1]} 条）`
   )
   await page.screenshot({ path: path.join(SHOTS, 'A-home.png') })
 
@@ -685,20 +750,64 @@ const OFFICIAL_UID = 20142
     truth.news > 0 && newsPageNum === truth.news,
     `页面「${newsCountText}」 接口 board4=${truth.news}（其中官方帖 ${truth.official}）`
   )
-  // D6 官方帖**默认置顶**（落库 is_top=1，2026-09-21 新增口径）：
-  //    官方帖按 is_top 优先排在列表最前，所以首屏 PAGE=12 张里应当**全是**官方帖
-  //    （官方帖不足 12 条时即为官方帖总数）。这条同时验证
-  //    `db-seed/fetch_official.py` 写入的 is_top=1 真的生效 ——
-  //    端内权重排序走 `guideQuery.cmpLatest`（isTop 排首位），与后端 ORDER BY 同口径。
-  //    ⚠️ `newsPc` 数的是整页所有 `.pc`（含顶部「今日精选」卡片）；线上该接口返回空数组、
-  //       这块不渲染，所以当前等价于主列表卡片数。
-  const newsPc = await count('.pc')
-  const newsOfficial = await count('.pc__badge--official')
-  const expectTop = Math.min(12, truth.official)
+  // D6（2026-09-21 三次调整：口径**反转**）资讯页首屏**不再**被官方帖独占。
+  //     上一版这条锁的是「首屏 12 张全是官方帖」—— 那是官方帖 `is_top=1`
+  //     被聚合列表吃进排序的结果。用户随后要求「置顶改成只在游戏详情页内优先」，
+  //     于是聚合列表不再吃官方帖的置顶（`guideQuery.makeCmpLatest({scopedTopUid})`），
+  //     官方帖回到时间序。判据因此改成**逐条标题 + 顺序**与真值比对：
+  //       页面首屏 12 张的标题序列 === 「按同一口径独立排序后前 12 条」的标题序列。
+  //
+  //     🚨 **为什么不能只比「首屏有几条官方」**：实测官方帖的发布时间本身就最新
+  //        （Steam 公告集中在最近一周，线上前 12 条按纯时间序**恰好全是官方帖**），
+  //        于是那个计数在两端都是 12/12 —— 拿它当判据等于**空转**，
+  //        `scopedTopUid` 被删掉也照样绿。只有逐条比顺序才真的锁住排序。
+  //
+  //     🔒 这条同时是回归防线：谁把 `scopedTopUid` 从 queryIndex 的调用里去掉，
+  //        官方 20 条会被强行提到最前（线上会顶掉那条**普通置顶**的首位），序列立刻不一致。
+  //
+  //     ⚠️ 选择器用 `.bar ~ .pc`（计数条**之后**的卡片）而不是全页 `.pc`：
+  //        本页顶部可能渲染「今日精选」（本地库有数据、线上接口返回空数组），
+  //        那些卡片也是 `.pc` 但不属于本页列表，混进来会凭空多出条数。
+  //        —— 上一版 D6 就是踩了这个坑，靠"线上恰好为空"才没暴露。
+  const barCards = await page.$$eval('.bar ~ .pc', (els) =>
+    els.map((e) => {
+      const t = e.querySelector('.pc__title')
+      return {
+        official: !!e.querySelector('.pc__badge--official'),
+        title: t ? t.innerText.replace(/\s+/g, ' ').trim() : ''
+      }
+    })
+  )
+  const barTitles = barCards.map((c) => c.title)
+  const newsPc = barCards.length
+  const newsOfficial = barCards.filter((c) => c.official).length
+  // 判据 = **逐条标题与顺序**都要一致（不是只比条数，理由见 truth 里 head12Titles 的注释）
+  const orderOk = newsPc > 0 && JSON.stringify(barTitles) === JSON.stringify(truth.head12Titles)
   assert(
-    'D6 官方帖默认置顶：资讯页首屏卡片全部为官方帖',
-    expectTop >= 1 && newsOfficial === expectTop,
-    `首屏卡片=${newsPc} 其中官方=${newsOfficial} 期望=${expectTop}（官方帖共 ${truth.official}）`
+    'D6 资讯页排序 = 独立复算的「普通置顶优先 → 时间倒序」（官方帖的置顶已不参与）',
+    orderOk,
+    `页面前3条=${JSON.stringify(barTitles.slice(0, 3))}`
+      + `\n     真值前3条=${JSON.stringify(truth.head12Titles.slice(0, 3))}`
+      + `\n     首屏卡片=${newsPc} 其中官方=${newsOfficial}`
+      + `（真值前12条含官方 ${truth.head12Official} 条，官方共 ${truth.official} 条）`
+  )
+  // D6b 官方帖在聚合列表里**不显示「置顶」角标**：它并未置顶（置顶只在游戏详情页生效），
+  //     显示出来会与卡片所在的位置自相矛盾 —— 标着「置顶」却排在列表中间。
+  //     🔒 这条锁 `PostCard` 的 `inGame` 显隐规则；同时**不误伤普通置顶**
+  //        （board4 里若有非官方置顶，它照旧带角标，故只查「官方 ∧ 置顶」的组合）。
+  const pcStates = await page.$$eval('.pc', (els) =>
+    els.map((e) => ({
+      official: !!e.querySelector('.pc__badge--official'),
+      top: !!e.querySelector('.pc__badge--top')
+    }))
+  )
+  const officialCards = pcStates.filter((c) => c.official)
+  const officialWithTop = officialCards.filter((c) => c.top).length
+  assert(
+    'D6b 资讯页官方卡片不带「置顶」角标（置顶已限定在游戏详情页内）',
+    officialCards.length > 0 && officialWithTop === 0,
+    `官方卡片=${officialCards.length} 其中带置顶=${officialWithTop}`
+      + `（board4 真值置顶 ${truth.topByBoard[4]} 条，其中普通置顶 ${truth.topRegular4} 条）`
   )
   // D7 官方帖必须都在资讯速递板块内（否则是把官方帖发错了板块，或分流写反了）
   assert(
