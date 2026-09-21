@@ -51,9 +51,16 @@ const MAX_PAGES = 6
  * 索引里保留的字段 —— 够 PostCard 渲染 + 平台归类 + 相关推荐即可。
  * 全字段约 1.2KB/条，裁剪后约 0.5KB/条（254 条 ≈ 130KB）。
  * ⚠️ `gameId` 必须留着：相关推荐要按「同一款游戏」聚合。
+ *
+ * ⚠️ `userId`（2026-09-21 新增）必须留着：端内要区分**官方帖**与玩家帖 ——
+ *   攻略页排除官方帖、资讯页只留官方帖（见 `api/config.js#OFFICIAL_UID`）。
+ *   🚨 加这个字段时同步把缓存键升到了 `_v3`（`STORAGE_KEYS.GUIDE_INDEX`）：
+ *   不升版本的话，老设备上那份**没有 `userId`** 的缓存会让分流全部落空，
+ *   而且在 TTL 到期前看起来一切正常 —— 属于「静默错」。
  */
 const KEEP = [
   'id',
+  'userId',
   'title',
   'cover',
   'gameCover',

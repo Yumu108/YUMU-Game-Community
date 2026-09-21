@@ -72,13 +72,18 @@ export const STORAGE_KEYS = {
   /**
    * 端内聚合索引（帖子池 + 平台归属），见 utils/guideIndex.js。
    *
-   * 🚨 键名带 `_v2` 是**故意的**（2026-09-20）：v1 曾经把一份「游戏元数据为空」的
-   *   坏缓存（`map:{}`）写进用户真机，导致平台分类整整坏一天、且自愈不了。
-   *   改键名 = 让所有已经中毒的设备**下一次启动就重新同步**，不用等 TTL。
+   * 🚨 键名带 `_v3` 是**故意的**（2026-09-21）：v2 → v3 是因为索引记录**新增了 `userId`**
+   *   字段（用于端内区分官方帖与玩家帖）。
+   *   若不升版本，老设备上仍是那份没有 `userId` 的 v2 缓存 ⇒ 官方帖识别全部落空
+   *   （攻略页不排除官方帖、资讯页筛不出官方帖），而且在 TTL 到期前**看起来一切正常**。
+   *   改键名 = 让所有设备下一次启动就重新同步，不用等 TTL。
+   *
+   *   历史：v1 曾经把一份「游戏元数据为空」的坏缓存（`map:{}`）写进用户真机，
+   *   导致平台分类整整坏一天、且自愈不了。
    *   以后凡改动缓存的**语义或结构**，都照此升版本，别只改 TTL。
    *   （新代码另有读时校验兜底：`utils/apiGuard.js#isUsableMeta` 会把空 map 判废。）
    */
-  GUIDE_INDEX: 'yumu_guide_index_v2',
+  GUIDE_INDEX: 'yumu_guide_index_v3',
   /** 全部游戏的 `gameId → platform` 映射（变化很慢，单独长缓存；同样带 `_v2`，理由同上） */
   GAME_PLATFORM: 'yumu_game_platform_v2'
 }
@@ -118,6 +123,22 @@ export const BOARD = {
  * 线上实测：攻略心得 155 帖 + 资讯速递 99 帖 = 254 帖，全部带封面。
  */
 export const GUIDE_BOARDS = [BOARD.GUIDE, BOARD.NEWS]
+
+/**
+ * 官方资讯账号的 user.id（2026-09-21 新增）。
+ *
+ * 定位：`YUMU官方资讯`（username `yumu_official`），由 `db-seed/fetch_official.py`
+ * 从 Steam 官方公告抓取 + AI 改写成中文资讯帖后，以该账号名义发到 board 4。
+ *
+ * 为什么要用 uid 而不是昵称：昵称是**可改的展示字段**，一旦被改，
+ * 端内「官方帖」的识别会静默失效（帖子照样在，只是标签没了 / 分流错了）。
+ * uid 不会变。改动账号时同步改这里，并重跑一遍 `tests/verify-miniprogram.cjs`。
+ *
+ * ⚠️ 角色是 USER 而非 ADMIN —— 它只需要「发帖」，不需要后台权限。
+ *   脚本里存着它的凭据，给它 ADMIN 等于凭空多一个高权限入口。
+ *   帖子直发靠灌库时写 `status=0`，与该账号的角色无关。
+ */
+export const OFFICIAL_UID = 20142
 
 /**
  * 平台档位 —— value **必须与后端 `game.platform` 的字面量完全一致**，

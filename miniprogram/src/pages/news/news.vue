@@ -57,7 +57,7 @@
       <EmptyState
         v-if="!filtered.length"
         icon="📰"
-        :text="platform ? `「${platName(platform)}」还没有资讯` : '还没有资讯'"
+        :text="platform ? `「${platName(platform)}」还没有官方资讯` : '还没有官方资讯'"
         sub="换个平台看看"
       />
       <view v-if="filtered.length" class="footer" @click="loadMore">{{ footerText }}</view>
@@ -67,17 +67,21 @@
 
 <script setup>
 /**
- * 资讯页 = 资讯速递板块（board 4）的**分平台视图**。
+ * 资讯页 = **官方情报站**：只看官方账号发布的游戏官方公告（board 4 · type 2）。
  *
- * 与首页的关系：首页是「攻略 + 资讯」的合并池，本页只看资讯那 99 篇。
- * 两者共用同一份端内索引（`utils/guideIndex.js`）⇒ 切过来是**零请求**的，
- * 平台按钮上的数字也与首页口径一致（同一数据源，不会各说各话）。
+ * 与首页的关系：两者共用同一份端内索引（`utils/guideIndex.js`）⇒ 切过来**零请求**；
+ * 但**内容池互不相交**（2026-09-21 起按发帖账号分流）：
+ *   · 本页 = 官方账号的帖（由 `db-seed/fetch_official.py` 抓 Steam 官方公告 + AI 改写）；
+ *   · 首页 = 其余全部（攻略心得 + 资讯速递里的玩家投稿）。
+ * 改造前本页只是首页的子集（165 篇全部在首页出现过），用户反馈「重复、没用」。
+ *
+ * ⚠️ 平台筛选与「今日精选」沿用原逻辑；官方帖也带 gameId ⇒ 平台归类同样有效。
  */
 import { ref, computed } from 'vue'
 import { onLoad, onReachBottom, onPullDownRefresh } from '@dcloudio/uni-app'
 import { ensureIndex, queryIndex, countByPlatform } from '../../utils/guideIndex'
 import { fetchDailyPicks } from '../../api/community'
-import { PLATFORM_TABS, PLATFORM_HINT, SORT, BOARD } from '../../api/config'
+import { PLATFORM_TABS, PLATFORM_HINT, SORT, BOARD, OFFICIAL_UID } from '../../api/config'
 import { platformLabel } from '../../utils/format'
 import PlatformFilter from '../../components/PlatformFilter.vue'
 import PostCard from '../../components/PostCard.vue'
@@ -103,8 +107,21 @@ const sort = ref(SORT.LATEST)
 const visibleCount = ref(PAGE)
 const picks = ref([])
 
-/** 本页的内容池 = 索引里的「资讯速递」 */
-const pool = computed(() => items.value.filter((it) => Number(it.boardId) === BOARD.NEWS))
+/**
+ * 本页的内容池 = 索引里「资讯速递」板块中**由官方账号发布**的帖子。
+ *
+ * 2026-09-21 改造：本页从「资讯速递板块的分平台视图」变成**独立的官方情报站** ——
+ * 只出官方账号（`OFFICIAL_UID`）从游戏官方公告抓取 + 改写而来的资讯；
+ * 资讯速递里原有的玩家投稿**留在首页攻略页**，两边不再重叠。
+ *
+ * ⚠️ 用 `Number(...)` 归一化再比较：索引经存储往返后 userId 可能是字符串，
+ *   直接全等会让本页**筛不出任何帖子**（页面空、但不报错，属静默错）。
+ */
+const pool = computed(() =>
+  items.value.filter(
+    (it) => Number(it.boardId) === BOARD.NEWS && Number(it.userId) === OFFICIAL_UID
+  )
+)
 const counts = computed(() => countByPlatform(pool.value))
 const platTabs = computed(() =>
   PLATFORM_TABS.map((t) => ({ ...t, count: counts.value[t.value] || 0 }))

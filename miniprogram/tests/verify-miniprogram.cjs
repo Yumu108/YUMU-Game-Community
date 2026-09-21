@@ -28,6 +28,12 @@
  *     —— 「搜『资讯』搜出《仙剑奇侠传》」就是它把发行商「大宇**资讯**」匹配上了）。
  *     现在关键词先由端内解析成类型 / 平台**精确值**（`utils/keywordFilter.js`，
  *     与游戏库页共用），再把命中原因回显到卡片上。F5-F15 锁这些行为。
+ *  ⑧ **资讯页改为「官方情报站」（2026-09-21）**：内容池从「资讯速递板块的视图」
+ *     改为**按发帖账号分流** —— 官方账号（`OFFICIAL_UID`）抓取 Steam 官方公告并
+ *     AI 改写的帖子只进资讯页；资讯速递里的玩家投稿留在首页攻略页。
+ *     改造前资讯页 165 篇**全部**在首页出现过（是首页的子集），用户反馈「重复、没用」。
+ *     D6/D7 与 A 组的「首页池」断言锁这个分流；`truth` 现在同时独立算出
+ *     「首页池」与「官方帖」两套事实，避免只用页面自证。
  */
 const path = require('path')
 const fs = require('fs')
@@ -51,6 +57,14 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
 /** 展示名 → 后端 `game.platform` 取值（库里存「手机」，界面写「手游」） */
 const LABEL_TO_VALUE = { 手游: '手机', 多平台: '多平台', PC: 'PC', 主机: '主机' }
+
+/**
+ * 官方资讯账号的 user.id —— **必须与 `src/api/config.js#OFFICIAL_UID` 保持一致**。
+ * 这里硬编码是故意的：测试要能独立于被测代码算出「哪些是官方帖」，
+ * 若从被测模块 import，被测代码改错了测试也跟着错，等于自证。
+ * 改账号时两处一起改。
+ */
+const OFFICIAL_UID = 20142
 
 ;(async () => {
   const browser = await chromium.launch({ executablePath: EXE, headless: true })
@@ -105,7 +119,7 @@ const LABEL_TO_VALUE = { 手游: '手机', 多平台: '多平台', PC: 'PC', 主
   */
   console.log('\n--- 准备：独立计算各平台的真实篇数 ---')
   await goto('/pages/index/index')
-  const truth = await page.evaluate(async () => {
+  const truth = await page.evaluate(async (OFFICIAL_UID) => {
     const api = async (u) => {
       try {
         const r = await fetch('/api' + u).then((x) => x.json())
@@ -133,10 +147,18 @@ const LABEL_TO_VALUE = { 手游: '手机', 多平台: '多平台', PC: 'PC', 主
       if (k) genreCounts[k] = (genreCounts[k] || 0) + 1
     })
     // ② 干货池 = 攻略心得(1) + 资讯速递(4)，逐板块翻页拉全
+    //
+    // 2026-09-21：端内已按**发帖账号**分流（官方帖只进资讯页、不进首页），
+    // 所以这里必须同时算出两套事实，且都以**接口真值**为准，不能拿页面自证：
+    //   · counts/total  = 「首页池」= 全部干货帖 **减掉官方帖**（A 组断言对的是它）；
+    //   · official      = 官方帖数（D 组断言对的是它）；
+    //   · rawTotal      = 含官方帖的干货池总量（P0 的规模检查用）。
     const counts = { '': 0, 多平台: 0, PC: 0, 主机: 0, 手机: 0 }
     /** 每个板块各自的篇数：资讯页(D) 与首页(A) 的口径差异就靠它核对 */
     const byBoard = {}
-    let total = 0
+    let rawTotal = 0   // 干货池总量（攻略 + 资讯，含官方帖）
+    let official = 0   // 其中由官方账号发布的
+    let homeTotal = 0  // 首页池 = rawTotal - official
     for (const b of [1, 4]) {
       const got = []
       for (let c = 1; c <= 3; c++) {
@@ -146,19 +168,34 @@ const LABEL_TO_VALUE = { 手游: '手机', 多平台: '多平台', PC: 'PC', 主
         if (!rec.length || got.length >= (d.total || 0)) break
       }
       byBoard[b] = got.length
-      total += got.length
+      rawTotal += got.length
       got.forEach((p) => {
+        // Number() 归一化：接口返回的是数字，但索引经存储往返可能是字符串
+        if (Number(p.userId) === OFFICIAL_UID) {
+          official += 1
+          return
+        }
+        homeTotal += 1
         const k = gm[p.gameId]
         if (k) counts[k] = (counts[k] || 0) + 1
       })
     }
-    counts[''] = total
-    return { counts, total, byBoard, games: games.length, genres: genreCounts }
-  })
+    counts[''] = homeTotal
+    return {
+      counts,
+      total: homeTotal,
+      rawTotal,
+      official,
+      byBoard,
+      games: games.length,
+      genres: genreCounts
+    }
+  }, OFFICIAL_UID)
   assert(
-    'P0 独立算出干货池规模（攻略+资讯）',
-    truth.total >= 200 && truth.games >= 50,
-    `篇数=${truth.total} 游戏=${truth.games} 分布=${JSON.stringify(truth.counts)} 板块=${JSON.stringify(truth.byBoard)}`
+    'P0 独立算出干货池规模（攻略+资讯，已按账号拆出官方帖）',
+    truth.total >= 200 && truth.games >= 50 && truth.rawTotal > truth.total,
+    `首页池=${truth.total} 官方帖=${truth.official} 总量=${truth.rawTotal} 游戏=${truth.games}`
+      + ` 分布=${JSON.stringify(truth.counts)} 板块=${JSON.stringify(truth.byBoard)}`
   )
 
   /* ================= A. 首页 = 攻略聚合页 ================= */
@@ -203,6 +240,18 @@ const LABEL_TO_VALUE = { 手游: '手机', 多平台: '多平台', PC: 'PC', 主
   assert('A8 首屏渲染帖子卡', (await count('.pc')) >= 8, `pc=${await count('.pc')}`)
   assert('A9 首屏卡片带平台角标', (await count('.pc__plat')) >= 8, `plat=${await count('.pc__plat')}`)
   assert('A10 结果计数与「全部」一致', (await text('.bar__count')).includes(String(truth.total)), await text('.bar__count'))
+  // A10b 分流（2026-09-21）：官方帖只进资讯页，**首页一篇都不许有**。
+  //     判据是卡片上的「官方」标签 —— 它按账号 uid 渲染，绕不过去。
+  //     若哪天有人把 guideIndex 的 KEEP 里 userId 去掉、或忘了升缓存键版本，
+  //     这条会立刻报红（否则分流会静默失效：页面看着正常，只是又重叠了）。
+  //     ⚠️ 编号用 A10b 而不是 A11 —— A11..A16 已被下面的平台/公告断言占用，
+  //        直接叫 A11 会重名（插在中间又不想把后面全部重编号）。
+  const homeOfficial = await count('.pc__badge--official')
+  assert(
+    'A10b 首页不含官方资讯帖（官方帖已分流到资讯页）',
+    truth.official > 0 && homeOfficial === 0,
+    `首页官方标签=${homeOfficial} 接口官方帖=${truth.official}`
+  )
   await page.screenshot({ path: path.join(SHOTS, 'A-home.png') })
 
   /* ---------- A-plat. 切换平台：数字、卡片角标、条数三者必须自洽 ---------- */
@@ -558,7 +607,7 @@ const LABEL_TO_VALUE = { 手游: '手机', 多平台: '多平台', PC: 'PC', 主
   assert('C10 底部状态文案存在', (await text('.footer')).length > 0, await text('.footer'))
 
   /* ================= D. 资讯 ================= */
-  console.log('\n--- D. 资讯（board 4 的分平台视图）---')
+  console.log('\n--- D. 资讯（官方情报站：只出官方账号的帖）---')
   await goto('/pages/news/news')
   assert('D1 资讯列表渲染', (await count('.pc')) >= 1, `pc=${await count('.pc')}`)
   assert('D2 平台筛选条 5 档', (await count('.pf__btn')) === 5)
@@ -575,10 +624,26 @@ const LABEL_TO_VALUE = { 手游: '手机', 多平台: '多平台', PC: 'PC', 主
   //    这是**脚本自身的坑**（已改成读接口真值），不是产品问题。
   const newsCountText = await text('.bar__count')
   const newsPageNum = Number((newsCountText.match(/\d+/) || [])[0])
+  // D5（2026-09-21 改造）：资讯页不再是「board4 的视图」，而是**只出官方账号的帖**。
+  //    所以判据从「= board4 篇数」改成「= 接口独立统计的官方帖数」。
   assert(
-    'D5 资讯页只出「资讯速递」板块（条数 = 接口独立统计的 board4）',
-    newsPageNum === truth.byBoard[4] && truth.byBoard[4] > 0 && truth.byBoard[4] < truth.total,
-    `页面「${newsCountText}」 接口 board4=${truth.byBoard[4]} 全量=${truth.total}`
+    'D5 资讯页只出官方帖（条数 = 接口独立统计的官方账号帖数）',
+    truth.official > 0 && newsPageNum === truth.official,
+    `页面「${newsCountText}」 接口官方帖=${truth.official}（board4 共 ${truth.byBoard[4]}）`
+  )
+  // D6 反向确认：资讯页里的**每一张**卡片都必须是官方帖，不能混进玩家投稿。
+  const newsPc = await count('.pc')
+  const newsOfficial = await count('.pc__badge--official')
+  assert(
+    'D6 资讯页每张卡片都带「官方」标签（无玩家帖混入）',
+    newsPc > 0 && newsOfficial === newsPc,
+    `卡片=${newsPc} 官方标签=${newsOfficial}`
+  )
+  // D7 官方帖必须都在资讯速递板块内（否则是分流写反了：官方帖跑去了攻略心得）
+  assert(
+    'D7 官方帖数不超过 board4 篇数（未跑到攻略心得板块）',
+    truth.official <= truth.byBoard[4],
+    `官方帖=${truth.official} board4=${truth.byBoard[4]}`
   )
   await page.screenshot({ path: path.join(SHOTS, 'D-news.png') })
 

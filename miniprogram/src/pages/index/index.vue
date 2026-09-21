@@ -124,7 +124,7 @@ import { ref, computed } from 'vue'
 import { onLoad, onReachBottom, onPullDownRefresh } from '@dcloudio/uni-app'
 import { ensureIndex, queryIndex, countByPlatform, indexStats } from '../../utils/guideIndex'
 import { fetchAnnouncements } from '../../api/community'
-import { PLATFORM_TABS, PLATFORM_HINT, SORT } from '../../api/config'
+import { PLATFORM_TABS, PLATFORM_HINT, SORT, OFFICIAL_UID } from '../../api/config'
 import { platformLabel, formatTime } from '../../utils/format'
 import PlatformFilter from '../../components/PlatformFilter.vue'
 import PostCard from '../../components/PostCard.vue'
@@ -153,8 +153,22 @@ const visibleCount = ref(PAGE)
 const topNotice = ref(null)
 const noticeOpen = ref(null)
 
-const stats = computed(() => indexStats(items.value))
-const counts = computed(() => countByPlatform(items.value))
+/**
+ * 攻略页内容池 = 端内索引 **排除官方资讯帖**。
+ *
+ * 2026-09-21：资讯速递板块原本与攻略心得一起并进首页，导致「资讯」页内容
+ * 完全是首页的子集（用户实测反馈「资讯这一块重复、没用」）。现在按**发帖账号**分流：
+ *   · 官方账号（`OFFICIAL_UID`）发的 → 只进「资讯」页；
+ *   · 其余玩家帖（含资讯速递里的玩家投稿）→ 留在本页。
+ * 这样两侧不再重叠，且**首页内容总量不变**（原资讯速递里的玩家帖照旧在这）。
+ *
+ * ⚠️ 用 `Number(...) !== OFFICIAL_UID` 而不是 `!==`：索引从存储里读出来时
+ *   userId 可能是字符串（JSON 往返），直接全等比较会**静默漏掉所有官方帖**。
+ */
+const pool = computed(() => items.value.filter((it) => Number(it.userId) !== OFFICIAL_UID))
+
+const stats = computed(() => indexStats(pool.value))
+const counts = computed(() => countByPlatform(pool.value))
 
 /** 按钮上带真实数量；「全部」= 池内总数 */
 const platTabs = computed(() =>
@@ -166,7 +180,7 @@ const platHint = computed(() =>
 )
 
 const filtered = computed(() =>
-  queryIndex(items.value, { platform: platform.value, sort: sort.value })
+  queryIndex(pool.value, { platform: platform.value, sort: sort.value })
 )
 const visible = computed(() => filtered.value.slice(0, visibleCount.value))
 

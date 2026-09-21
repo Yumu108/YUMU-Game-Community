@@ -2,6 +2,11 @@
   <view class="pc" @click="onTap">
     <view class="pc__body">
       <view class="pc__head">
+        <!--
+          官方标识（2026-09-21）—— 放在最前：它是**来源身份**，比「置顶/精华」这类
+          内容属性更该被第一眼看到。由发帖账号 uid 判定，不依赖昵称（昵称可改）。
+        -->
+        <text v-if="isOfficial" class="pc__badge pc__badge--official">官方</text>
         <text v-if="post.isTop" class="pc__badge pc__badge--top">置顶</text>
         <text v-if="post.isEssence" class="pc__badge pc__badge--best">精华</text>
         <text class="pc__title" :class="{ 'pc__title--clamp': clamp }">{{ post.title }}</text>
@@ -58,12 +63,19 @@
 import { computed, ref, watch } from 'vue'
 import { formatTime, shortNumber, resolveImage, platformLabel } from '../utils/format'
 import { summaryOf } from '../utils/content'
+import { OFFICIAL_UID } from '../api/config'
 
 const props = defineProps({
   post: { type: Object, required: true },
   clamp: { type: Boolean, default: true }
 })
 const emit = defineEmits(['tap'])
+
+/**
+ * 是否官方帖 —— 按**发帖账号 uid** 判定，不按昵称/角色。
+ * `Number()` 归一化：索引经存储往返后 userId 可能是字符串，直接全等会漏判。
+ */
+const isOfficial = computed(() => Number(props.post.userId) === OFFICIAL_UID)
 
 const summary = computed(() => summaryOf(props.post, 52))
 const timeText = computed(() => formatTime(props.post.createdAt))
@@ -142,6 +154,16 @@ function onTap() {
 .pc__badge--best {
   background: rgba(124, 92, 255, 0.22);
   color: #cbbdff;
+}
+/*
+  官方标识 —— 用青色（与「主机」平台角标同色系）而不是紫色：
+  紫色已被「精华」占用，再用会分不清哪个是官方、哪个是精华。
+  实底 + 深色字，在深色卡片上是全卡最"确定"的一块，符合"官方"该有的分量。
+*/
+.pc__badge--official {
+  background: rgba(25, 227, 194, 0.9);
+  color: #06322b;
+  font-weight: 600;
 }
 .pc__title {
   font-size: 30rpx;
