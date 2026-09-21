@@ -431,8 +431,13 @@ def main():
     for i, r in enumerate(rows):
         pid = start + i
         cover = covers.get(str(r['game_id'])) or covers.get(r['game_id']) or ''
+        # 🚨 必须是 INSERT IGNORE：这份 SQL 是要**手工 scp 到线上再灌**的产物
+        #   （db-seed/out/ 被 .gitignore 忽略，deploy-local.sh 不会自动带上去）。
+        #   重发一次就撞主键 → 整份脚本在第 1 条报 ERROR 1062 中止，后面 19 条全灌不进去，
+        #   而且因为 mysql 非事务性 DDL 语境，前面已插的那条留在库里 ⇒ 半死不活状态。
+        #   项目里所有 seed 产物（gen_seed.py 的 030-rich-seed.sql 同理）都按幂等写。
         L.append(
-            "INSERT INTO `post` (`id`,`user_id`,`board_id`,`game_id`,`title`,`content`,`summary`,"
+            "INSERT IGNORE INTO `post` (`id`,`user_id`,`board_id`,`game_id`,`title`,`content`,`summary`,"
             "`cover`,`type`,`status`,`is_top`,`is_essence`,`view_count`,`reply_count`,`like_count`,"
             "`created_at`,`updated_at`,`deleted`) VALUES (%d,%d,%d,%d,%s,%s,%s,%s,%d,0,0,0,0,0,0,"
             "FROM_UNIXTIME(%d),FROM_UNIXTIME(%d),0);"
