@@ -41,6 +41,7 @@
  *     **完全相同的列表**。根因不在前端 —— 小程序一直在传 `/games/{id}/posts?boardId=1|4`，
  *     但后端 `GameController#posts` **根本没有 `boardId` 参数**，Spring 静默丢弃未知查询参数。
  *     F 组断言专门锁这个回归（它必须靠**接口按板块过滤后的真值**来判，页面自证是抓不到的）。
+ *     —— 组号实为 **T 组**（`F` 已被「搜索链路」那组占用，见 T 组处的说明）。
  */
 const path = require('path')
 const fs = require('fs')
@@ -707,7 +708,7 @@ const OFFICIAL_UID = 20142
   )
   await page.screenshot({ path: path.join(SHOTS, 'D-news.png') })
 
-  /* ====== F. 游戏详情页：攻略 / 资讯 必须按板块分开（2026-09-21 新增） ====== */
+  /* ====== T. 游戏详情页：攻略 / 资讯 必须按板块分开（2026-09-21 新增） ====== */
   //
   // 🚨 这一组是用户截图反馈的直接回归防线：「三角洲行动」详情页的
   //    「攻略」「资讯」两个 Tab 拿到**完全相同的列表**。
@@ -716,9 +717,13 @@ const OFFICIAL_UID = 20142
   //
   //    ⚠️ 这类「参数写了没效果」的故障，**页面自证是抓不到的** —— 两个 Tab 都渲染得好好的，
   //       不比不知道。所以期望值必须取**接口按板块过滤后的真值**（truth.detail 独立打接口算）。
-  console.log('\n--- F. 游戏详情页（攻略=board1 / 资讯=board4，两 Tab 不得相同）---')
+  //
+  //    ⚠️ 组号用 `T`（Tabs）：`F` 已被「搜索链路统一口径」那一组占用（F1–F15），
+  //       `G/H/L/R` 也都各有归属。新增断言组前先 grep 一遍已用前缀，别重号 ——
+  //       重号的代价是报告里出现两个 F1，排查时根本分不清哪条挂了（A11 也踩过一次，见 A10b）。
+  console.log('\n--- T. 游戏详情页（攻略=board1 / 资讯=board4，两 Tab 不得相同）---')
   if (!truth.detail) {
-    assert('F0 找到「两板块都有帖」的游戏用于交叉验证', false, '接口没返回可用于验证的游戏')
+    assert('T0 找到「两板块都有帖」的游戏用于交叉验证', false, '接口没返回可用于验证的游戏')
   } else {
     const gid = truth.detail.id
     const titlesOf = () =>
@@ -730,41 +735,41 @@ const OFFICIAL_UID = 20142
     const guideTitles = await titlesOf()
     const wantGuide = truth.detail.b1.slice(0, 10)
     assert(
-      'F1 攻略 Tab 只出「攻略心得」（卡片标题全在 board1 真值内）',
+      'T1 攻略 Tab 只出「攻略心得」（卡片标题全在 board1 真值内）',
       wantGuide.length > 0 && guideTitles.length === wantGuide.length &&
         guideTitles.every((t) => wantGuide.includes(t)),
       `页面=${guideTitles.length} 期望=${wantGuide.length} 尾部「${await text('.footer')}」`
     )
 
-    // 切到「资讯」Tab（.tabs 下第 2 个 titem）
+    // 切到「资讯」Tab（.tabs 下第 2 个 item）
     await page.click('.tabs__item:nth-child(2)')
     await sleep(2200)
     const newsTitles = await titlesOf()
     const wantNews = truth.detail.b4.slice(0, 10)
     assert(
-      'F2 资讯 Tab 只出「资讯速递」（卡片标题全在 board4 真值内）',
+      'T2 资讯 Tab 只出「资讯速递」（卡片标题全在 board4 真值内）',
       wantNews.length > 0 && newsTitles.length === wantNews.length &&
         newsTitles.every((t) => wantNews.includes(t)),
       `页面=${newsTitles.length} 期望=${wantNews.length}`
     )
 
-    // F3 两 Tab 内容必须**真的不同** —— 这条就是用户看到的问题本身。
+    // T3 两 Tab 内容必须**真的不同** —— 这条就是用户看到的问题本身。
     //    重合数要与「真值之间的重合数」一致：真值本身有重合时不能用 0 当判据，
     //    否则会误报；而后端一旦又丢掉 boardId，页面重合数会远大于真值重合数 ⇒ 报红。
     const overlap = newsTitles.filter((t) => guideTitles.includes(t)).length
     const wantOverlap = wantNews.filter((t) => wantGuide.includes(t)).length
     assert(
-      'F3 两个 Tab 内容不再混在一起（页面重合数 = 真值重合数）',
+      'T3 两个 Tab 内容不再混在一起（页面重合数 = 真值重合数）',
       guideTitles.length > 0 && newsTitles.length > 0 && overlap === wantOverlap,
       `攻略=${guideTitles.length} 资讯=${newsTitles.length} 重合=${overlap} 真值重合=${wantOverlap}`
     )
-    await page.screenshot({ path: path.join(SHOTS, 'F-detail-news.png') })
+    await page.screenshot({ path: path.join(SHOTS, 'T-detail-news.png') })
   }
 
-  // F4/F5 官方帖所在的那款游戏：攻略 Tab 不得夹带官方帖；资讯 Tab 官方帖三重标识
+  // T4/T5 官方帖所在的那款游戏：攻略 Tab 不得夹带官方帖；资讯 Tab 官方帖三重标识
   if (!truth.officialGame) {
-    console.log('   ⏭ F4/F5 跳过：board4 里没找到官方帖所在的游戏')
-    assert('F4 找到官方帖所在的游戏', false, 'board4 里没有官方帖')
+    console.log('   ⏭ T4/T5 跳过：board4 里没找到官方帖所在的游戏')
+    assert('T4 找到官方帖所在的游戏', false, 'board4 里没有官方帖')
   } else {
     const og = truth.officialGame
     await goto(`/pages/game/detail?id=${og.id}`)
@@ -774,13 +779,13 @@ const OFFICIAL_UID = 20142
     if (og.b1Total === 0) {
       // 用户截图场景：该游戏只有官方公告、没有攻略
       assert(
-        'F4 攻略 Tab 空态（该游戏 board1 确实无帖）',
+        'T4 攻略 Tab 空态（该游戏 board1 确实无帖）',
         gCards === 0 && (await count('.empty')) === 1,
         `卡片=${gCards} 空态=${await count('.empty')} 文案「${await text('.empty__text')}」`
       )
     } else {
       assert(
-        'F4 攻略 Tab 只有攻略心得、不含官方帖',
+        'T4 攻略 Tab 只有攻略心得、不含官方帖',
         gCards > 0 && gOfficial === 0,
         `卡片=${gCards} 官方标签=${gOfficial}（该游戏 board1 共 ${og.b1Total} 条）`
       )
@@ -796,13 +801,13 @@ const OFFICIAL_UID = 20142
     // （条数不足一屏时就是全部卡片）。因此这三个角标的数量应等于 min(卡片数, 官方帖数)。
     const wantBadges = Math.min(ogCards, og.officialCount)
     assert(
-      'F5 资讯 Tab 官方帖带「官方+置顶+精华」三重标识（且置顶在最前）',
+      'T5 资讯 Tab 官方帖带「官方+置顶+精华」三重标识（且置顶在最前）',
       ogCards > 0 && wantBadges >= 1 &&
         ogOfficial === wantBadges && ogTop === wantBadges && ogBest === wantBadges,
       `卡片=${ogCards} 官方=${ogOfficial} 置顶=${ogTop} 精华=${ogBest}`
         + ` 期望=${wantBadges}（该游戏官方帖 ${og.officialCount} 条 / board1 ${og.b1Total} 条）`
     )
-    await page.screenshot({ path: path.join(SHOTS, 'F-official-game-news.png') })
+    await page.screenshot({ path: path.join(SHOTS, 'T-official-game.png') })
   }
 
   /* ================= E. 我的 ================= */
