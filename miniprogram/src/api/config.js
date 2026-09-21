@@ -56,6 +56,15 @@ export const STORAGE_KEYS = {
   /** 登录用户信息（与 token 同生命周期，见 utils/store.js 的 session 段） */
   USER: 'yumu_user',
   HISTORY: 'yumu_history',
+  /**
+   * 搜索历史（搜过的**关键词**字符串数组，见 utils/searchHistory.js）。
+   *
+   * ⚠️ 与上面的 `HISTORY` 是**两回事**，别复用同一个键：
+   *   `HISTORY` = 浏览历史（看过的帖子，对象数组，见 utils/store.js）；
+   *   `SEARCH_HISTORY` = 搜索历史（纯字符串数组）。
+   *   结构不同，复用会互相覆盖。
+   */
+  SEARCH_HISTORY: 'yumu_search_history',
   FAVORITES: 'yumu_favorites',
   LIKES: 'yumu_likes',
   /** 本机已举报的帖子 id 列表（防重复举报入口，见 utils/store.js） */

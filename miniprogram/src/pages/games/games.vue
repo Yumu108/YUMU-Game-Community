@@ -99,6 +99,7 @@ import { fetchGames } from '../../api/community'
 import { PLATFORM_TABS, PLATFORM_HINT } from '../../api/config'
 import { platformLabel } from '../../utils/format'
 import { ensureGameMeta } from '../../utils/guideIndex'
+import { matchGenre } from '../../utils/keywordFilter'
 import { usePagedList } from '../../utils/usePagedList'
 import PlatformFilter from '../../components/PlatformFilter.vue'
 import GameTile from '../../components/GameTile.vue'
@@ -125,27 +126,12 @@ const platName = (v) => platformLabel(v)
  * 类型（标签）只作为**搜索词**：输入类型名（MMORPG / RPG / 策略…）时，
  * 端内解析成对应的 genre，改走后端 `/games?genre=` 精确筛选。
  *
- * 为什么必须端内转换：后端 `/games` 的 `keyword` 只 `like(name/description)`，
- * **不匹配 genre**（`/search?type=game` 会匹配 genre，但它不分页、也丢了平台筛选）。
- * 2026-09-20 去掉类型筛选行后，类型改为「搜索即达」，靠这里补上。
- *
- * 匹配优先级：完全相等 → 前缀（≥2 字）→ 包含（≥2 字），均不区分大小写。
- * 单字只认「完全相等」，避免输入「a」时把所有 ACT / AVG / MMO… 一起捞出来。
+ * 解析规则（完全相等 → 前缀 ≥2 字 → 包含 ≥2 字；单字只认完全相等）已抽到
+ * `utils/keywordFilter.js`，与**搜索页**共用同一份 —— 两处若各写一份，
+ * 迟早漂移成「同一个词在游戏库能搜到、在搜索页搜不到」（2026-09-21 那次
+ * 「搜『资讯』搜出仙剑」正是这种口径不一致的产物）。
  */
-const genreHit = computed(() => {
-  const kw = keyword.value.trim().toLowerCase()
-  if (!kw || !genres.value.length) return ''
-  const names = genres.value.map((g) => g.name)
-  const exact = names.find((n) => n.toLowerCase() === kw)
-  if (exact) return exact
-  if (kw.length >= 2) {
-    const pre = names.find((n) => n.toLowerCase().startsWith(kw))
-    if (pre) return pre
-    const inc = names.find((n) => n.toLowerCase().includes(kw))
-    if (inc) return inc
-  }
-  return ''
-})
+const genreHit = computed(() => matchGenre(keyword.value, genres.value))
 
 const { list, loading, failed, footerText, reload, loadMore, retryMore } = usePagedList(
   ({ current, size }) => {

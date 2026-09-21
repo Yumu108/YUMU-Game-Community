@@ -23,6 +23,11 @@
  *  ⑥ **类型改为「搜索即达」（2026-09-20 二次调整）**：游戏库去掉类型「二次分类」筛选行，
  *     标签改为通过搜索框输入命中（请求带 `genre=` 精确筛选）；底部导航互换为
  *     攻略 → 资讯 → 游戏库 → 我的。
+ *  ⑦ **搜索页统一口径（2026-09-21）**：搜索页的「游戏」一路从 `/search?type=game`
+ *     换成 `/games`（前者内部 `LIMIT 8`、无分页无总数，且把 `publisher` 也当匹配字段
+ *     —— 「搜『资讯』搜出《仙剑奇侠传》」就是它把发行商「大宇**资讯**」匹配上了）。
+ *     现在关键词先由端内解析成类型 / 平台**精确值**（`utils/keywordFilter.js`，
+ *     与游戏库页共用），再把命中原因回显到卡片上。F5-F15 锁这些行为。
  */
 const path = require('path')
 const fs = require('fs')
@@ -597,15 +602,132 @@ const LABEL_TO_VALUE = { 手游: '手机', 多平台: '多平台', PC: 'PC', 主
   }
 
   /* ================= F. 搜索 ================= */
-  console.log('\n--- F. 搜索（帖子走端内索引，游戏走后端）---')
+  console.log('\n--- F. 搜索（帖子走端内索引，游戏走 /games 分页）---')
+
+  // 只在本组期间收集接口请求，用来核对「游戏一路到底打了哪个接口」
+  const fGameReqs = []
+  const fSearchReqs = []
+  const fRec = (r) => {
+    const u = decodeURIComponent(r.url())
+    if (u.includes('/api/games')) fGameReqs.push(u)
+    if (u.includes('/api/search')) fSearchReqs.push(u)
+  }
+  page.on('request', fRec)
+
+  // 清掉搜索历史，尽量让 F13 读到的是本轮真的写进去的记录（清不掉也不影响判定）
+  await goto('/pages/index/index')
+  await page.evaluate(() => {
+    try {
+      uni.removeStorageSync('yumu_search_history')
+    } catch (e) {}
+  })
+  fGameReqs.length = 0
+  fSearchReqs.length = 0
+
   await goto('/pages/search/search?keyword=' + encodeURIComponent('原神'))
-  await sleep(1600)
   const searchContent = await page.content()
   assert('F1 搜索结果含关键词命中', searchContent.includes('原神'))
   assert('F2 类型 Tab 3 档', (await count('.tabs__item')) === 3)
   assert('F3 端内命中区块渲染', /攻略 \/ 资讯/.test(await text('.mp-sec__title').catch(() => '')) || (await count('.pc')) > 0, `pc=${await count('.pc')}`)
   assert('F4 提示了在多少篇干货中搜索', /在\s*\d+\s*篇/.test(searchContent), '')
   await page.screenshot({ path: path.join(SHOTS, 'F-search.png') })
+
+  // F5/F6（2026-09-21 重构）：游戏一路必须走 `/games`（服务端分页、有 total），
+  //   不能再走 `/search?type=game` —— 它内部写死 `LIMIT 8`、无分页无总数，
+  //   而且把 `publisher` 也当匹配字段，正是「搜『资讯』搜出《仙剑奇侠传》」的元凶
+  //   （《仙剑》的发行商叫「大宇**资讯**」，纯属公司名撞词）。
+  assert(
+    'F5 游戏结果走 /games 分页接口（不再打 /search?type=game）',
+    fGameReqs.some((u) => /\/api\/games\?/.test(u)) && !fSearchReqs.some((u) => /type=game/.test(u)),
+    `games=${fGameReqs.length} search=${fSearchReqs.length}`
+  )
+  assert('F6 游戏区块显示「共 N 款」（/search 那套没有总数）', /共\s*\d+\s*款/.test(await page.content()), '')
+
+  // F7/F8：类型名当搜索词 → 端内解析成 genre，请求带 `genre=` 精确筛选且**不带 keyword**
+  //   类型从**独立算出的类型分布**里挑（收录最多的那个），不看页面自证
+  const fGenre = Object.keys(truth.genres || {}).sort((a, b) => truth.genres[b] - truth.genres[a])[0] || ''
+  if (fGenre) {
+    await goto('/pages/search/search')
+    const [geReqS] = await Promise.all([
+      page
+        .waitForRequest((r) => {
+          const u = decodeURIComponent(r.url())
+          return u.includes('/api/games') && u.includes('genre=' + fGenre)
+        }, { timeout: 9000 })
+        .catch(() => null),
+      page.fill('input.uni-input-input', fGenre).catch(() => {})
+    ])
+    await sleep(1800)
+    const geUrlS = geReqS ? decodeURIComponent(geReqS.url().replace(/^https?:\/\/[^/]+/, '')) : ''
+    assert('F7 搜索页搜类型名 → 请求带 genre 精确筛选', !!geReqS, geUrlS || `未捕获（类型=${fGenre}）`)
+    assert('F7b 类型搜索不再发 keyword（避免被名称 like 反抢）', !!geReqS && !/[?&]keyword=/.test(geUrlS), geUrlS)
+    const gsContent = await page.content()
+    assert('F8 命中原因回显（卡片标注「类型 · XXX」）', gsContent.includes('类型 · ' + fGenre), `期望含「类型 · ${fGenre}」`)
+  } else {
+    assert('F7 搜索页搜类型名 → 请求带 genre 精确筛选', false, '没算出任何类型（接口异常？）')
+    assert('F7b 类型搜索不再发 keyword', false)
+    assert('F8 命中原因回显（类型）', false)
+  }
+  await page.screenshot({ path: path.join(SHOTS, 'F-search-genre.png') })
+
+  // F9-F11：平台词 → `platform=` 精确筛选；结果还能**翻页**
+  //   （「能翻页」正是换接口最直接的收益：原来 `/search?type=game` 恒定最多 8 条、翻不动）
+  await goto('/pages/search/search')
+  const [pfReqS] = await Promise.all([
+    page
+      .waitForRequest((r) => {
+        const u = decodeURIComponent(r.url())
+        return u.includes('/api/games') && /platform=pc/i.test(u)
+      }, { timeout: 9000 })
+      .catch(() => null),
+    page.fill('input.uni-input-input', 'PC').catch(() => {})
+  ])
+  await sleep(1800)
+  assert('F9 搜索页搜平台词 → 请求带 platform=PC', !!pfReqS, pfReqS ? '已捕获' : '未捕获')
+  assert('F10 命中原因回显（卡片标注「平台 · PC」）', (await page.content()).includes('平台 · PC'), '')
+
+  const beforeMore = await count('.gitem')
+  const [moreReqS] = await Promise.all([
+    page
+      .waitForRequest((r) => /\/api\/games\?/.test(r.url()) && /current=2/.test(r.url()), { timeout: 9000 })
+      .catch(() => null),
+    page.locator('.more--games').first().click().catch(() => {})
+  ])
+  await sleep(1800)
+  const afterMore = await count('.gitem')
+  assert('F11 游戏结果可「加载更多」（请求翻到 current=2）', !!moreReqS, moreReqS ? '已捕获' : `未捕获（before=${beforeMore}）`)
+  assert('F11b 加载更多后卡片数增加', afterMore > beforeMore, `before=${beforeMore} after=${afterMore}`)
+
+  // F12：输入即搜 —— 不按回车，防抖到点自动出结果
+  await goto('/pages/search/search')
+  const [autoReq] = await Promise.all([
+    page
+      .waitForRequest((r) => /\/api\/games\?/.test(r.url()) && /keyword=/.test(decodeURIComponent(r.url())), { timeout: 9000 })
+      .catch(() => null),
+    page.fill('input.uni-input-input', '原神').catch(() => {})
+  ])
+  // ⚠️ 必须 >1.5s：写「搜索历史」的防空闲门槛**故意**比搜索防抖长 ——
+  //    这是为了让「原」「原神」这种打字中途的半截词不进历史
+  await sleep(2200)
+  assert('F12 输入即搜（不按回车也自动发请求）', !!autoReq, autoReq ? '已捕获' : '未捕获（可能仍需回车）')
+
+  // F13-F15：搜索历史 —— 刚搜过的词要出现在「未搜索态」，可复搜、可清空
+  await goto('/pages/search/search')
+  const hisContent = await page.content()
+  const hisTexts = await page.$$eval('.tag--his', (els) => els.map((e) => e.innerText.trim()))
+  assert('F13 未搜索态展示「最近搜索」区块', hisContent.includes('最近搜索') && hisTexts.length >= 1, hisTexts.join('|'))
+  assert(
+    'F14 历史里含刚搜过的词（原神 / PC）',
+    hisTexts.includes('原神') || hisTexts.some((t) => /^pc$/i.test(t)),
+    hisTexts.join('|')
+  )
+  await page.locator('.mp-sec__more').first().click().catch(() => {})
+  await sleep(700)
+  const hisAfter = await count('.tag--his')
+  assert('F15 可清空搜索历史', hisAfter === 0, `残留 ${hisAfter}`)
+  await page.screenshot({ path: path.join(SHOTS, 'F-search-history.png') })
+
+  page.off('request', fRec)
 
   /* ================= G. 全局 ================= */
   console.log('\n--- G. 全局 ---')
