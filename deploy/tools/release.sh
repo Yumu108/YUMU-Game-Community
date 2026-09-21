@@ -76,6 +76,35 @@ die()  {
   exit 1
 }
 
+# ---------------------------------------------------------------------------
+# wait_http —— 带重试的 HTTP 探活（2026-09-21 新增，修「第 6 步假阴性」）
+# ---------------------------------------------------------------------------
+# 🚨 为什么必须重试：`docker compose up -d` 之后 nginx 容器**状态立刻变 `Started`**，
+#   但宿主机 80 端口真正开始接连接要晚约 1 秒。第 6 步原来是「一次 curl 定生死」，
+#   撞进这个窗口就拿到 `000` ⇒ `die` ⇒ 发版**其实成功了**（容器 Recreated + 全健康）
+#   却中止在第 6 步，连带 6.7 的「发版基线」也不写 ⇒ 下次 diff 从旧基线算起，
+#   还得人工补基线。**已实测两次**（9-21 两次发版各一次）⇒ 是**时序抖动**，不是稳定故障。
+#   判据不是「有没有失败」，而是「失败是不是持续」。
+# 用法：wait_http <url> <期望码> [尝试次数=10] [间隔秒=1]
+#   返回 0 = 拿到期望码（结果写进 LAST_CODE / LAST_TRIES / LAST_FIRST_CODE）
+#   返回 1 = 全部尝试都失败（同样写了这三个变量，供调用方打印）
+wait_http() {
+  local url="$1" want="$2" tries="${3:-10}" delay="${4:-1}"
+  local i=1 code="000" first=""
+  while [ "$i" -le "$tries" ]; do
+    code="$(curl -s -o /dev/null -m 5 -w '%{http_code}' "$url" 2>/dev/null || echo 000)"
+    [ -z "$first" ] && first="$code"
+    if [ "$code" = "$want" ]; then
+      LAST_CODE="$code"; LAST_TRIES="$i"; LAST_FIRST_CODE="$first"
+      return 0
+    fi
+    [ "$i" -lt "$tries" ] && sleep "$delay"
+    i=$((i + 1))
+  done
+  LAST_CODE="$code"; LAST_TRIES="$tries"; LAST_FIRST_CODE="$first"
+  return 1
+}
+
 # 每一步都记录到日志（也能事后回看）
 exec > >(tee -a "$LOG") 2>&1
 
@@ -558,12 +587,18 @@ else
   fi
 
   # 6.4 首页可访问
-  CODE="$(curl -s -o /dev/null -m 10 -w '%{http_code}' "$BASE_URL/" || echo 000)"
-  if [ "$CODE" = "200" ]; then
-    ok "首页 HTTP 200（$BASE_URL/）"
+  # ⚠️ 用 wait_http 而不是单次 curl（见它的注释）：`up -d` 返回后 nginx 虽已 `Started`，
+  #    宿主机 80 真正开始接连接要晚约 1 秒；一次 curl 定生死会把「已发成功」误判成失败。
+  if wait_http "$BASE_URL/" 200 10 1; then
+    if [ "$LAST_TRIES" -gt 1 ]; then
+      ok "首页 HTTP 200（$BASE_URL/，第 ${LAST_TRIES} 次探测才通 —— up -d 后的启动窗口，非故障）"
+    else
+      ok "首页 HTTP 200（$BASE_URL/）"
+    fi
   else
-    err "首页返回 $CODE（期望 200）"
+    err "首页返回 $LAST_CODE（期望 200；连续探测 ${LAST_TRIES} 次，首次 $LAST_FIRST_CODE）"
     note "502 → nginx 活着但 backend 不通；Connection refused → 80 没人听（回看上面 nginx 状态）"
+    note "若首次 000 之后一直是 000，才说明是真故障（抖动只发生在最初约 1 秒）"
     die "验收失败：首页不可访问"
   fi
 
