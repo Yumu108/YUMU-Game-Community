@@ -34,7 +34,7 @@
  * ⚠️ 请求层 `request.js` 在业务失败时会 toast `message` 原文。因此**允许失败**的探测类调用
  *    （can-review）必须传 `{ silent: true }`，否则用户会莫名看到红字「无权限（需要管理员角色）」。
  */
-import { get, post } from './request'
+import { get, post, put } from './request'
 
 /**
  * 当前用户能否审核 / 管理这篇帖子。
@@ -97,3 +97,77 @@ export function runManageAction(key, postId, payload = {}) {
   if (!fn) return Promise.reject(new Error(`未知的管理动作：${key}`))
   return fn(postId)
 }
+
+/* ══════════════════ 用户 / 角色管理（2026-09-26 新增，仅 ADMIN） ══════════════════
+ *
+ * 对应 `AdminUserController`（`@RequestMapping("/admin/users")`，**类级 `hasRole('ADMIN')`**）。
+ * ⇒ 与帖子类接口（`hasAnyRole('ADMIN','MODERATOR')`）**不同**：这里版主也会 403。
+ *   所以端内入口必须用 `utils/roles.js#canManageUsers`（只认 ADMIN）来把闸，
+ *   不能用 `canSeeManageEntry`（那个含版主）。混用 = 版主点进去必吃 403。
+ *
+ * 与主站管理后台是**同一套接口**，端内只是换了个更轻的交互（搜索 → 编辑 → 保存）。
+ * 后端零改动 —— 这些接口本来就存在（`/admin/users` 系列在主站已被使用）。
+ */
+
+/**
+ * 搜索 / 分页列出用户。
+ *
+ * @param {string} keyword 关键词，**同时模糊匹配 `username` 与 `nickname`**
+ *        （后端 `listUsers`：`like(username) OR like(nickname)`）；空串 = 不过滤
+ * @param {{current?:number,size?:number}} [page] size 后端钳制在 1..100（默认 20）
+ * @returns {Promise<{total:number,records:Array}>} 记录含 `roles` / `moderatorAssignments` / `status`
+ *
+ * ⚠️ 关键词走的是 LIKE `%kw%`，不是精确匹配 —— 搜「a」会命中所有含 a 的账号，
+ *    所以 UI 上要如实写「模糊搜索」，别暗示是精确查找。
+ */
+export const fetchAdminUsers = (keyword = '', { current = 1, size = 20 } = {}) =>
+  get('/admin/users', { keyword: keyword || undefined, current, size })
+
+/**
+ * 用户详情（含 `email` / `bio` / `moderatorAssignments`）。
+ * 列表接口已带 `moderatorAssignments`，一般够用；需要完整资料时再调这个。
+ */
+export const fetchAdminUserDetail = (id) => get(`/admin/users/${id}`)
+
+/**
+ * 全量替换某用户的角色。
+ *
+ * 🚨 三条硬约束（都在后端 `updateUserRoles` 里）：
+ *  ① `roles` **不能为空**（`@NotEmpty`）—— 想把管理员降为普通用户时，
+ *     必须传 `['USER']`，传 `[]` 会被 400 挡下；
+ *  ② 角色 code 必须在 `role` 表里（USER / MODERATOR / ADMIN），写错报「存在无效角色」；
+ *  ③ **若新角色不含 MODERATOR，后端会顺带清空他的版主授权**
+ *     （`if (!roleCodes.contains("MODERATOR")) setModeratorBoards(userId, [])`）。
+ *     ⇒ 所以「取消版主」不需要额外调一次 moderator-boards，那是后端的事。
+ *
+ * @param {number} id
+ * @param {string[]} roles 角色 code 列表，如 `['USER','MODERATOR']`
+ */
+export const updateUserRoles = (id, roles) => put(`/admin/users/${id}/roles`, { roles })
+
+/**
+ * 设置版主负责的游戏（**全量替换**）。
+ *
+ * 🚨 `MAX_GAMES_PER_MOD = 1` —— **一名版主只能负责一个游戏**，
+ *    提交多于 1 个会被 400 挡下（「请只选择目标游戏」）。
+ *    换任时只提交目标游戏即可，旧授权会被物理删除。
+ * 🚨 `MAX_MODS_PER_GAME = 5` —— 单个游戏最多 5 名版主，超了报错。
+ * ⚠️ `boardId` 字段已废弃（后端统一置 NULL 表示「负责该游戏全部板块」），
+ *    这里只传 `gameId`，别传 boardId。
+ *
+ * @param {number} id
+ * @param {number[]} gameIds 游戏 id 列表（业务上只会有 0 或 1 个）
+ */
+export const setModeratorBoards = (id, gameIds = []) =>
+  put(`/admin/users/${id}/moderator-boards`, {
+    items: (gameIds || []).filter((g) => g != null).map((g) => ({ gameId: g }))
+  })
+
+/*
+ * ⚠️ 后端 `/admin/users/**` 还有几个本页**故意没接**的接口，别以为漏了：
+ *   · `PUT /{id}/status`（封禁 / 解封）—— 属于「账号管控」不是「权限分配」，
+ *     放进来会让这个页面的职责变糊（一个页面干两件事，确认弹窗文案也没法统一）。
+ *   · `PUT /{id}/profile`、`PUT /{id}/reset-password`、`DELETE /{id}` —— 同上，
+ *     而且重置密码会返回**口令明文**，在手机端展示风险更高，留给主站。
+ *   判断依据很简单：**改权限 = 改这个人能做什么**，其余都属于资料/账号管控。
+ */

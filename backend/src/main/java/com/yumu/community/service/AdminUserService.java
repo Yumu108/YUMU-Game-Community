@@ -25,8 +25,15 @@ public interface AdminUserService {
     /** 获取用户详情（含角色与版主负责板块）。 */
     AdminUserDetailVO getUserDetail(Long userId);
 
-    /** 全量替换用户角色（角色 code 列表，如 ["USER","MODERATOR"]）。 */
-    void updateUserRoles(Long userId, List<String> roleCodes);
+    /**
+     * 全量替换用户角色（角色 code 列表，如 ["USER","MODERATOR"]）。
+     *
+     * @param operatorId 操作者 id —— 用于**防止管理员移除自己的 ADMIN 角色**
+     *                   （移除后其 JWT 每次请求都会按 uid 重查角色，立刻失效，
+     *                    后台从此无人可进）。与 {@link #setUserStatus} /
+     *                   {@link #deleteUser} 的自保同一风格。
+     */
+    void updateUserRoles(Long operatorId, Long userId, List<String> roleCodes);
 
     /** 封禁/解封用户（status 1=封禁 0=正常）。不能操作自己，以免误锁管理员。 */
     void setUserStatus(Long operatorId, Long userId, int status);

@@ -66,33 +66,80 @@
       </view>
 
       <!--
-        权限矩阵（2026-09-26 新增）—— 「权限方案」最标准的呈现方式：把后端每一项权力摊平，
-        逐条标出**当前角色能不能用**。`✓` 可用 / `⊘` 无权限（灰显 + 标注「仅管理员」）。
-        🚨 表里的接口路径是后端**真实存在**的，单测会读 `AdminController.java` 源码核对
-          （`tests/roles.test.mjs` F 组）—— 别在这里写不存在的接口，一写就红。
+        权限矩阵（2026-09-26 新增；同日第 3 轮改为 **可折叠 + 按操作位置分组**）。
+        —— 「权限方案」最标准的呈现方式：把后端每一项权力摊平，逐条标出
+           「**我这个角色能不能用**」×「**在哪做**」两个独立维度。
+        🚨 两个维度别混：
+             · 能不能用 → 行首 ✓ / ⊘（`allowed`，来自后端 AdminController 的真实注解）
+             · 在哪做   → 分组标题 + 组徽标（`place`，端内已接按钮 / 仅主站后台）
+           四种组合都真实存在：端内·可用（置顶）、端内·不可用（版主看置顶）、
+           主站·可用（版主打理举报）、主站·不可用（版主打理游戏库）。
+        🚨 默认**折叠**：11 行平铺会把「我的」页撑成一屏半，用户真正想先看的是
+           收藏/点赞列表。折叠态只留一行摘要（端内几项 / 主站几项），点标题栏展开。
+        🚨 用 `v-if` 而不是 `v-show`：折叠时这些节点**必须真的不在 DOM 里** ——
+           回归断言（PM 组）就是靠「点击前 0 个分组、点击后 ≥2 个」来验的；
+           用 `v-show` 的话元素仍在，断言会变成永远为真的空转。
+        🚨 表里的接口路径是后端**真实存在**的，单测会读 `AdminController.java`
+           / `AdminUserController.java` 源码核对（`tests/roles.test.mjs` F 组） ——
+           别在这里写不存在的接口，一写就红。
       -->
-      <view v-if="matrix.length" class="mx">
-        <view class="mx__head">
-          <text class="mx__title">权限矩阵</text>
-          <text class="mx__count">可执行 {{ capStats.allowed }} / {{ capStats.total }} 项</text>
-        </view>
-        <view
-          v-for="c in matrix"
-          :key="c.key"
-          class="mx__row"
-          :class="{ 'mx__row--off': !c.allowed }"
-        >
-          <text class="mx__mark" :class="c.allowed ? 'mx__mark--on' : 'mx__mark--off'">
-            {{ c.allowed ? '✓' : '⊘' }}
-          </text>
-          <view class="mx__body">
-            <text class="mx__name">{{ c.name }}</text>
-            <text class="mx__tag">{{ capTag(c) }}</text>
+      <view v-if="groups.length" class="mx">
+        <view class="mx__head" @click="mxOpen = !mxOpen">
+          <view class="mx__head-main">
+            <text class="mx__title">权限矩阵</text>
+            <text class="mx__count">可执行 {{ capStats.allowed }} / {{ capStats.total }} 项</text>
           </view>
+          <text class="mx__toggle">{{ mxOpen ? '收起 ▲' : '展开全部 ▼' }}</text>
         </view>
-        <text class="mx__note">
-          逐条对应后端真实接口（形如 POST /admin/posts/{id}/pin）。「限管辖范围」= 版主只能操作自己负责游戏下的内容；「主站操作」= 该项只在主站管理后台提供，端内未接按钮。
-        </text>
+
+        <!-- 折叠态摘要：不展开也能看出「端内能点几个、主站能做几个」 -->
+        <text class="mx__sum">{{ mxSum }}</text>
+
+        <view v-if="mxOpen" class="mx__groups">
+          <view v-for="g in groups" :key="g.key" class="mx__group">
+            <view class="mx__group-head">
+              <text class="mx__group-badge" :class="'mx__group-badge--' + g.key">{{ g.badge }}</text>
+              <text class="mx__group-title">{{ g.title }}</text>
+            </view>
+            <text class="mx__group-hint">{{ g.hint }}</text>
+
+            <view
+              v-for="c in g.items"
+              :key="c.key"
+              class="mx__row"
+              :class="{ 'mx__row--off': !c.allowed }"
+            >
+              <text class="mx__mark" :class="c.allowed ? 'mx__mark--on' : 'mx__mark--off'">
+                {{ c.allowed ? '✓' : '⊘' }}
+              </text>
+              <view class="mx__item">
+                <text class="mx__name">{{ c.name }}</text>
+                <text class="mx__tag">{{ capTag(c) }}</text>
+                <text v-if="c.note" class="mx__why">{{ c.note }}</text>
+              </view>
+            </view>
+          </view>
+
+          <text class="mx__note">
+            ✓ = 当前角色可执行，⊘ = 无此项权限（仅管理员）。每项都对应后端真实接口，例如「置顶」= POST /admin/posts/{id}/pin；「限管辖范围」= 版主只能操作自己负责游戏下的内容。端内只决定「显示什么」，放行与否始终由后端 @PreAuthorize 判定。
+          </text>
+        </view>
+      </view>
+
+      <!--
+        用户权限管理入口（2026-09-26 新增，**仅管理员**）。
+        —— 这是上面矩阵里「搜索用户 · 修改角色 / 分配版主」那一格的落地按钮，
+           让「端内可操作」这句声明有处可点。
+        🚨 用 `canManageUsers`（只认 ADMIN）而不是 `canSeeManageEntry`（含版主）：
+           后端 `AdminUserController` 是**类级** `hasRole('ADMIN')`，
+           版主点进去调 `GET /admin/users` 必得 403，入口给了就是挖坑。
+      -->
+      <view v-if="canManageUsersFlag" class="aentry" @click="goAdminUsers">
+        <view class="aentry__body">
+          <text class="aentry__title">用户权限管理</text>
+          <text class="aentry__sub">搜索用户 · 修改角色 · 分配版主（仅管理员）</text>
+        </view>
+        <text class="aentry__arrow">›</text>
       </view>
 
       <view v-if="canManageEntry" class="perm__hint">
@@ -207,7 +254,7 @@ import { logout, fetchMe } from '../../api/auth'
 import { clearSession } from '../../api/request'
 import { ensureIndex, clearIndexCache } from '../../utils/guideIndex'
 import { formatTime } from '../../utils/format'
-import { permissionSummary, badgeMeta, canSeeManageEntry, actionsFor, capabilityMatrix } from '../../utils/roles'
+import { permissionSummary, badgeMeta, canSeeManageEntry, actionsFor, capabilityGroups, capabilityGroupStats, canManageUsers } from '../../utils/roles'
 import Skeleton from '../../components/Skeleton.vue'
 import EmptyState from '../../components/EmptyState.vue'
 import ErrorState from '../../components/ErrorState.vue'
@@ -246,32 +293,63 @@ const manageHint = computed(() =>
 )
 
 /**
- * 权限矩阵：把后端每一项能力摊平，逐条标「当前角色能不能用」。
+ * 矩阵分组 —— 数据源是 `capabilityGroups`（已按「小程序内 / 主站」切好）。
  *
- * ⚠️ 只有 ADMIN / MODERATOR 才渲染 —— 普通用户看一张 11 行全是 ⊘ 的表没有意义
- *    （`capabilityStats` 也能算出 0/11，但那是噪音不是信息）。
+ * ⚠️ 只有 ADMIN / MODERATOR 才渲染 —— 普通用户看一张全 ⊘ 的表没有意义
+ *    （计数也能算出 0/11，但那是噪音不是信息）。
+ * ⚠️ 分组是为了让「**哪几项真能在手机上点**」一眼可辨：平铺时那层区分只藏在
+ *    每行的小灰字里，扫不出来（用户 9-26 的原话就是「有的没有体现」）。
  */
-const matrix = computed(() => {
+const groups = computed(() => {
   const roles = (user.value && user.value.roles) || []
-  return canSeeManageEntry(roles) ? capabilityMatrix(roles) : []
+  return canSeeManageEntry(roles) ? capabilityGroups(roles) : []
 })
 
-/** 「可执行 N / M 项」计数 —— 管理员 11 项 vs 版主 5 项，这个数字本身就是差异的直接表达 */
-const capStats = computed(() => {
-  const list = matrix.value
-  return { total: list.length, allowed: list.filter((c) => c.allowed).length }
+/** 矩阵展开态（默认折叠：先把收藏/点赞列表让出来，矩阵是「想细看时再点」的信息） */
+const mxOpen = ref(false)
+
+/**
+ * 计数 + 分组统计 —— 标题上的「可执行 N / M 项」与折叠摘要都从这里取。
+ * 数字本身就是 ADMIN 与 MODERATOR 差异最直观的表达（11 vs 5）。
+ */
+const capStats = computed(() => capabilityGroupStats((user.value && user.value.roles) || []))
+
+/**
+ * 折叠态那一行摘要：「小程序内 3 / 6 项 · 主站 2 / 5 项」。
+ * 🚨 「3 / 6」= 我这角色在端内能点 3 个、端内一共接了 6 个 ——
+ *    分母是**端内已接总数**（跟矩阵一样是全局常数），分子才随角色变。
+ *    这样一眼能看出两件事：端内覆盖了多少、以及我占其中几项。
+ */
+const mxSum = computed(() => {
+  const s = capStats.value
+  return `小程序内 ${s.allowedMp} / ${s.mp} 项 · 主站 ${s.allowedSite} / ${s.site} 项`
 })
 
 /**
- * 给矩阵每行拼一句说明。
- * 三个维度都要说清：**能否用**（allowed）、**范围**（scoped）、**在哪操作**（mp）。
- * 「主站操作」如实标注比假装端内都有更经得起追问 —— 举报列表、用户管理这些
- * 重后台操作本来就该在主站做。
+ * 是否显示「用户权限管理」入口 —— **仅管理员**。
+ * 🚨 与详情页那句「管理」入口的判据**故意不同**：
+ *    那边 `canSeeManageEntry` 是 `hasAnyRole(ADMIN,MODERATOR)`（帖子接口的注解就是它）；
+ *    这边 `canManageUsers` 只认 ADMIN（`AdminUserController` 是类级 hasRole('ADMIN')）。
+ *    串用会让版主点进去吃 403。
+ */
+const canManageUsersFlag = computed(() => canManageUsers((user.value && user.value.roles) || []))
+
+/** 进入用户权限管理页（ADMIN only，见上方注释） */
+function goAdminUsers() {
+  uni.navigateTo({ url: '/pages/admin/users' })
+}
+
+/**
+ * 给矩阵每行拼一句短标注 —— 只讲「**能不能**」与「**范围多大**」。
+ *
+ * 🚨 「在哪做」（端内 / 主站）**不在这里重复**：那个维度已经由所属分组
+ *    的标题与组徽标表达了。若两边都写，行内会出现「主站 · 主站操作」这类
+ *    自相矛盾的赘述；改文案时也容易只改一处（第二处漂移）。
+ *    ⇒ 一个维度只有一处事实来源。
  */
 function capTag(c) {
-  if (!c.allowed) return '仅管理员可执行'
-  const scopeTxt = c.scoped ? '限管辖范围' : '全站生效'
-  return `${scopeTxt} · ${c.mp ? '端内可操作' : '主站操作'}`
+  if (!c.allowed) return c.adminOnly ? '仅管理员可执行' : '当前角色无此权限'
+  return c.scoped ? '限管辖范围' : '全站生效'
 }
 
 /**
@@ -605,11 +683,16 @@ function onClear() {
   padding-top: 16rpx;
   border-top: 1rpx solid #2a2538;
 }
+/* 整行可点：折叠 / 展开。给一点负边距让点击热区更宽裕，别只让文字能点 */
 .mx__head {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   justify-content: space-between;
-  margin-bottom: 12rpx;
+}
+.mx__head-main {
+  display: flex;
+  align-items: baseline;
+  min-width: 0;
 }
 .mx__title {
   font-size: 25rpx;
@@ -618,8 +701,63 @@ function onClear() {
 }
 .mx__count {
   flex: none;
+  margin-left: 14rpx;
   font-size: 21rpx;
   color: #cbbdff;
+}
+/* 展开 / 收起指示 —— 文字 + 箭头，比纯箭头更明确（「▼」在深色底上易被忽略） */
+.mx__toggle {
+  flex: none;
+  margin-left: 16rpx;
+  font-size: 20rpx;
+  color: #8f7bff;
+}
+/* 折叠态摘要：端内几项 / 主站几项，不展开也能看清分布 */
+.mx__sum {
+  display: block;
+  margin-top: 8rpx;
+  font-size: 20rpx;
+  color: #6f6982;
+}
+.mx__groups {
+  margin-top: 16rpx;
+}
+.mx__group + .mx__group {
+  margin-top: 20rpx;
+  padding-top: 18rpx;
+  border-top: 1rpx dashed #2f2a40;
+}
+.mx__group-head {
+  display: flex;
+  align-items: center;
+}
+/* 组徽标 —— 「在哪做」这个维度的唯一视觉载体（行内不再重复，见 capTag 注释） */
+.mx__group-badge {
+  flex: none;
+  padding: 2rpx 12rpx;
+  border-radius: 999rpx;
+  font-size: 19rpx;
+  line-height: 1.7;
+}
+.mx__group-badge--mp {
+  background: rgba(93, 202, 165, 0.14);
+  color: #5dcaa5;
+}
+.mx__group-badge--site {
+  background: rgba(124, 92, 255, 0.14);
+  color: #a894ff;
+}
+.mx__group-title {
+  margin-left: 12rpx;
+  font-size: 23rpx;
+  font-weight: 600;
+  color: #d9d6e6;
+}
+.mx__group-hint {
+  display: block;
+  margin-top: 6rpx;
+  font-size: 19rpx;
+  color: #6f6982;
 }
 .mx__row {
   display: flex;
@@ -642,7 +780,7 @@ function onClear() {
 .mx__mark--off {
   color: #6f6982;
 }
-.mx__body {
+.mx__item {
   flex: 1;
   min-width: 0;
   display: flex;
@@ -657,12 +795,52 @@ function onClear() {
   font-size: 19rpx;
   color: #6f6982;
 }
+/* 「为什么不在端内做」—— 只在有话说时出现，别给每行都塞一句 */
+.mx__why {
+  margin-top: 2rpx;
+  font-size: 18rpx;
+  color: #5f5a72;
+}
 .mx__note {
   display: block;
-  margin-top: 12rpx;
+  margin-top: 16rpx;
+  padding-top: 14rpx;
+  border-top: 1rpx solid #2a2538;
   font-size: 19rpx;
   line-height: 1.65;
   color: #6f6982;
+}
+/* 用户权限管理入口（仅管理员）—— 卡片里的一个可点条目，样式对齐 .ai-entry 那类入口 */
+.aentry {
+  display: flex;
+  align-items: center;
+  margin-top: 16rpx;
+  padding: 18rpx 20rpx;
+  border-radius: 16rpx;
+  background: rgba(124, 92, 255, 0.1);
+  border: 1rpx solid rgba(124, 92, 255, 0.28);
+}
+.aentry__body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.aentry__title {
+  font-size: 25rpx;
+  font-weight: 600;
+  color: #e9e7f2;
+}
+.aentry__sub {
+  margin-top: 4rpx;
+  font-size: 19rpx;
+  color: #9c96ad;
+}
+.aentry__arrow {
+  flex: none;
+  margin-left: 12rpx;
+  font-size: 30rpx;
+  color: #8f7bff;
 }
 .perm__row {
   display: flex;

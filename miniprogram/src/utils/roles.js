@@ -28,7 +28,13 @@
  * | 隐藏 / 恢复帖子              | ✅    | ✅（限辖区）   | `assertCanModeratePost` |
  * | 隐藏 / 恢复回复              | ✅    | ✅（限辖区）   | 走板块归属判定 |
  * | 处理举报                     | ✅    | ✅（限辖区）   | `canModerateReportTarget` |
- * | 游戏库管理 / 用户与角色管理 / 审计日志 / 公告 | ✅ | ❌ | 各自 Controller 类级 ADMIN |
+ * | 用户 / 角色 / 版主授权        | ✅    | ❌             | `AdminUserController` **类级** ADMIN |
+ * | 游戏库管理 / 审计日志 / 公告  | ✅    | ❌             | 各自 Controller 类级 ADMIN |
+ *
+ * ── 「端内已接 / 只在主站」是**另一个维度**（`PLACE`，见下） ──
+ *   管理员 11 项里 **5 项端内有入口**（审核 / 加精 / 隐藏恢复 / 置顶 / 用户与角色管理），
+ *   其余 **6 项只在主站**（隐藏回复 / 处理举报 / 转待审 / 游戏库 / 审计日志 / 公告）。
+ *   详见 `CAPABILITIES[].mp` —— 那里是唯一事实来源，`capabilityGroups()` 按它分组。
  *
  * ── 三个维度上 ADMIN 与 MODERATOR 的真实差异（不是只差一个置顶） ──
  *  ① **作用域**：ADMIN 全站；MODERATOR 只有 `MAX_GAMES_PER_MOD = 1` 个游戏。
@@ -76,6 +82,34 @@ export const SCOPE = {
   UNKNOWN: 'unknown',
   /** 普通用户 / 游客：无任何后台权限 */
   NONE: 'none'
+}
+
+/**
+ * 能力的「操作位置」—— 权限矩阵按这个维度**分组**（与「能不能用」正交）。
+ *
+ * 🚨 这是**第二个独立维度**，别和 `assertCanModeratePost` 那类「能不能」混起来：
+ *    `PLACE` 回答「这项权力在小程序端有没有按钮」，
+ *    `allowed` 回答「我这个角色有没有这项权力」。
+ *    两者组合出四种情况，全部是真实存在的：
+ *      · 端内 + 可用 → 置顶（管理员在帖子详情页直接点）
+ *      · 端内 + 不可用 → 置顶（版主看到的是「⊘ 仅管理员」）
+ *      · 主站 + 可用 → 处理举报（版主有权限，但端内没做这个界面）
+ *      · 主站 + 不可用 → 游戏库管理（版主既没权限、端内也没有）
+ *
+ * | 取值    | 含义                     | UI 徽标      |
+ * |---------|--------------------------|--------------|
+ * | `mp`    | 小程序端内已接按钮/入口  | 小程序内     |
+ * | `site`  | 只在主站管理后台提供     | 主站         |
+ */
+export const PLACE = {
+  MP: 'mp',
+  SITE: 'site'
+}
+
+/** 操作位置的展示文案（**单一来源**：`.vue` 里别再手写「端内 / 主站」两套字） */
+export const PLACE_LABEL = {
+  [PLACE.MP]: '小程序内',
+  [PLACE.SITE]: '主站'
 }
 
 const arr = (v) => (Array.isArray(v) ? v : [])
@@ -140,6 +174,62 @@ export function identityOf(user = {}) {
 /** 是否拥有某角色 code */
 export function hasRole(roles, code) {
   return normalizeRoles(roles).includes(code)
+}
+
+/** 角色 code → 展示名（与后端 `role.name` 一致；改文案只动这里） */
+export const ROLE_LABEL = {
+  [ROLE.USER]: '普通用户',
+  [ROLE.MODERATOR]: '版主',
+  [ROLE.ADMIN]: '管理员'
+}
+
+/** 角色 code → 展示名；未知 code 原样返回（不吞掉，便于发现后端新增角色） */
+export function roleLabel(code) {
+  return ROLE_LABEL[code] || code || ''
+}
+
+/**
+ * 角色 code → 配色词（沿用后端 `BadgeService` 的词表，前端不另发明）。
+ * @returns {'danger'|'warning'|'default'}
+ */
+export function roleTone(code) {
+  if (code === ROLE.ADMIN) return TONE.ADMIN
+  if (code === ROLE.MODERATOR) return TONE.MODERATOR
+  return TONE.USER
+}
+
+/**
+ * 可分配的角色（顺序 = 权限由低到高）。
+ *
+ * 🚨 刻意做成**单选**，与主站管理后台一致（那边是 `el-radio-group` + 固定提示
+ *    「用户同一时间只能拥有一种角色」，提交的是 `[selected]` 单元素数组）。
+ *    后端其实支持多角色（`user_role` 是多对多），但**同一套接口不该有两种语义** ——
+ *    两个前端行为不一致，将来排查「为什么这人权限怪怪的」会非常费劲。
+ *    例外：库里存在历史数据 `MODERATOR,USER`，所以读取时仍按 `includes` 判角色
+ *    （见 `hasRole`），只是**写入**统一用单选。
+ */
+export const ASSIGNABLE_ROLES = [
+  { code: ROLE.USER, label: ROLE_LABEL[ROLE.USER], desc: '只能浏览攻略 / 资讯 / 游戏库，可点赞、收藏' },
+  { code: ROLE.MODERATOR, label: ROLE_LABEL[ROLE.MODERATOR], desc: '审核、加精、隐藏所负责游戏下的帖子' },
+  { code: ROLE.ADMIN, label: ROLE_LABEL[ROLE.ADMIN], desc: '全站所有权限，另含置顶与后台各项管理' }
+]
+
+/**
+ * 这次角色变更是否被「**不能摘掉自己的管理员角色**」挡住。
+ *
+ * 与后端 `AdminUserServiceImpl#updateUserRoles` 里的自保**同一个规则**，两边都要有：
+ *   · 后端是**安全边界** —— 直接调接口也绕不过（这条必须有）；
+ *   · 前端是**体验** —— 能在点保存前就说清原因，而不是等一句 400 红字。
+ * 口径：**只拦「摘掉自己的 ADMIN」**；管理员把自己重存一遍 ADMIN 是合法的。
+ *
+ * @param {number} myId 当前登录用户 id
+ * @param {number} targetId 被修改的用户 id
+ * @param {string[]} nextRoles 将要写入的角色列表
+ */
+export function selfRoleChangeBlocked(myId, targetId, nextRoles) {
+  if (myId == null || targetId == null) return false
+  if (Number(myId) !== Number(targetId)) return false
+  return !normalizeRoles(nextRoles).includes(ROLE.ADMIN)
 }
 
 /**
@@ -320,8 +410,8 @@ export function actionsFor(roles, ctx = {}) {
  *    核对（`tests/roles.test.mjs` F 组）—— 别在这里写不存在的接口。
  *
  * `mp` 字段说明这项能力**在小程序端是否也接了按钮**：
- *   · true  → 端内有入口（置顶 / 加精 / 隐藏 / 恢复 / 审核）
- *   · false → 只在主站管理后台提供（游戏库、用户角色、审计日志、公告、举报列表）
+ *   · true  → 端内有入口（审核 / 加精 / 隐藏 / 恢复 / 置顶 / **用户与角色管理**）
+ *   · false → 只在主站管理后台提供（游戏库、审计日志、公告、举报列表、隐藏回复、转待审）
  *             端内不做的原因：这些是重后台操作，硬塞进手机端既难用也不划算。
  *   如实标注「主站」比假装都有更经得起追问。
  */
@@ -364,7 +454,7 @@ export const CAPABILITIES = [
     scoped: true,
     mp: false,
     api: 'POST /admin/replies/{id}/hide · /restore',
-    note: '端内未接，主站操作'
+    note: '回复级操作，端内没做回复管理列表'
   },
   {
     key: 'report',
@@ -374,7 +464,7 @@ export const CAPABILITIES = [
     scoped: true,
     mp: false,
     api: 'POST /admin/reports/{id}/handle',
-    note: '端内未接，主站操作'
+    note: '要先看举报列表与证据，适合宽屏处理'
   },
   {
     key: 'pin',
@@ -384,7 +474,7 @@ export const CAPABILITIES = [
     scoped: false,
     mp: true,
     api: 'POST /admin/posts/{id}/pin',
-    note: ''
+    note: '管理员专属'
   },
   {
     key: 'pending',
@@ -394,7 +484,7 @@ export const CAPABILITIES = [
     scoped: false,
     mp: false,
     api: 'POST /admin/posts/{id}/pending',
-    note: '端内未接，主站操作'
+    note: '反向操作，误触代价高'
   },
   {
     key: 'game',
@@ -404,17 +494,23 @@ export const CAPABILITIES = [
     scoped: false,
     mp: false,
     api: '/admin/games',
-    note: '主站管理后台'
+    note: '游戏资料与封面维护'
   },
   {
     key: 'user',
-    name: '用户与角色管理 / 分配版主',
+    name: '搜索用户 · 修改角色 / 分配版主',
     admin: true,
     mod: false,
     scoped: false,
-    mp: false,
-    api: '/admin/users',
-    note: '主站管理后台'
+    /**
+     * 🚨 2026-09-26 第三轮：由 false 改为 true —— 端内**新增了**这个入口
+     * （`pages/admin/users.vue`，从「我的」页权限卡进入，仅管理员可见）。
+     * 矩阵里这一格必须跟着变，否则会出现「功能做了但矩阵说主站才有」的自相矛盾。
+     * 单测 J 组会核对 mp 与实际页面是否存在（`pages.json` 注册 + 文件存在）。
+     */
+    mp: true,
+    api: 'GET/PUT /admin/users/**',
+    note: '端内已接（我的 → 用户权限管理）'
   },
   {
     key: 'audit',
@@ -424,7 +520,7 @@ export const CAPABILITIES = [
     scoped: false,
     mp: false,
     api: '/admin/audit-logs',
-    note: '主站管理后台'
+    note: '日志量大，适合宽屏查看'
   },
   {
     key: 'notice',
@@ -434,7 +530,7 @@ export const CAPABILITIES = [
     scoped: false,
     mp: false,
     api: '/admin/notices',
-    note: '主站管理后台'
+    note: '公告需长文编辑'
   }
 ]
 
@@ -442,7 +538,7 @@ export const CAPABILITIES = [
  * 生成当前角色的权限矩阵（供「我的」页渲染）。
  *
  * @param {string[]} roles 角色 code 列表
- * @returns {Array<{key:string,name:string,api:string,note:string,mp:boolean,scoped:boolean,adminOnly:boolean,allowed:boolean}>}
+ * @returns {Array<{key:string,name:string,api:string,note:string,mp:boolean,place:string,placeLabel:string,scoped:boolean,adminOnly:boolean,allowed:boolean}>}
  */
 export function capabilityMatrix(roles) {
   const r = normalizeRoles(roles)
@@ -454,11 +550,75 @@ export function capabilityMatrix(roles) {
     api: c.api,
     note: c.note,
     mp: c.mp,
+    /** 操作位置（第二个维度，见 `PLACE` 注释）—— 已带好展示文案，UI 不需要再拼字 */
+    place: c.mp ? PLACE.MP : PLACE.SITE,
+    placeLabel: c.mp ? PLACE_LABEL[PLACE.MP] : PLACE_LABEL[PLACE.SITE],
     scoped: c.scoped,
     /** 只有管理员有、版主没有 ⇒ UI 上标成「仅管理员」 */
     adminOnly: c.admin === true && c.mod !== true,
     allowed: admin ? c.admin === true : mod ? c.mod === true : false
   }))
+}
+
+/**
+ * 能力矩阵**按操作位置分组** —— 「我的」页里可展开的矩阵本体。
+ *
+ * 为什么要分组而不是平铺（2026-09-26 用户反馈）：
+ *   平铺 11 行时，「哪些是端内真能点的、哪些其实得去电脑上做」只能靠每行
+ *   那行小灰字去分辨，一扫根本看不出来。分组后标题就直接说答案。
+ *
+ * 🚨 组内**同时包含**当前角色能用的和不能用的（`allowed` 差异用 ✓ / ⊘ 表达）——
+ *    这是故意的：矩阵的意义就是「把全部权力摊开，看我占哪几格」。
+ *    别为了好看把不能用的滤掉，那样管理员和版主的表会缩成一样长，反而看不出差异。
+ *
+ * 返回的组顺序固定为「端内 → 主站」，空组自动剔除
+ * （理论上两组都非空，但角色/能力表变动时不希望 UI 出现空标题）。
+ *
+ * @param {string[]} roles
+ * @returns {Array<{key:string,title:string,hint:string,items:Array}>}
+ */
+export function capabilityGroups(roles) {
+  const list = capabilityMatrix(roles)
+  const groups = [
+    {
+      key: PLACE.MP,
+      badge: PLACE_LABEL[PLACE.MP],
+      title: '小程序端内可直接操作',
+      hint: '点进帖子详情页的「管理」，或本页的入口即可完成',
+      items: list.filter((c) => c.place === PLACE.MP)
+    },
+    {
+      key: PLACE.SITE,
+      badge: PLACE_LABEL[PLACE.SITE],
+      title: '仅主站管理后台提供',
+      hint: '重后台操作，需在电脑上登录主站管理后台',
+      items: list.filter((c) => c.place === PLACE.SITE)
+    }
+  ]
+  return groups.filter((g) => g.items.length > 0)
+}
+
+/**
+ * 分组摘要 —— 折叠状态下那一行人话（「小程序内 3 项 · 主站 9 项」）。
+ *
+ * 折叠时**只给数字**：折叠的意义就是别让卡片占一屏，
+ * 所以这里不再逐条列名字（那是展开后的事）。
+ *
+ * @returns {{mp:number, site:number, allowedMp:number, allowedSite:number}}
+ *          `mp`/`site` = 两组各有多少项；`allowedMp`/`allowedSite` = 其中我能执行的项数
+ */
+export function capabilityGroupStats(roles) {
+  const list = capabilityMatrix(roles)
+  const mp = list.filter((c) => c.place === PLACE.MP)
+  const site = list.filter((c) => c.place === PLACE.SITE)
+  return {
+    total: list.length,
+    allowed: list.filter((c) => c.allowed).length,
+    mp: mp.length,
+    site: site.length,
+    allowedMp: mp.filter((c) => c.allowed).length,
+    allowedSite: site.filter((c) => c.allowed).length
+  }
 }
 
 /**
@@ -468,6 +628,18 @@ export function capabilityMatrix(roles) {
 export function capabilityStats(roles) {
   const list = capabilityMatrix(roles)
   return { total: list.length, allowed: list.filter((c) => c.allowed).length }
+}
+
+/**
+ * 是否有「用户权限管理」的端内入口 —— 仅管理员。
+ *
+ * 🚨 必须是 `hasRole(ADMIN)` 而不是 `canSeeManageEntry`（后者含版主）：
+ *    后端 `AdminUserController` 是**类级** `@PreAuthorize("hasRole('ADMIN')")`，
+ *    版主调 `GET /admin/users` 一样拿 403。入口给版主显示 = 点进去必报错。
+ *    （对照：帖子管理类接口是 `hasAnyRole('ADMIN','MODERATOR')`，两者别混。）
+ */
+export function canManageUsers(roles) {
+  return hasRole(roles, ROLE.ADMIN)
 }
 
 /**

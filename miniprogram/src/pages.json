@@ -58,6 +58,12 @@
       "style": {
         "navigationBarTitleText": "智能助手"
       }
+    },
+    {
+      "path": "pages/admin/users",
+      "style": {
+        "navigationBarTitleText": "用户权限管理"
+      }
     }
   ],
   "globalStyle": {

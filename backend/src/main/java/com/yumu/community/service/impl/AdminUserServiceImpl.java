@@ -109,11 +109,21 @@ public class AdminUserServiceImpl implements AdminUserService {
 
     @Override
     @Transactional
-    public void updateUserRoles(Long userId, List<String> roleCodes) {
+    public void updateUserRoles(Long operatorId, Long userId, List<String> roleCodes) {
         User u = userMapper.selectById(userId);
         if (u == null) throw new BusinessException(404, "用户不存在");
         if (roleCodes == null || roleCodes.isEmpty()) {
             throw new BusinessException(400, "至少保留一个角色");
+        }
+        // 🚨 不能摘掉自己的管理员角色。
+        //    为什么这条必须有（@PreAuthorize 拦不住）：JwtAuthenticationFilter 每次请求
+        //    都用 token 里的 uid **重新查库**取角色（CustomUserDetailsService#loadUserById），
+        //    所以自己一降级，手上的 token **下一跳就失效**，后台从此没人能进 ——
+        //    而且这个操作是不可逆的（没人有权限再改回来，只能改库）。
+        //    与 setUserStatus / deleteUser 的「不能操作自己」同一考量。
+        //    注意口径：**只拦「摘掉 ADMIN」**，管理员重存一遍自己的 ADMIN 是合法的。
+        if (operatorId != null && operatorId.equals(userId) && !roleCodes.contains("ADMIN")) {
+            throw new BusinessException(400, "不能移除自己的管理员角色，否则将无人可管理后台");
         }
         // 校验角色 code 有效
         List<Role> roles = roleMapper.selectList(

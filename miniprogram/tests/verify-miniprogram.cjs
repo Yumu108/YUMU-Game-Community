@@ -2012,45 +2012,398 @@ const OFFICIAL_UID = 20142
       modScopeFull
     )
 
+    /*
+     * 权限矩阵（2026-09-26 第三轮改为可折叠 + 按操作位置分组）。
+     * 🚨 断言顺序很重要：**先验折叠态（0 个分组）再点开** ——
+     *    如果反过来（先点开再数），「默认折叠」这条就没人验了，
+     *    页面上哪怕把折叠去掉也照样绿（典型空转）。
+     *    这里用的是 `v-if` 而不是 `v-show`，所以折叠时节点**真的不在 DOM 里**，
+     *    `count()` 数得到 0 —— 断言才有意义。
+     */
+    assert(
+      'PM27 权限矩阵默认**折叠**：标题在、分组与行都不在 DOM 里',
+      (await count('.mx')) === 1 &&
+        (await count('.mx__group')) === 0 &&
+        (await count('.mx__row')) === 0,
+      `mx=${await count('.mx')} groups=${await count('.mx__group')} rows=${await count('.mx__row')}`
+    )
+
+    const modSum = await text('.mx__sum')
+    assert(
+      'PM28 折叠摘要摊开「端内 x/5 · 主站 y/6」：不展开也能看出分布',
+      /小程序内\s*3\s*\/\s*5/.test(modSum) && /主站\s*2\s*\/\s*6/.test(modSum),
+      modSum
+    )
+
+    await page.click('.mx__head')
+    await sleep(600)
+    const modGroups = await count('.mx__group')
     const modRows = await count('.mx__row')
     const modOff = await count('.mx__row--off')
-    assert('PM27 版主「我的」页出现权限矩阵', modRows > 0, `rows=${modRows}`)
     assert(
-      'PM28 版主矩阵：11 项能力中 6 项不可用（置顶/转待审/游戏库/用户角色/审计/公告）',
-      modRows === 11 && modOff === 6,
-      `rows=${modRows} off=${modOff}`
+      'PM29 点标题栏可展开全部权限（2 个分组 + 11 行全部渲染）',
+      modGroups === 2 && modRows === 11,
+      `groups=${modGroups} rows=${modRows}`
+    )
+
+    const grpTitles = await page.$$eval('.mx__group-title', (els) => els.map((e) => e.innerText))
+    assert(
+      'PM30 分组按「端内 / 主站」区分标注（这是用户要的那层区分）',
+      grpTitles.length === 2 &&
+        grpTitles[0].includes('小程序端内') &&
+        grpTitles[1].includes('主站'),
+      grpTitles.join(' | ')
+    )
+
+    const grpBadges = await page.$$eval('.mx__group-badge', (els) => els.map((e) => e.innerText))
+    assert(
+      'PM31 组徽标分别是「小程序内」「主站」（行内不再重复，避免自相矛盾）',
+      grpBadges.join(',') === '小程序内,主站',
+      grpBadges.join(',')
+    )
+
+    assert(
+      'PM32 版主矩阵：11 项中 6 项不可用，且标注「仅管理员可执行」',
+      modOff === 6 &&
+        /仅管理员可执行/.test(await page.$eval('.mx__row--off', (el) => el.innerText)),
+      `off=${modOff}`
     )
     assert(
-      'PM29 矩阵计数「可执行 5 / 11 项」—— 「两个角色区别很大」的量化表达',
+      'PM33 矩阵计数「可执行 5 / 11 项」—— 两个角色「区别很大」的量化表达',
       /5\s*\/\s*11/.test(await text('.mx__count')),
       await text('.mx__count')
     )
+
+    await page.click('.mx__head')
+    await sleep(500)
     assert(
-      'PM30 不可用项标注「仅管理员可执行」',
-      /仅管理员可执行/.test(await page.$eval('.mx__row--off', (el) => el.innerText)),
-      (await page.$eval('.mx__row--off', (el) => el.innerText)).replace(/\s+/g, ' ')
+      'PM34 再点一次可收起（回到 0 个分组）',
+      (await count('.mx__group')) === 0,
+      `groups=${await count('.mx__group')}`
     )
 
     /* ---------- ⑦ 「我的」页：管理员做对照（同一页面、不同数字） ---------- */
     await injectIdentity(['USER', 'ADMIN'])
     await goto('/pages/my/my')
+
+    /*
+     * 「用户权限管理」入口 —— 仅管理员。
+     * 🚨 这条要和下面的 PM44（版主**看不到**该入口）成对看：
+     *    判据是 `canManageUsers`（只认 ADMIN），不是详情页那句用的
+     *    `canSeeManageEntry`（hasAnyRole，含版主）。两者互换 ⇒ 版主点进去必 403。
+     */
     assert(
-      'PM31 管理员矩阵：11 项全部可用（一行 ⊘ 都没有）',
+      'PM35 管理员：「我的」页出现「用户权限管理」入口',
+      (await count('.aentry')) === 1,
+      `aentry=${await count('.aentry')}`
+    )
+    assert(
+      'PM36 入口文案说明能做什么（搜索用户 / 修改角色 / 分配版主）',
+      /搜索用户/.test(await text('.aentry__sub')) &&
+        /版主/.test(await text('.aentry__sub')),
+      await text('.aentry__sub')
+    )
+
+    const adminSum = await text('.mx__sum')
+    assert(
+      'PM37 管理员折叠摘要「端内 5/5 全可用」（对比版主的 3/5）',
+      /小程序内\s*5\s*\/\s*5/.test(adminSum),
+      adminSum
+    )
+
+    await page.click('.mx__head')
+    await sleep(600)
+    assert(
+      'PM38 管理员矩阵：11 项全部可用（一行 ⊘ 都没有）',
       (await count('.mx__row')) === 11 && (await count('.mx__row--off')) === 0,
       `rows=${await count('.mx__row')} off=${await count('.mx__row--off')}`
     )
     assert(
-      'PM32 管理员计数「可执行 11 / 11 项」（对比版主的 5 / 11）',
+      'PM39 管理员计数「可执行 11 / 11 项」（对比版主的 5 / 11）',
       /11\s*\/\s*11/.test(await text('.mx__count')),
       await text('.mx__count')
     )
     assert(
-      'PM33 管理员管辖范围显示「全站」（对比版主的「仅限《某个游戏》」）',
+      'PM40 管理员管辖范围显示「全站」（对比版主的「仅限《某个游戏》」）',
       (await text('.scope__val')).trim() === '全站',
       await text('.scope__val')
     )
+    // 收起，避免影响后面的截图
+    await page.click('.mx__head')
+    await sleep(400)
 
-    await page.screenshot({ path: path.join(SHOTS, 'PM-permission.png') })
+    /* ---------- ⑧ 用户权限管理页（管理员） ---------- */
+    const U_USERS = [
+      {
+        id: 9001,
+        username: 'target_user',
+        nickname: '目标用户',
+        avatar: '',
+        status: 0,
+        roles: ['USER'],
+        moderatorAssignments: []
+      },
+      {
+        id: 900900,
+        username: 'regression_probe',
+        nickname: '回归探针',
+        avatar: '',
+        status: 0,
+        roles: ['ADMIN'],
+        moderatorAssignments: []
+      }
+    ]
+    let usersGetUrl = ''
+    const usersPutCalls = []
+    /**
+     * 两个坑记在这里，省得下次再踩：
+     *
+     * ① 更具体的路由要**注册在通用路由之后**才生效 ——
+     *    Playwright 按注册的**逆序**匹配（后注册的先被问到），所以这里后写就是覆盖。
+     *    🚨 关键词过滤刻意做**真实过滤**（而不是无论搜什么都返回同一份）：
+     *       只有这样，「搜索后列表只剩一条」才是在验真的搜索，
+     *       否则断言在「关键词根本没发出去」时也照样绿（空转）。
+     *
+     * ② **必须用 RegExp，不能用 glob**：
+     *    Playwright 的 glob 里，只有**独立成段**的双星号
+     *    （形如「双星 + 斜杠 + 路径 + 斜杠 + 双星」）才匹配含 `/` 的路径；
+     *    紧贴在词尾的双星号只等价于 `[^/]*`。
+     *    ⇒ 若把保存用的 PUT 端点写成「`/api/admin/users` 后面跟两个星号」，
+     *      它只能匹配 `/api/admin/users?current=1`，**匹配不到 `/api/admin/users/9001/roles`**。
+     *      后果：PUT 落到更通用的 `/api/admin/` 前缀桩上、拿到 `code:403`，
+     *      请求层 toast「无权限」→ save() 静默失败 ⇒ 断言只看到「一个 PUT 都没发」，
+     *      极易误判成前端逻辑写错（实际是**测试桩没接住**）。
+     *    同文件 line 1890 的 `detailRoute` 就是 RegExp 写法，可对照。
+     *
+     * 🚨🚨 **别在注释里写「两个星号紧跟一个斜杠」那种通配符字面量**（9-26 血泪）：
+     *    这三个字符里后两个连起来正好是块注释的**结束符**，
+     *    注释会在那里被**悄悄截断**，后面的内容被当成真代码去解析 ——
+     *    于是报出一个**指向注释本身**的 `ReferenceError: api is not defined`
+     *    （被截断后裸露出的恰好是 `api` 这个词）。
+     *    ⚠️ 报错位置在注释行上、`node --check` 也照样通过 ⇒ 排查时完全看不出跟注释有关，
+     *    曾为此白跑了两轮 3 分钟回归。要表达通配路径就用文字描述，
+     *    或只写 `/api/admin/` 这种**不带星号**的前缀。
+     */
+    const USERS_API = /\/api\/admin\/users(\?|\/|$)/
+    await page.route(USERS_API, (route) => {
+      const req = route.request()
+      if (req.method() === 'PUT') {
+        usersPutCalls.push({ url: req.url(), body: req.postDataJSON() })
+        return route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({ code: 200, message: 'ok', data: null })
+        })
+      }
+      usersGetUrl = req.url()
+      const kw = (new URL(req.url()).searchParams.get('keyword') || '').toLowerCase()
+      const recs = U_USERS.filter(
+        (r) =>
+          !kw ||
+          r.username.toLowerCase().includes(kw) ||
+          String(r.nickname).toLowerCase().includes(kw)
+      )
+      return route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          code: 200,
+          message: 'ok',
+          data: { total: recs.length, current: 1, size: 20, records: recs }
+        })
+      })
+    })
+    // 游戏列表（点「版主」后才会拉）—— 桩掉，避免依赖线上游戏库的实时内容。
+    // ⚠️ 同样用 RegExp（理由见上面 USERS_API）：`/api/games**` 匹配不到含 `/` 的路径。
+    //    这里刻意只匹配**列表端点**（`/api/games?xxx`），不拦 `/api/games/{id}/posts`，
+    //    免得把详情类请求也喂成列表结构。
+    const GAMES_API = /\/api\/games(\?|$)/
+    await page.route(GAMES_API, (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          code: 200,
+          message: 'ok',
+          data: {
+            total: 2,
+            pages: 1,
+            current: 1,
+            size: 100,
+            records: [
+              { id: 1, name: '其他游戏' },
+              { id: 77, name: '测试用游戏' }
+            ]
+          }
+        })
+      })
+    )
+
+    await goto('/pages/admin/users')
+    await waitFor('.ut', 10000)
+
+    assert(
+      'PM41 管理员可进入用户权限管理页：搜索栏 + 用户列表渲染',
+      (await count('.sbar')) === 1 && (await count('.ut')) === 2,
+      `sbar=${await count('.sbar')} ut=${await count('.ut')}`
+    )
+    assert(
+      'PM42 列表首屏就带了 keyword 参数（空串不带）—— 且分页 size 已下发',
+      /\/admin\/users\?/.test(usersGetUrl) && /size=20/.test(usersGetUrl),
+      usersGetUrl
+    )
+    const roleTags = await page.$$eval('.ut__role', (els) => els.map((e) => e.innerText))
+    assert(
+      'PM43 用户行显示角色标签（管理员 / 普通用户，文案来自 roles.js）',
+      roleTags.includes('普通用户') && roleTags.includes('管理员'),
+      roleTags.join(',')
+    )
+    assert(
+      'PM44 自己的账号被标出「你」（改到自己时有视觉提示）',
+      (await count('.ut--self')) === 1 && (await text('.ut__me')).trim() === '你',
+      `self=${await count('.ut--self')}`
+    )
+
+    // —— 搜索：关键词必须真的发到后端 ——
+    // 🚨 必须定位到 `.sbar` **内部**的原生 `input`：uni-app 的 `<input>` 在 H5 里
+    //    渲染成 `<uni-input>` 包一个 `<input class="uni-input-input">`，
+    //    `page.fill('.sbar__in')` 会落在 `uni-input` 这个非表单元素上而报错。
+    //    也别用全局的 `input.uni-input-input`（面板里还有游戏筛选框，会选错）。
+    await page.fill('.sbar input', 'target')
+    await page.click('.sbar__go')
+    await sleep(900)
+    assert(
+      'PM45 搜索关键词真的发到后端（URL 带 keyword=target）',
+      /keyword=target/.test(usersGetUrl),
+      usersGetUrl
+    )
+    assert(
+      'PM46 搜索后列表按关键词收敛为 1 条（不是「搜什么都一样」的假过滤）',
+      (await count('.ut')) === 1,
+      `ut=${await count('.ut')}`
+    )
+
+    // —— 改角色：普通用户 → 版主 + 指定负责游戏 ——
+    await page.click('.ut')
+    await sleep(700)
+    assert('PM47 点用户打开编辑面板，列出 3 个可选角色', (await count('.ropt__item')) === 3, `ropt=${await count('.ropt__item')}`)
+    const roleNames = await page.$$eval('.ropt__name', (els) => els.map((e) => e.innerText))
+    assert(
+      'PM48 角色选项为「普通用户 / 版主 / 管理员」（与服务端 role 表一致）',
+      roleNames.join(',') === '普通用户,版主,管理员',
+      roleNames.join(',')
+    )
+    assert(
+      'PM49 未选版主时不显示游戏选择区（避免无关信息）',
+      (await count('.glist')) === 0,
+      `glist=${await count('.glist')}`
+    )
+
+    // 🚨 用 locator().nth() 而不是 `.ropt__item:nth-child(2)` ——
+    //    uni-app 的 `<scroll-view>` 在 H5 里会包一层 `.uni-scroll-view` / `-content`，
+    //    `.glist__item` 因此**不是** `.glist` 的直接子元素，nth-child 会扑空。
+    await page.locator('.ropt__item').nth(1).click() // 版主
+    await sleep(1200)
+    assert(
+      'PM50 选「版主」后出现负责游戏选择区（后端限 1 个，故为单选）',
+      (await count('.glist')) === 1 && (await count('.glist__item')) === 2,
+      `glist=${await count('.glist')} items=${await count('.glist__item')}`
+    )
+
+    // 未选游戏时保存应被拦（后端会 400，前端先提示）
+    assert(
+      'PM51 版主但未选游戏时「保存」呈禁用态（提前拦住必 400 的提交）',
+      /sh__btn--off/.test(await page.$eval('.sh__btn--primary', (el) => el.className)),
+      await page.$eval('.sh__btn--primary', (el) => el.className)
+    )
+
+    await page.locator('.glist__item').nth(1).click() // 测试用游戏 (#77)
+    await sleep(500)
+    await page.click('.sh__btn--primary')
+    await sleep(1200)
+    assert(
+      'PM52 保存发出 2 个 PUT（先 roles、再 moderator-boards，顺序不能反）',
+      usersPutCalls.length === 2 &&
+        /\/roles$/.test(usersPutCalls[0].url) &&
+        /moderator-boards$/.test(usersPutCalls[1].url),
+      usersPutCalls.map((c) => c.url.replace(/^.*\/api/, '')).join(' → ')
+    )
+    assert(
+      'PM53 角色请求体是**单元素**数组（与主站单选口径一致），且只有一个角色',
+      Array.isArray(usersPutCalls[0].body.roles) &&
+        usersPutCalls[0].body.roles.length === 1 &&
+        usersPutCalls[0].body.roles[0] === 'MODERATOR',
+      JSON.stringify(usersPutCalls[0].body)
+    )
+    assert(
+      'PM54 版主授权请求体只带 gameId（boardId 已废弃，不能传）',
+      Array.isArray(usersPutCalls[1].body.items) &&
+        usersPutCalls[1].body.items.length === 1 &&
+        usersPutCalls[1].body.items[0].gameId === 77 &&
+        !('boardId' in usersPutCalls[1].body.items[0]),
+      JSON.stringify(usersPutCalls[1].body)
+    )
+    assert('PM55 保存成功后面板关闭并回到列表', (await count('.sh')) === 0, `sh=${await count('.sh')}`)
+
+    // —— 自保：不能把自己的管理员角色摘掉 ——
+    usersPutCalls.length = 0
+    await page.fill('.sbar input', 'regression')
+    await page.click('.sbar__go')
+    await sleep(900)
+    await page.click('.ut')
+    await sleep(700)
+    const selfWarn = await text('.sh__self')
+    assert(
+      'PM56 改自己的账号时面板给出自我降权风险提示',
+      /不能把自己改成其他角色/.test(selfWarn),
+      selfWarn.slice(0, 60)
+    )
+    await page.locator('.ropt__item').nth(0).click() // 想把自己改成普通用户
+    await sleep(600)
+    assert(
+      'PM57 【核心】把自己改成普通用户 → 保存变禁用（前端先拦，不发请求）',
+      /sh__btn--off/.test(await page.$eval('.sh__btn--primary', (el) => el.className)),
+      await page.$eval('.sh__btn--primary', (el) => el.className)
+    )
+    await page.click('.sh__btn--primary')
+    await sleep(900)
+    assert(
+      'PM58 被拦时**一个 PUT 都没发**（拦截发生在请求之前，不是等后端 400）',
+      usersPutCalls.length === 0,
+      `puts=${usersPutCalls.length}`
+    )
+    await page.click('.sh__close')
+    await sleep(500)
+
+    await page.screenshot({ path: path.join(SHOTS, 'PM-admin-users.png') })
+
+    /* ---------- ⑨ 版主 / 游客：进不去这个页面（且不发请求） ---------- */
+    await page.unroute(USERS_API)
+    await page.unroute(GAMES_API)
+
+    usersGetUrl = ''
+    await injectIdentity(['USER', 'MODERATOR'], { gameIds: [1], gameNames: ['其他游戏'] })
+    await goto('/pages/admin/users')
+    await sleep(1200)
+    assert(
+      'PM59 版主直接进该页 → 只显示「仅管理员可访问」，不渲染搜索栏',
+      (await count('.deny')) === 1 && (await count('.sbar')) === 0,
+      `deny=${await count('.deny')} sbar=${await count('.sbar')}`
+    )
+    assert(
+      'PM60 版主进入时**一个 /admin/users 请求都不发**（本地闸门，不白挨 403）',
+      usersGetUrl === '',
+      usersGetUrl || '（无请求 ✅）'
+    )
+
+    // 「我的」页也不该给版主看到入口
+    await goto('/pages/my/my')
+    assert(
+      'PM61 版主「我的」页**没有**用户权限管理入口（口径与详情页那句不同）',
+      (await count('.aentry')) === 0 && (await count('.perm')) === 1,
+      `aentry=${await count('.aentry')} perm=${await count('.perm')}`
+    )
+
     await page.unroute('**/api/admin/**')
     await page.unroute('**/api/auth/me')
   }
@@ -2060,6 +2413,9 @@ const OFFICIAL_UID = 20142
   console.log(`截图目录：${SHOTS}`)
   process.exit(fail === 0 ? 0 : 1)
 })().catch((e) => {
+  // 🚨 一定要打 stack：曾经只打 `e.message`，遇到 `api is not defined` 这种
+  //    没有任何上下文的 ReferenceError 时，只能靠猜（浪费了一整轮 3 分钟回归）。
   console.error('脚本异常：', e.message)
+  console.error(e.stack || '(无 stack)')
   process.exit(1)
 })

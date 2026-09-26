@@ -21,16 +21,25 @@ import {
   ROLE,
   TONE,
   SCOPE,
+  PLACE,
+  PLACE_LABEL,
   identityOf,
   hasRole,
   scopeOf,
   canSeeManageEntry,
   shouldShowManageEntry,
+  canManageUsers,
+  selfRoleChangeBlocked,
+  roleLabel,
+  roleTone,
+  ASSIGNABLE_ROLES,
   actionsFor,
   permissionSummary,
   badgeMeta,
   CAPABILITIES,
   capabilityMatrix,
+  capabilityGroups,
+  capabilityGroupStats,
   capabilityStats
 } from '../src/utils/roles.js'
 
@@ -338,6 +347,17 @@ const adminApiPath = fileURLToPath(new URL('../src/api/admin.js', import.meta.ur
 const ctrlPath = fileURLToPath(
   new URL('../../backend/src/main/java/com/yumu/community/controller/AdminController.java', import.meta.url)
 )
+/**
+ * 用户 / 角色管理是**另一个** Controller（`AdminUserController`），
+ * 类级注解是 `hasRole('ADMIN')`（**不含版主**）—— 与帖子类接口不同。
+ * 端内「用户权限管理」页就挂在它下面，所以核对时得单独读这一份。
+ */
+const userCtrlPath = fileURLToPath(
+  new URL('../../backend/src/main/java/com/yumu/community/controller/AdminUserController.java', import.meta.url)
+)
+/** 端内页面与路由清单 —— J 组用来核对「矩阵说端内已接」是否真的接了 */
+const pagesJsonPath = fileURLToPath(new URL('../src/pages.json', import.meta.url))
+const adminUsersPagePath = fileURLToPath(new URL('../src/pages/admin/users.vue', import.meta.url))
 
 {
   // F1: actionsFor 可能产出的 key 全集，必须与 api/admin.js 的 runManageAction 分发表**完全一致**。
@@ -425,6 +445,50 @@ if (!fs.existsSync(ctrlPath)) {
       'F5 can-review 是 GET 且无方法级角色限制（版主据此拿到 false 而非 403）',
       !!b && !b.includes('hasRole('),
       b ? b.replace(/\s+/g, ' ').slice(0, 90) : '未找到 /posts/{id}/can-review 端点'
+    )
+  }
+
+  {
+    /*
+     * F6（2026-09-26 第三轮新增）：用户 / 角色管理是**独立的 Controller**，
+     * 类级是 `hasRole('ADMIN')`（**不含版主**）。
+     *
+     * 这条为什么必须有：端内「用户权限管理」入口的判据是
+     * `roles.js#canManageUsers`（只认 ADMIN），而不是帖子那边用的
+     * `canSeeManageEntry`（hasAnyRole，含版主）。两者一旦被互换，
+     * **版主就会看到一个点进去必 403 的入口** —— 而且这种错在界面上一片正常，
+     * 只有点下去才暴露。所以这里直接把注解读出来对。
+     */
+    const okUser = fs.existsSync(userCtrlPath)
+    const uctrl = okUser ? fs.readFileSync(userCtrlPath, 'utf8') : ''
+    ok(
+      'F6 用户/角色管理是类级 hasRole(ADMIN)（**不含版主**）⇒ 端内入口必须只给管理员',
+      okUser &&
+        /@RequestMapping\("\/admin\/users"\)/.test(uctrl) &&
+        /hasRole\(\s*'ADMIN'\s*\)/.test(uctrl) &&
+        !/hasAnyRole\([^)]*MODERATOR/.test(uctrl),
+      okUser ? 'AdminUserController：类级 hasRole(ADMIN)，无 MODERATOR' : '未找到 AdminUserController.java'
+    )
+  }
+
+  {
+    /*
+     * F7：`updateUserRoles` 的后端自保必须还在。
+     * 规则是「不能摘掉自己的 ADMIN」—— 这是**不可逆**操作（摘掉后
+     * JwtAuthenticationFilter 下一跳就按新角色放行，后台从此没人能进）。
+     * 前端 `selfRoleChangeBlocked` 只是体验层的提前提示，真正的边界在这里。
+     */
+    const implPath = fileURLToPath(
+      new URL(
+        '../../backend/src/main/java/com/yumu/community/service/impl/AdminUserServiceImpl.java',
+        import.meta.url
+      )
+    )
+    const impl = fs.existsSync(implPath) ? fs.readFileSync(implPath, 'utf8') : ''
+    ok(
+      'F7 updateUserRoles 保留了「不能移除自己的管理员角色」后端自保',
+      /不能移除自己的管理员角色/.test(impl) && /operatorId/.test(impl),
+      impl ? '已在 AdminUserServiceImpl 中找到该自保' : '未找到 AdminUserServiceImpl.java'
     )
   }
 }
@@ -609,7 +673,15 @@ const mMod = capabilityMatrix(['MODERATOR'])
 if (!fs.existsSync(ctrlPath)) {
   skipped('I10-I11 矩阵 ↔ 后端端点核对', '未找到 backend/ 源码（只解压了小程序）')
 } else {
-  const ctrl = fs.readFileSync(ctrlPath, 'utf8')
+  /**
+   * 两个 Controller 的源码。**分开存**而不是拼成一个大字符串：
+   * 拼起来会让核对变松（审核端点的路径在用户 Controller 里也能"找到"就通过）。
+   * 每条 mp 能力必须指明它归哪个 Controller。
+   */
+  const SOURCES = {
+    admin: fs.readFileSync(ctrlPath, 'utf8'),
+    user: fs.existsSync(userCtrlPath) ? fs.readFileSync(userCtrlPath, 'utf8') : ''
+  }
 
   /**
    * 端内**真的接了按钮**的能力 → 后端端点必须存在。
@@ -617,20 +689,27 @@ if (!fs.existsSync(ctrlPath)) {
    *    这条会立刻红。反向也查（表里的 key 若已不在 mp=true 集合里，说明表过期了）。
    */
   const MP_ENDPOINTS = {
-    review: ['/posts/{id}/approve', '/posts/{id}/reject'],
-    essence: ['/posts/{id}/essence'],
-    hide: ['/posts/{id}/hide', '/posts/{id}/restore'],
-    pin: ['/posts/{id}/pin']
+    review: { src: 'admin', paths: ['/posts/{id}/approve', '/posts/{id}/reject'] },
+    essence: { src: 'admin', paths: ['/posts/{id}/essence'] },
+    hide: { src: 'admin', paths: ['/posts/{id}/hide', '/posts/{id}/restore'] },
+    pin: { src: 'admin', paths: ['/posts/{id}/pin'] },
+    // 2026-09-26 第三轮：端内新增「用户权限管理」页 ⇒ 这一项从主站搬进端内
+    user: { src: 'user', paths: ['/admin/users', '/{id}/roles', '/{id}/moderator-boards'] }
   }
 
   const mpKeys = mAdmin.filter((c) => c.mp).map((c) => c.key).sort()
-  const missing = mpKeys.filter(
-    (k) => !MP_ENDPOINTS[k] || MP_ENDPOINTS[k].some((p) => !ctrl.includes(p))
-  )
+  const missing = mpKeys.filter((k) => {
+    const e = MP_ENDPOINTS[k]
+    if (!e) return true
+    const src = SOURCES[e.src] || ''
+    return e.paths.some((p) => !src.includes(p))
+  })
   ok(
     'I10 矩阵里标「端内可操作」的每一项，后端都有真实端点（防臆造接口）',
-    missing.length === 0 && mpKeys.join(',') === 'essence,hide,pin,review',
-    missing.length ? `缺端点：${missing.join(',')}` : `端内项=[${mpKeys.join(',')}]`
+    missing.length === 0 && mpKeys.join(',') === 'essence,hide,pin,review,user',
+    missing.length
+      ? `缺端点：${missing.join(',')}`
+      : `端内项=[${mpKeys.join(',')}]（共 ${mpKeys.length} 项，其中 ${mpKeys.filter((k) => MP_ENDPOINTS[k] && MP_ENDPOINTS[k].src === 'user').length} 项属用户管理）`
   )
 
   const stale = Object.keys(MP_ENDPOINTS).filter((k) => !mpKeys.includes(k))
@@ -639,7 +718,151 @@ if (!fs.existsSync(ctrlPath)) {
   // 类级注解仍是 ADMIN/MODERATOR 双角色 —— 否则版主整条链路的前提就没了
   ok(
     'I12 类级注解仍是 hasAnyRole(ADMIN,MODERATOR)：版主能进 /admin/**',
-    /hasAnyRole\(\s*'ADMIN'\s*,\s*'MODERATOR'\s*\)/.test(ctrl)
+    /hasAnyRole\(\s*'ADMIN'\s*,\s*'MODERATOR'\s*\)/.test(SOURCES.admin)
+  )
+}
+
+/* ==================== J. 能力分组 + 端内入口 + 自我降权拦截（2026-09-26 第三轮） ====================
+ * 本组对应三条用户诉求：
+ *   ① 权限矩阵要能**点开看全部**，并**分清「端内能点 / 只能去主站」**；
+ *   ② 管理员要能**搜索用户并改权限**（端内新增页）；
+ *   ③ 顺带把「管理员把自己降级」这个不可逆的坑堵上。
+ */
+
+console.log('===== J. capabilityGroups / 端内入口 / selfRoleChangeBlocked =====')
+
+{
+  const mAdminJ = capabilityMatrix(['USER', 'ADMIN'])
+  const groups = capabilityGroups(['USER', 'ADMIN'])
+
+  // ① 分组不重不漏：并集 == 矩阵全集，交集为空。
+  //    🚨 这条防的是「新增能力时忘了分类」—— 只按 mp 过滤的话，
+  //       分类条件写错（比如误用 === true 比较字符串）会让某一组静默变空，
+  //       界面上看起来只是「少了几个功能」，没有任何报错。
+  const flat = groups.flatMap((g) => g.items.map((c) => c.key))
+  const allKeys = mAdminJ.map((c) => c.key)
+  ok(
+    'J1 分组不重不漏：并集 == 矩阵全集，且无重复项',
+    flat.slice().sort().join(',') === allKeys.slice().sort().join(',') &&
+      new Set(flat).size === flat.length,
+    `分组=${flat.length} 项 / 矩阵=${allKeys.length} 项`
+  )
+
+  // ② 组顺序固定「端内 → 主站」，且每组都有标题与说明（UI 直接渲染，缺了会出现空标题）
+  ok(
+    'J2 组顺序为 [小程序内, 主站]，且每组都有 badge/title/hint',
+    groups.length === 2 &&
+      groups[0].key === 'mp' &&
+      groups[1].key === 'site' &&
+      groups.every((g) => g.badge && g.title && g.hint && g.items.length > 0),
+    groups.map((g) => `${g.badge}(${g.items.length})`).join(' + ')
+  )
+
+  // ③ 组内每项的 place/placeLabel 必须与小组身份一致（防「分到主站组却写着小程序内」）
+  const badPlace = groups.flatMap((g) =>
+    g.items.filter((c) => c.place !== g.key || !c.placeLabel).map((c) => c.key)
+  )
+  ok('J3 组内每项的 place/placeLabel 与所在组一致', badPlace.length === 0, badPlace.join(','))
+
+  // ④ 管理员视野下两组的项数（这就是折叠摘要那一行「端内 5 / 5 · 主站 6 / 6」的数据源）
+  const sAdmin = capabilityGroupStats(['USER', 'ADMIN'])
+  ok(
+    'J4 管理员：端内 5 项（全可用）+ 主站 6 项（全可用）',
+    sAdmin.mp === 5 && sAdmin.allowedMp === 5 && sAdmin.site === 6 && sAdmin.allowedSite === 6,
+    `端内 ${sAdmin.allowedMp}/${sAdmin.mp} · 主站 ${sAdmin.allowedSite}/${sAdmin.site}`
+  )
+
+  // ⑤ 版主：端内仍是 5 项（**分母不变**），但只有 3 项可用 —— 这组数字就是「区别很大」的量化表达
+  const sMod = capabilityGroupStats(['MODERATOR'])
+  ok(
+    'J5 版主：端内 3/5 可用、主站 2/6 可用（分母与管理员相同，分子差 2）',
+    sMod.mp === 5 && sMod.allowedMp === 3 && sMod.site === 6 && sMod.allowedSite === 2,
+    `端内 ${sMod.allowedMp}/${sMod.mp} · 主站 ${sMod.allowedSite}/${sMod.site}`
+  )
+
+  // ⑥ 用户与角色管理**确实**搬进了端内（这是本轮功能的核心声明）
+  const userCap = mAdminJ.find((c) => c.key === 'user')
+  ok(
+    'J6 「用户与角色管理」已标为端内可操作（mp=true），且归入「小程序内」组',
+    !!userCap && userCap.mp === true && userCap.place === 'mp' &&
+      groups.find((g) => g.key === 'mp').items.some((c) => c.key === 'user'),
+    userCap ? `place=${userCap.place} placeLabel=${userCap.placeLabel}` : '未找到 user 能力'
+  )
+
+  // ⑦ `mp=true` 不能只是嘴上说说：页面文件与路由都必须真的存在
+  const hasPage = fs.existsSync(adminUsersPagePath)
+  const pagesJson = fs.existsSync(pagesJsonPath) ? fs.readFileSync(pagesJsonPath, 'utf8') : ''
+  ok(
+    'J7 端内页真实存在且已在 pages.json 注册（防「矩阵说端内已接、其实页面没写」）',
+    hasPage && pagesJson.includes('"pages/admin/users"'),
+    hasPage ? '文件+路由均就位' : `缺文件：${adminUsersPagePath}`
+  )
+}
+
+{
+  // 角色文案 / 配色 / 候选表三者的键必须一致 —— UI 三处都用它们渲染，少一处就会出现空白标签
+  const codes = ASSIGNABLE_ROLES.map((r) => r.code)
+  ok(
+    'J8 ASSIGNABLE_ROLES 覆盖 USER/MODERATOR/ADMIN 且每项都有 label/desc',
+    codes.join(',') === 'USER,MODERATOR,ADMIN' &&
+      ASSIGNABLE_ROLES.every((r) => r.label && r.desc),
+    codes.join(',')
+  )
+  ok(
+    'J9 roleLabel / roleTone 对三种角色都给出非空结果，未知 code 原样返回',
+    ROLE.USER === 'USER' &&
+      roleLabel('ADMIN') === '管理员' &&
+      roleLabel('MODERATOR') === '版主' &&
+      roleLabel('USER') === '普通用户' &&
+      roleTone('ADMIN') === 'danger' &&
+      roleTone('MODERATOR') === 'warning' &&
+      roleTone('USER') === 'default' &&
+      roleLabel('SUPER') === 'SUPER',
+    `${roleLabel('ADMIN')}/${roleLabel('MODERATOR')}/${roleLabel('USER')}`
+  )
+}
+
+{
+  /*
+   * 自我降权拦截 —— 与后端 `AdminUserServiceImpl#updateUserRoles` 的自保同一规则。
+   * 🚨 边界要卡准：**只拦「摘掉自己的 ADMIN」**。
+   *    改别人、或管理员把自己重存一遍 ADMIN，都必须放行 ——
+   *    拦多了会让管理员连「保存」都点不动（功能看起来坏了）。
+   */
+  ok(
+    'J10 自我降权被拦：自己 → 普通用户 / 版主',
+    selfRoleChangeBlocked(1, 1, ['USER']) === true &&
+      selfRoleChangeBlocked(1, 1, ['MODERATOR']) === true
+  )
+  ok(
+    'J11 正常放行：自己重存 ADMIN、改别人、id 缺失',
+    selfRoleChangeBlocked(1, 1, ['ADMIN']) === false &&
+      selfRoleChangeBlocked(1, 1, ['USER', 'ADMIN']) === false &&
+      selfRoleChangeBlocked(1, 2, ['USER']) === false &&
+      selfRoleChangeBlocked(null, 1, ['USER']) === false
+  )
+  ok(
+    'J12 id 类型归一化：后端给 "1"（字符串）也要认出是自己',
+    selfRoleChangeBlocked('1', 1, ['USER']) === true
+  )
+}
+
+{
+  /*
+   * `canManageUsers` 与 `canSeeManageEntry` **必须不同** —— 这是本页最容易埋雷的地方。
+   * 用户管理接口是类级 hasRole(ADMIN)（见 F6），帖子管理接口是 hasAnyRole(ADMIN,MODERATOR)。
+   * 二者互换 ⇒ 版主看到「用户权限管理」入口、点进去 403。
+   */
+  ok(
+    'J13 canManageUsers 只认 ADMIN（版主 false），与 canSeeManageEntry 口径不同',
+    canManageUsers(['ADMIN']) === true &&
+      canManageUsers(['USER', 'ADMIN']) === true &&
+      canManageUsers(['MODERATOR']) === false &&
+      canManageUsers(['USER', 'MODERATOR']) === false &&
+      canManageUsers(['USER']) === false &&
+      canManageUsers([]) === false &&
+      canSeeManageEntry(['MODERATOR']) === true,
+    'ADMIN→true / MODERATOR→false（而 canSeeManageEntry(MODERATOR)→true）'
   )
 }
 

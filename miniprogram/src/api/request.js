@@ -204,5 +204,15 @@ async function handle401(url, silent, retried, resolve, reject, replay, msg) {
 
 export const get = (url, data, opt) => request({ url, method: 'GET', data, ...opt })
 export const post = (url, data, opt) => request({ url, method: 'POST', data, ...opt })
+/**
+ * PUT —— 2026-09-26 新增（端内「用户权限管理」需要）。
+ * 后端 `/admin/users/{id}/roles` 与 `/moderator-boards` 都是 `@PutMapping`
+ * 且要求 `@RequestBody`（含 `@Valid`），所以**必须**走 PUT + body。
+ *
+ * ⚠️ 别图省事用 POST 顶替：Spring MVC 对方法不匹配返回 405，
+ *    而请求层会把 405 当普通业务失败 toast 出来，报错信息是「请求失败」之类，
+ *    根本看不出是方法错了（同 §「`?key=value` 传了没效果」那类静默坑）。
+ */
+export const put = (url, data, opt) => request({ url, method: 'PUT', data, ...opt })
 
 export default request

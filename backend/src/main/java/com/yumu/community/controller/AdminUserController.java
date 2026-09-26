@@ -56,8 +56,10 @@ public class AdminUserController {
     @PutMapping("/{id}/roles")
     public Result<Void> updateRoles(
             @PathVariable Long id,
-            @Valid @RequestBody UpdateUserRolesRequest req) {
-        adminUserService.updateUserRoles(id, req.getRoles());
+            @Valid @RequestBody UpdateUserRolesRequest req,
+            @AuthenticationPrincipal CustomUserDetails details) {
+        // 带上操作者 id：服务层据此拒绝「管理员摘掉自己的 ADMIN」（否则后台会失守且不可逆）
+        adminUserService.updateUserRoles(details.getUserId(), id, req.getRoles());
         auditLogService.record(AuditActions.USER_ROLE_UPDATE, AuditActions.TARGET_USER, id,
                 "将用户 #" + id + " 的角色改为 " + req.getRoles());
         return Result.success();
