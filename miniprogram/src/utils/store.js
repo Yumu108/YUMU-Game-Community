@@ -16,6 +16,9 @@
  *   存在理由已经消失，留着只会让人以为「登录了还是只在这台设备」。
  */
 import { STORAGE_KEYS } from '../api/config'
+// 身份字段抽取与角色判断的**纯逻辑**放在 `utils/roles.js`（零依赖 ⇒ 可在 Node 下单测）。
+// 这里只负责「存 / 取」，不要在页面里绕过本文件直接读写 storage。
+import { identityOf, hasRole as rolesHas } from './roles'
 
 const MAX_HISTORY = 50
 
@@ -77,23 +80,86 @@ export function clearHistory() {
  *
  * ⚠️ token 的清理由 `api/request.js#clearSession` 收口（401 时同步清 user），
  *    这里只提供读写视图，不要在页面里绕过它直接清 token。
+ *
+ * 🚨 2026-09-26 补上「角色字段」（重要）：
+ *   后端 `UserInfoVO`（登录响应的 `data.user` 与 `GET /auth/me` 都是它）本来就带
+ *   `roles` / `badge` / `badgeColor` / `badgeText` / `moderatorBoardIds` /
+ *   `moderatorBoardNames` —— 由 `AuthServiceImpl#toVO` 查 roles 表 + `BadgeService#compute`
+ *   算徽章后填充，**不是空壳**。
+ *   但 `setUser` 原来只挑 4 个字段写库 ⇒ 角色的数据通路在小程序端**断在这里**，
+ *   端内拿不到任何角色信息。这正是「作业要求里的权限方案在小程序端体现不出来」的真正原因：
+ *   不是能力缺失，是接线缺失。
+ *   ⇒ 新增身份字段请统一加在 `identityOf()` 里，**不要在这里逐个挑字段**。
  */
 
-/** @returns {{id:number,username:string,nickname:string,avatar?:string}|null} */
+/**
+ * 读取当前登录用户（含 `roles` / `badge*` / `moderatorBoard*` 等身份字段）。
+ *
+ * 身份字段的抽取实现抽在 `utils/roles.js#identityOf`（零依赖纯函数，可在 Node 下单测）——
+ * 本文件只做存取，**新增身份字段请改 `roles.js`，不要在这里再写一份**。
+ *
+ * @returns {{id:number,username:string,nickname:string,avatar?:string,roles:string[],badge:string,badgeColor:string,badgeText:string,moderatorBoardIds:number[],moderatorBoardNames:string[]}|null}
+ */
 export function getUser() {
   const u = read(STORAGE_KEYS.USER, null)
   return u && u.id ? u : null
 }
 
-/** 登录成功后写入（结构与主站登录响应的 `data.user` 对齐） */
+/**
+ * 登录成功后写入（结构与主站登录响应的 `data.user` 对齐）。
+ *
+ * ⚠️ 这是**整体覆盖**而不是合并 —— 只在「换了一个 id」时才是对的。
+ *    同一个人的资料片段刷新请用 `patchIdentity()`：一旦某个调用方手里的对象
+ *    缺角色字段，整体覆盖会把身份抹成空（主站 `patchUserInfo` 那条铁律同理）。
+ */
 export function setUser(user) {
   if (!user || !user.id) return
   write(STORAGE_KEYS.USER, {
     id: user.id,
     username: user.username || '',
     nickname: user.nickname || user.username || '',
-    avatar: user.avatar || ''
+    avatar: user.avatar || '',
+    ...identityOf(user)
   })
+}
+
+/**
+ * 只合并更新身份 / 角色字段，其余字段原样保留。
+ *
+ * 用途：**给旧登录态补角色** —— 本次改动之前登录的用户，storage 里没有 roles
+ * （那时 `setUser` 还没存），只靠登录响应补不上。见 `pages/my/my.vue#syncMe`。
+ */
+export function patchIdentity(src) {
+  const u = getUser()
+  if (!u) return
+  write(STORAGE_KEYS.USER, { ...u, ...identityOf(src) })
+}
+
+/* ---------- 角色判断 ----------
+ * 🚨 这里只服务于「体验层的显隐」（该不该显示管理入口）。
+ *    **真正的安全边界永远在后端**（`@PreAuthorize` / `canModeratePost`）——
+ *    前端藏掉按钮只是不碍眼，不是防护。用户用改包/直连接口照样得被后端拦住。
+ */
+
+/** @returns {string[]} 角色 code 列表（USER / MODERATOR / ADMIN）；未登录为 [] */
+export function getRoles() {
+  const u = getUser()
+  return u && Array.isArray(u.roles) ? u.roles : []
+}
+
+/** 是否拥有某个角色 code（判定复用 `roles.js`，避免两处口径各自漂移） */
+export function hasRole(code) {
+  return rolesHas(getRoles(), code)
+}
+
+/** 管理员（全站管理权） */
+export function isAdmin() {
+  return hasRole('ADMIN')
+}
+
+/** 版主（仅负责的 (游戏, 板块) 对） */
+export function isModerator() {
+  return hasRole('MODERATOR')
 }
 
 export function clearUser() {

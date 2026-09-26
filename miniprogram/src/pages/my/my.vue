@@ -10,13 +10,54 @@
     <view class="user">
       <view class="user__avatar">{{ avatarLetter }}</view>
       <view class="user__info">
-        <text class="user__name">{{ logged ? user.nickname || user.username : '访客模式' }}</text>
+        <!--
+          名字 + 角色徽章同一行（2026-09-26 新增）。
+          文案与配色**全部来自后端**（`badgeText` / `badgeColor`，见 `BadgeService#compute`），
+          前端只在字段缺失时按 roles 兜底 —— 后端以后加新角色（如「超级版主」）前端不用改。
+          普通用户 badge 恒为 null ⇒ `badge.text` 为空 ⇒ 整块不渲染，不留空壳。
+        -->
+        <view class="user__namerow">
+          <text class="user__name mp-ellipsis">{{ logged ? user.nickname || user.username : '访客模式' }}</text>
+          <text
+            v-if="logged && badge.text"
+            class="user__badge"
+            :class="'user__badge--' + badge.color"
+          >{{ badge.text }}</text>
+        </view>
         <text class="user__tip">
           {{ logged ? '已登录（账号与主站通用）' : '游客只能查看浏览记录；收藏 / 点赞 / 举报需先登录' }}
         </text>
       </view>
       <text v-if="!logged" class="user__login" @click="goLogin">登录 / 注册</text>
       <text v-else class="user__login user__login--out" @click="onLogout">退出</text>
+    </view>
+
+    <!--
+      我的权限（2026-09-26 新增）—— 作业要求 D 里「权限方案」在小程序端的**可见载体**。
+      🚨 数据全部来自后端（登录响应与 `GET /auth/me` 的 `UserInfoVO`），端内**不做任何权限推理**：
+        `roles` → 角色、`badgeText`/`badgeColor` → 徽章、`moderatorBoardNames` → 负责范围。
+        要加展示项，先确认后端 VO 真有那个字段，别在前端自己拼结论。
+      ⚠️ 这张卡是「说明我有什么权限」，不是「我能不能做」的判据 ——
+        真正的判定在后端（`@PreAuthorize` / `canModeratePost`），端内只在详情页按角色决定显示什么。
+    -->
+    <view v-if="logged" class="perm">
+      <view class="perm__head">
+        <text class="perm__title">我的权限</text>
+        <text class="perm__role" :class="'perm__role--' + perm.color">{{ perm.label }}</text>
+      </view>
+      <text class="perm__scope">{{ perm.scope }}</text>
+      <view v-for="(c, i) in perm.can" :key="i" class="perm__row">
+        <text class="perm__dot">·</text>
+        <text class="perm__txt">{{ c }}</text>
+      </view>
+      <view v-if="canManageEntry" class="perm__hint">
+        <text class="perm__hint-txt">
+          帖子详情页会出现「管理」入口（{{ manageHint }}）——只有你负责的范围才会真正放行。
+        </text>
+      </view>
+      <text class="perm__note">
+        权限由后端 RBAC 判定（role / user_role / moderator_board 三张表 + 接口上的 @PreAuthorize）；端内只按角色决定显示什么。
+      </text>
     </view>
 
     <!--
@@ -116,11 +157,12 @@
  */
 import { ref, computed } from 'vue'
 import { onShow } from '@dcloudio/uni-app'
-import { getHistory, clearHistory, getUser, clearUser } from '../../utils/store'
-import { logout } from '../../api/auth'
+import { getHistory, clearHistory, getUser, clearUser, patchIdentity } from '../../utils/store'
+import { logout, fetchMe } from '../../api/auth'
 import { clearSession } from '../../api/request'
 import { ensureIndex, clearIndexCache } from '../../utils/guideIndex'
 import { formatTime } from '../../utils/format'
+import { permissionSummary, badgeMeta, canSeeManageEntry, actionsFor } from '../../utils/roles'
 import Skeleton from '../../components/Skeleton.vue'
 import EmptyState from '../../components/EmptyState.vue'
 import ErrorState from '../../components/ErrorState.vue'
@@ -137,6 +179,53 @@ const loading = ref(false)
 const failed = ref(false)
 const errMsg = ref('')
 const stale = ref(false)
+
+/* ==================== 角色 / 权限（2026-09-26 新增） ====================
+ * 数据来源：登录响应与 `GET /auth/me` 的 `UserInfoVO`（由 `utils/store.js` 存取）。
+ * 判断逻辑全在 `utils/roles.js`（零依赖纯函数、有单测），本页只负责渲染。
+ */
+
+/**
+ * ⚠️ 必须是 computed，不能在 onShow 里存一份普通变量：
+ *    `syncMe()` 是**异步**回填角色的，存普通变量会出现
+ *    「刚进页面没徽章、退出去再进才有」这种时序 bug。
+ */
+const badge = computed(() => badgeMeta(user.value || {}))
+const perm = computed(() => permissionSummary(user.value || {}))
+const canManageEntry = computed(() => canSeeManageEntry((user.value && user.value.roles) || []))
+/** 管理入口大致能给哪些动作（与详情页共用同一份 actionsFor，避免两处文案各说各话） */
+const manageHint = computed(() =>
+  actionsFor((user.value && user.value.roles) || [], { nonPublic: false })
+    .map((a) => a.short)
+    .join(' / ')
+)
+
+/**
+ * 静默校正登录态 —— 主要用途是**给旧登录态补角色字段**。
+ *
+ * 为什么需要：本次改动之前登录的用户，storage 里没有 roles（那时 `setUser` 还没存），
+ * 只靠登录响应补不上。进这个页时问一次 `/auth/me` 并合并回去，老会话也能显示徽章。
+ *
+ * 🚨 三条约束：
+ *  ① `{ silent: true }` —— 这是「允许失败的后台校正」，失败绝不能弹错；
+ *  ② 用 `patchIdentity`（**合并**）而非 `setUser`（整体覆盖）—— 后者只要有一次响应缺字段
+ *     就会把已有身份抹平；
+ *  ③ 不 await 进 onShow 主流程（别拖慢列表加载），失败静默忽略。
+ */
+async function syncMe() {
+  if (!logged.value) return
+  try {
+    const me = await fetchMe({ silent: true })
+    if (!me || !me.id) return
+    const cur = getUser()
+    // 同一账号才合并；id 不同说明 storage 被外部改过，交给登录流程去纠正
+    if (cur && cur.id !== me.id) return
+    patchIdentity(me)
+    user.value = getUser()
+  } catch (e) {
+    /* 静默：校正失败不影响页面 —— 列表该显示什么还是什么 */
+  }
+}
 
 const avatarLetter = computed(() => {
   const u = user.value
@@ -212,6 +301,8 @@ onShow(() => {
   // 退出登录后若停在收藏/点赞 Tab 上，会看到「游客却在看收藏」的错位
   if (!logged.value && tab.value !== 'his') tab.value = 'his'
   history.value = getHistory()
+  // 角色是异步回填的（旧会话 storage 里没有 roles）⇒ 先渲染、后台补，不阻塞列表
+  syncMe()
   loadServerLists()
 })
 
@@ -316,17 +407,123 @@ function onClear() {
   min-width: 0;
   margin-left: 22rpx;
 }
+/* 名字 + 角色徽章一行：名字可截断，徽章固定不缩（flex: none） */
+.user__namerow {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
 .user__name {
   display: block;
+  min-width: 0;
   font-size: 32rpx;
   font-weight: 600;
   color: #e9e7f2;
+}
+/* 角色徽章 —— 配色沿用**后端词表**（danger=管理员 / warning=版主，见 BadgeService#compute） */
+.user__badge {
+  flex: none;
+  margin-left: 14rpx;
+  font-size: 20rpx;
+  line-height: 1.75;
+  padding: 0 12rpx;
+  border-radius: 6rpx;
+}
+.user__badge--danger {
+  background: rgba(240, 90, 90, 0.18);
+  color: #ff9a9a;
+}
+.user__badge--warning {
+  background: rgba(240, 159, 39, 0.18);
+  color: #f0b45f;
 }
 .user__tip {
   display: block;
   margin-top: 8rpx;
   font-size: 22rpx;
   color: #8b8599;
+}
+
+/* ==================== 我的权限卡 ==================== */
+.perm {
+  margin-top: 20rpx;
+  padding: 24rpx;
+  border-radius: 20rpx;
+  background: #1a1725;
+  border: 1rpx solid #2a2538;
+}
+.perm__head {
+  display: flex;
+  align-items: center;
+  margin-bottom: 10rpx;
+}
+.perm__title {
+  font-size: 27rpx;
+  font-weight: 600;
+  color: #e9e7f2;
+}
+.perm__role {
+  flex: none;
+  margin-left: 14rpx;
+  font-size: 20rpx;
+  line-height: 1.75;
+  padding: 0 12rpx;
+  border-radius: 6rpx;
+}
+.perm__role--danger {
+  background: rgba(240, 90, 90, 0.18);
+  color: #ff9a9a;
+}
+.perm__role--warning {
+  background: rgba(240, 159, 39, 0.18);
+  color: #f0b45f;
+}
+.perm__role--default {
+  background: rgba(124, 92, 255, 0.16);
+  color: #cbbdff;
+}
+.perm__scope {
+  display: block;
+  margin-bottom: 14rpx;
+  font-size: 22rpx;
+  color: #a49eb6;
+}
+.perm__row {
+  display: flex;
+  align-items: flex-start;
+  margin-bottom: 8rpx;
+}
+.perm__dot {
+  flex: none;
+  margin-right: 10rpx;
+  font-size: 23rpx;
+  color: #7c5cff;
+}
+.perm__txt {
+  flex: 1;
+  min-width: 0;
+  font-size: 23rpx;
+  color: #9c96ad;
+  line-height: 1.6;
+}
+.perm__hint {
+  margin-top: 16rpx;
+  padding: 14rpx 18rpx;
+  border-radius: 14rpx;
+  background: rgba(124, 92, 255, 0.1);
+  border: 1rpx solid rgba(124, 92, 255, 0.28);
+}
+.perm__hint-txt {
+  font-size: 21rpx;
+  color: #cbbdff;
+  line-height: 1.6;
+}
+.perm__note {
+  display: block;
+  margin-top: 16rpx;
+  font-size: 20rpx;
+  color: #6f6982;
+  line-height: 1.6;
 }
 
 /* 同步提示（stale）—— 与普通说明区分开，别让它淹没在灰字里 */

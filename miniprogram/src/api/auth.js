@@ -44,8 +44,18 @@ export const resetPassword = ({ email, emailCode, newPassword }) =>
 /** 退出登录（后端把 token 入黑名单；失败不阻断前端清态） */
 export const logout = () => post('/auth/logout', {})
 
-/** 当前登录用户信息（GET /auth/me） */
-export const fetchMe = () => get('/auth/me')
+/**
+ * 当前登录用户信息（GET /auth/me）→ `UserInfoVO`。
+ *
+ * 返回体里带**角色与身份字段**：`roles` / `badge` / `badgeColor` / `badgeText` /
+ * `moderatorBoardIds` / `moderatorBoardNames`（`AuthServiceImpl#toVO` 查 roles 表 +
+ * `moderator_board` 表后填充）。
+ *
+ * @param {{silent?:boolean}} [opt] 传 `{silent:true}` 则失败不弹提示 ——
+ *   用于「页面加载时静默校正登录态 / 补角色」这类**允许失败**的调用
+ *   （见 `pages/my/my.vue#syncMe`）；默认失败会 toast。
+ */
+export const fetchMe = (opt) => get('/auth/me', {}, opt)
 
 /**
  * 提交举报（targetType=1 帖子）。登录用户可用。

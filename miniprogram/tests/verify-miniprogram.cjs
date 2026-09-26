@@ -1657,6 +1657,190 @@ const OFFICIAL_UID = 20142
   }
   await page.screenshot({ path: path.join(SHOTS, 'AI-chat.png') })
 
+  /* ================= PM. 权限方案（管理员 / 版主 / 普通用户，2026-09-26 新增） =================
+   * 断言目标：作业要求 D 里的「权限方案」在端内是**可验证**的，而不是只有一句文字说明。
+   *
+   * 两条路径分开覆盖：
+   *   · 游客 / 普通用户 —— **完全真实、不打桩**。本组最值钱的一条就在这里：
+   *     断言「没有管理角色时**连 /admin 请求都不发**」，
+   *     即普通用户不会因为「先发请求再被拒」而白挨一次 403 红字。
+   *   · 管理员 / 版主 —— 线上没有这两种角色的测试凭据（也不该为跑回归去造一个高权限账号），
+   *     所以**注入 storage 身份 + 桩掉 /admin 探测与 /auth/me**，只验证「角色 → UI」这段接线。
+   *     「哪个角色该有哪些动作」的后端依据由 Node 单测直接读 `AdminController` 的注解核对
+   *     （tests/roles.test.mjs 的 F / G 组）—— 两边合起来才是完整证据链。
+   */
+  console.log('\n--- PM. 权限方案（游客 / 管理员 / 版主）---')
+
+  /** 收集发往 /admin 的请求：用来断言「普通用户根本不发这个请求」 */
+  const adminReqs = []
+  page.on('request', (r) => {
+    if (r.url().includes('/api/admin/')) adminReqs.push(r.url())
+  })
+
+  // 取一篇真实公开帖（列表接口 GET /posts 无需登录）
+  const pmPostId = await page.evaluate(async () => {
+    try {
+      const r = await fetch('/api/posts?current=1&size=1').then((x) => x.json())
+      return (((r || {}).data || {}).records || [])[0]?.id || 0
+    } catch (e) {
+      return 0
+    }
+  })
+
+  if (!pmPostId) {
+    assert('PM0 前置：取到一篇真实帖子 id', false, '拿不到 postId')
+  } else {
+    /* ---------- ① 游客：真实请求，验证闸门确实在本地 ---------- */
+    await page.evaluate(() => localStorage.clear()).catch(() => {})
+    const adminBefore = adminReqs.length
+
+    await goto(`/pages/post/detail?id=${pmPostId}`)
+    await waitFor('.author', 10000)
+    const gManage = await count('.author__manage')
+    assert('PM1 游客：详情页没有「管理」入口', gManage === 0, `manage=${gManage}`)
+    assert(
+      'PM2 游客：全程没有发出任何 /admin 请求（本地角色闸门生效，不白挨 403）',
+      adminReqs.length === adminBefore,
+      `新增 ${adminReqs.length - adminBefore} 条`
+    )
+
+    await goto('/pages/my/my')
+    assert('PM3 游客：「我的」页不渲染权限卡', (await count('.perm')) === 0, `perm=${await count('.perm')}`)
+    assert('PM4 游客：「我的」页不渲染角色徽章', (await count('.user__badge')) === 0, `badge=${await count('.user__badge')}`)
+
+    /* ---------- ② 管理员 / 版主：注入身份 + 桩掉探测接口 ---------- */
+    let stubIdentity = null
+    await page.route('**/api/auth/me', (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ code: 200, message: 'ok', data: stubIdentity })
+      })
+    )
+    await page.route('**/api/admin/**', (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify(
+          route.request().url().includes('/can-review')
+            ? { code: 200, message: 'ok', data: { canReview: true } }
+            : { code: 403, message: '无权限（需要管理员角色）' }
+        )
+      })
+    )
+
+    /**
+     * 注入一个「已登录 + 指定角色」的身份。
+     *
+     * 🚨 必须写成 uni-app 的**包装格式** `{type:'object', data:{...}}`，不能裸 `JSON.stringify(obj)` ——
+     *    uni-app H5 的 `setStorageSync` 对非字符串值会包一层类型信封，`getStorageSync` 按信封解包；
+     *    裸对象读不出来（`getUser()` 直接返回 null ⇒ 页面仍是游客态，PM5 起全线飘红）。
+     *    本文件别处操作 `yumu_game_platform_v2` 也是这个格式，可对照。
+     */
+    const injectIdentity = async (roles, boardNames = []) => {
+      const isAdminRole = roles.includes('ADMIN')
+      const isModRole = roles.includes('MODERATOR')
+      stubIdentity = {
+        id: 900900,
+        username: 'regression_probe',
+        nickname: '回归探针',
+        avatar: '',
+        roles,
+        badge: isAdminRole ? 'ADMIN' : isModRole ? 'MODERATOR' : '',
+        badgeColor: isAdminRole ? 'danger' : isModRole ? 'warning' : '',
+        badgeText: isAdminRole ? '管理员' : isModRole ? '版主' : '',
+        moderatorBoardIds: [],
+        moderatorBoardNames: boardNames
+      }
+      await page.evaluate(
+        (u) => localStorage.setItem('yumu_user', JSON.stringify({ type: 'object', data: u })),
+        stubIdentity
+      )
+    }
+
+    // —— 管理员：动作最全（含置顶）——
+    await injectIdentity(['USER', 'ADMIN'])
+    await goto(`/pages/post/detail?id=${pmPostId}`)
+    await waitFor('.author__manage', 10000)
+
+    if ((await count('.author__manage')) === 1) {
+      await page.click('.author__manage')
+      await sleep(700)
+      const adminLabels = await page.$$eval('.msheet__opt-label', (els) => els.map((e) => e.innerText))
+      assert('PM5 管理员：详情页出现「管理」入口', true, `manage=1`)
+      assert('PM6 管理员：面板 3 个动作（置顶 / 加精 / 隐藏）', adminLabels.length === 3, adminLabels.join(' / '))
+      assert(
+        'PM7 管理员：含「置顶」，且公开帖给「隐藏」而非「恢复」',
+        adminLabels.some((t) => t.includes('置顶')) &&
+          adminLabels.some((t) => t.includes('隐藏')) &&
+          !adminLabels.some((t) => t.includes('恢复')),
+        adminLabels.join(' / ')
+      )
+
+      const z = await page.$eval('.msheet', (el) => getComputedStyle(el).zIndex)
+      assert('PM8 管理弹层 z-index > 998（否则点选会被 uni-app H5 底栏拦截）', Number(z) > 998, `z-index=${z}`)
+
+      // 点面板**内部**绝不能关掉弹层 —— 这正是「遮罩必须是独立兄弟节点」要防的
+      // （若用 @click.self，小程序端 uni-app 会静默丢弃 .self ⇒ 变成普通 bindtap ⇒ 冒泡关层）
+      await page.click('.msheet__title')
+      await sleep(400)
+      assert(
+        'PM9 点面板内部不误关弹层（遮罩是独立兄弟节点，未用 @click.self）',
+        (await count('.msheet')) === 1,
+        `msheet=${await count('.msheet')}`
+      )
+
+      // 点视口上方（确保落在遮罩上而不是面板上）应能关闭
+      await page.mouse.click(200, 60)
+      await sleep(400)
+      assert('PM10 点遮罩可关闭弹层', (await count('.msheet')) === 0, `msheet=${await count('.msheet')}`)
+    } else {
+      assert('PM5 管理员：详情页出现「管理」入口', false, `manage=${await count('.author__manage')}`)
+      ;['PM6', 'PM7', 'PM8', 'PM9', 'PM10'].forEach((t) => assert(`${t} 管理员面板断言`, false, '无管理入口'))
+    }
+
+    // —— 版主：动作清单必须**少于**管理员（不含置顶，后端 pin 仅 ADMIN）——
+    await injectIdentity(['USER', 'MODERATOR'], ['原神 攻略区'])
+    await goto(`/pages/post/detail?id=${pmPostId}`)
+    await waitFor('.author__manage', 10000)
+
+    if ((await count('.author__manage')) === 1) {
+      await page.click('.author__manage')
+      await sleep(700)
+      const modLabels = await page.$$eval('.msheet__opt-label', (els) => els.map((e) => e.innerText))
+      assert(
+        'PM11 版主：面板 2 个动作（加精 / 隐藏），**不含置顶**',
+        modLabels.length === 2 && !modLabels.some((t) => t.includes('置顶')),
+        modLabels.join(' / ')
+      )
+      const sub = await text('.msheet__sub')
+      assert('PM12 面板副标题摊开「身份 · 权限范围」', /版主/.test(sub) && /原神/.test(sub), sub)
+      await page.mouse.click(200, 60)
+      await sleep(300)
+    } else {
+      assert('PM11 版主：面板动作清单', false, '无管理入口')
+      assert('PM12 面板副标题', false, '无管理入口')
+    }
+
+    // —— 「我的」页：登录态必须渲染权限卡与徽章 ——
+    await goto('/pages/my/my')
+    assert(
+      'PM13 登录态：「我的」页渲染权限卡与角色徽章',
+      (await count('.perm')) === 1 && (await count('.user__badge')) === 1,
+      `perm=${await count('.perm')} badge=${await count('.user__badge')}`
+    )
+    const badgeTxt = (await text('.user__badge')).trim()
+    assert('PM14 徽章文案来自后端 badgeText（= 版主）', badgeTxt === '版主', badgeTxt)
+    const roleTxt = (await text('.perm__role')).trim()
+    assert('PM15 权限卡角色标签与后端 roles 一致（= 版主）', roleTxt === '版主', roleTxt)
+    const scopeTxt = await text('.perm__scope')
+    assert('PM16 权限范围摊开负责板块（来自 moderatorBoardNames）', /原神/.test(scopeTxt), scopeTxt)
+
+    await page.screenshot({ path: path.join(SHOTS, 'PM-permission.png') })
+    await page.unroute('**/api/admin/**')
+    await page.unroute('**/api/auth/me')
+  }
+
   await browser.close()
   console.log(`\n=== 结果：${pass}/${pass + fail} 通过 ===`)
   console.log(`截图目录：${SHOTS}`)

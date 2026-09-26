@@ -40,6 +40,16 @@
         <text v-if="post.authorLevelTitle" class="author__level">{{ post.authorLevelTitle }}</text>
       </view>
       <text class="author__views">{{ post.viewCount || 0 }} 阅读 · {{ post.likeCount || 0 }} 赞</text>
+
+      <!--
+        管理入口（2026-09-26 新增）—— 「权限方案」在本端**可操作**的体现。
+        🚨 显示条件看 `showManage`（两段式，见 script 注释）：
+           本地角色闸门（有 ADMIN/MODERATOR）→ 再问后端 can-review 精确到「这一篇」。
+           游客与普通用户**根本不发这个请求**，所以不会白挨 403。
+        面板里的动作清单同样是按角色生成的（置顶仅管理员；隐藏 / 恢复二选一）。
+      -->
+      <text v-if="showManage" class="author__manage" @click="openManage">管理</text>
+
       <!-- 举报：未登录先去登录；已登录弹理由选择。提交到主站审核流程（/reports） -->
       <text class="author__report" :class="{ 'author__report--done': reported }" @click="onReportTap">
         {{ reported ? '已举报' : '举报' }}
@@ -193,6 +203,44 @@
         </view>
       </view>
     </view>
+
+    <!--
+      管理弹层（2026-09-26 新增）—— 只有 `showManage` 为真时才可能被打开。
+      🚨 两条与举报弹层完全相同的铁律（都栽过）：
+        ① 遮罩必须是**独立兄弟节点**，绝不能用 `@click.self` —— 小程序端 uni-app 会
+           **静默丢弃** `.self` 修饰符，编译产物只剩 `bindtap`，冒泡会把弹层当场关掉
+           （点任意一个动作都关，2026-09-26 用户实报）。H5 端反而是好的，
+           所以纯 H5 回归一条都抓不到这种「修饰符跨端不一致」。
+        ② z-index 必须 > 998（uni-app H5 底栏层级），这里取 1300 压在举报弹层（1200）之上。
+      ⚠️ 面板只列后端**真正允许**的动作（`utils/roles.js#actionsFor` 按角色生成）；
+        万一边界情况判漏，后端会返回 403 并把原文 toast 出来 —— 那条提示本身就是证据。
+    -->
+    <view v-if="manageSheet" class="msheet">
+      <view class="msheet__mask" @click="manageSheet = false"></view>
+      <view class="msheet__panel">
+        <text class="msheet__title">管理这篇内容</text>
+        <text class="msheet__sub">{{ manageSub }}</text>
+        <view
+          v-for="a in manageActions"
+          :key="a.key"
+          class="msheet__opt"
+          :class="{ 'msheet__opt--off': !!manageBusy }"
+          @click="onManage(a.key)"
+        >
+          <view class="msheet__opt-body">
+            <text class="msheet__opt-label">{{ manageBusy === a.key ? '处理中…' : a.label }}</text>
+            <text class="msheet__opt-tip">{{ a.tip }}</text>
+          </view>
+          <text class="msheet__opt-arrow">›</text>
+        </view>
+        <view class="msheet__btns">
+          <view class="msheet__btn" @click="manageSheet = false">关闭</view>
+        </view>
+        <text class="msheet__note">
+          每次操作都会写入后端审计日志；是否放行由服务端 @PreAuthorize 与板块归属判定，端内只决定「显示什么」。
+        </text>
+      </view>
+    </view>
   </view>
 
   <!-- 失败：给原因 + 重试，绝不停在骨架屏（原来是 `catch → return`，页面永远转圈） -->
@@ -213,10 +261,17 @@ import { ASSET_BASE } from '../../api/config'
 import { resolveImage, formatTime, platformLabel } from '../../utils/format'
 import { contentBlocks } from '../../utils/content'
 import { parseReading } from '../../utils/stepParser'
-import { addHistory, isReported, markReported } from '../../utils/store'
+import { addHistory, isReported, markReported, getRoles, getUser } from '../../utils/store'
 import { requireLogin } from '../../utils/authGate'
 import { submitReport } from '../../api/auth'
 import { REPORT_REASONS } from '../../api/config'
+import {
+  canSeeManageEntry,
+  shouldShowManageEntry,
+  actionsFor,
+  permissionSummary
+} from '../../utils/roles'
+import { fetchCanReview, runManageAction } from '../../api/admin'
 import { ensureIndex, relatedOf, patchIndexFlag } from '../../utils/guideIndex'
 import PostCard from '../../components/PostCard.vue'
 import StepCard from '../../components/StepCard.vue'
@@ -320,6 +375,46 @@ const flagText = computed(() => {
   return ''
 })
 
+/* ==================== 管理权限（2026-09-26 新增） ====================
+ * 作业要求 D 里「权限方案」在本端最硬的体现：不是贴个徽章，而是**按角色给出可操作的功能**。
+ * 数据链路：后端 `UserInfoVO.roles`（登录 / `/auth/me`）→ `utils/store.js` → 这里。
+ */
+
+/** 本地角色（读 storage，0 网络开销） */
+const roles = ref([])
+/** 当前用户对象（用于把「负责板块」摊开显示在面板副标题里） */
+const me = ref(null)
+/** 后端 can-review 的**精确**结果（版主是否负责该帖所在板块） */
+const canReview = ref(false)
+const manageSheet = ref(false)
+/** 正在执行的动作 key（'' = 空闲）：用于禁用连点并显示「处理中…」 */
+const manageBusy = ref('')
+
+/**
+ * 是否显示管理入口。**闸门逻辑在 `utils/roles.js#shouldShowManageEntry`（有单测）**，
+ * 这里只做接线。两段式：
+ *   ① 本地角色闸门 —— 没有 ADMIN/MODERATOR 就**根本不发** can-review 请求。
+ *      为什么必须这样：`/admin/**` 类上挂了 `@PreAuthorize("hasAnyRole('ADMIN','MODERATOR')")`
+ *      ⇒ 普通登录用户调**任意**一个（包括 can-review）都会拿到 `code=403`
+ *      「无权限（需要管理员角色）」，白挨一次红字提示。
+ *   ② 角色通过后再问后端 can-review，精确到「这一篇」。
+ *
+ * 🚨 **不能只用 canReview 当闸门**：后端 `canReviewPost`（can-review 用的）里有
+ *    「自己不能审自己」⇒ 管理员看**自己的帖子**（比如官方公告）时 can-review 恒为 false，
+ *    但 `hide` / `essence` / `restore` 其实全都允许（它们走 `assertCanModeratePost`，
+ *    ADMIN 直接 return）。只用 canReview 会造出「管理员在自己帖上没有管理入口」的怪现象。
+ */
+const showManage = computed(() => shouldShowManageEntry(roles.value, canReview.value))
+
+/** 面板里列出的动作：按角色 + 帖子公开性生成（置顶仅管理员；隐藏 / 恢复互斥） */
+const manageActions = computed(() => actionsFor(roles.value, { nonPublic: isNonPublic.value }))
+
+/** 面板副标题：把「当前身份 + 权限范围」摊开 —— 答辩时一眼能看出不同账号的权限差异 */
+const manageSub = computed(() => {
+  const p = permissionSummary(me.value || {})
+  return `${p.label} · ${p.scope}`
+})
+
 /**
  * 拆解放在前端：后端零改动，现有内容零迁移成本。
  *  · `step`  正文自带序号/小标题 → 真·步骤卡
@@ -378,6 +473,9 @@ async function load() {
   if (!id) return
   failed.value = false
   errMsg.value = ''
+  // 角色与当前用户：本地读取（0 请求），用于管理入口的显示判定
+  roles.value = getRoles()
+  me.value = getUser()
   try {
     const d = await fetchPostDetail(id)
     post.value = d
@@ -399,8 +497,75 @@ async function load() {
     return
   }
 
+  // 管理权限探测：先过本地角色闸门，通过才问后端（不阻塞正文，失败静默）
+  probeManage()
   // 相关推荐是**补充内容**，失败不影响正文阅读
   loadRelated()
+}
+
+/**
+ * 探测「这一篇我能不能管」。
+ *
+ * 前提：本地角色已确认是 ADMIN / MODERATOR —— 否则**不该发这个请求**
+ * （普通用户调 `/admin/**` 必得 code 403，见 `showManage` 注释）。
+ * 失败一律按「无权限」处理：探测不成功就不显示入口，绝不因此打扰用户。
+ */
+async function probeManage() {
+  canReview.value = false
+  if (!canSeeManageEntry(roles.value)) return
+  try {
+    const r = await fetchCanReview(postId.value)
+    canReview.value = !!(r && r.canReview === true)
+  } catch (e) {
+    canReview.value = false
+  }
+}
+
+/** 打开管理面板（没有任何可用动作时不打开，避免出现空面板） */
+function openManage() {
+  if (!manageActions.value.length) {
+    return uni.showToast({ title: '当前身份没有可用的管理动作', icon: 'none' })
+  }
+  manageSheet.value = true
+}
+
+/**
+ * 执行一个管理动作。
+ *
+ * 🚨 与点赞 / 收藏同一套铁律：**不做乐观更新** ——
+ *   成功与否只看服务端响应，成功后**重新拉一次详情**（`load()`）让页面回到服务端事实。
+ *   理由：这些接口都是 toggle 语义（置顶 / 加精），本地推演在连点下会漂；
+ *      而隐藏 / 恢复会改 `status`，本地根本推不准（还会影响计数列）。
+ *
+ * ⚠️ 失败时**什么都不做**：请求层会把后端原文 toast 出来 ——
+ *   越权时的「无权限审核该 (游戏, 板块) 帖子」正是「后端才是安全边界」的证据，别吞掉它。
+ */
+async function onManage(key) {
+  if (manageBusy.value) return
+  manageBusy.value = key
+  try {
+    const r = (await runManageAction(key, postId.value)) || {}
+    manageSheet.value = false
+    uni.showToast({ title: manageDoneText(key, r), icon: 'none', duration: 1800 })
+    await load()
+  } catch (e) {
+    /* 失败文案已由请求层 toast 后端原文；本地状态保持不变 */
+  } finally {
+    manageBusy.value = ''
+  }
+}
+
+/**
+ * 用服务端回传的开关值说人话。
+ * `setPin` → `isTop`、`setEssence` → `isEssence`（后端返回的是 1 / 0 数值，
+ * 不是布尔 —— 0 是 falsy 所以直接用没问题，但别写成 `=== true`）。
+ */
+function manageDoneText(key, r) {
+  if (key === 'pin') return r.isTop ? '已置顶' : '已取消置顶'
+  if (key === 'essence') return r.isEssence ? '已加精' : '已取消加精'
+  if (key === 'hide') return '已隐藏，仅作者与管理员可见'
+  if (key === 'restore') return '已恢复公开'
+  return '操作成功'
 }
 
 /**
@@ -595,6 +760,23 @@ onShareAppMessage(() => ({
   font-size: 22rpx;
   color: #a49eb6;
 }
+/*
+  管理入口（管理员 / 版主可见）
+  与「举报」同处作者行但**必须一眼分开**：举报是灰色低调小字，这里是紫色描边胶囊 ——
+  提权操作要显眼，但不能抢正文视线。
+*/
+.author__manage {
+  flex-shrink: 0;
+  margin-left: 10rpx;
+  padding: 4rpx 16rpx;
+  border-radius: 999rpx;
+  border: 1rpx solid rgba(124, 92, 255, 0.5);
+  background: rgba(124, 92, 255, 0.14);
+  color: #cbbdff;
+  font-size: 22rpx;
+  line-height: 1.7;
+}
+
 /* 举报入口：低调小字，低频负面操作不抢视线；已举报后置灰 */
 .author__report {
   flex-shrink: 0;
@@ -686,6 +868,101 @@ onShareAppMessage(() => ({
 }
 .rsheet__btn--off {
   opacity: 0.6;
+}
+
+/* ==================== 管理弹层 ====================
+   与举报弹层同构（同样的「遮罩独立兄弟节点」铁律，见模板注释），
+   只是 z-index 取 1300 压在 rsheet（1200）之上。
+*/
+.msheet {
+  position: fixed;
+  inset: 0;
+  z-index: 1300;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+}
+.msheet__mask {
+  position: absolute;
+  inset: 0;
+  background: rgba(10, 8, 18, 0.7);
+}
+.msheet__panel {
+  position: relative;
+  z-index: 1;
+  width: 100%;
+  max-width: 760px;
+  box-sizing: border-box;
+  background: #1a1725;
+  border-radius: 28rpx 28rpx 0 0;
+  padding: 32rpx 32rpx calc(32rpx + env(safe-area-inset-bottom));
+}
+.msheet__title {
+  display: block;
+  font-size: 32rpx;
+  font-weight: 600;
+  color: #f2f0f7;
+}
+.msheet__sub {
+  display: block;
+  margin: 8rpx 0 24rpx;
+  font-size: 22rpx;
+  color: #8b8599;
+}
+.msheet__opt {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 20rpx 22rpx;
+  margin-bottom: 14rpx;
+  border: 1rpx solid #2c2740;
+  border-radius: 14rpx;
+  background: #201c2e;
+}
+.msheet__opt--off {
+  opacity: 0.55;
+}
+.msheet__opt-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.msheet__opt-label {
+  font-size: 28rpx;
+  color: #f2f0f7;
+}
+.msheet__opt-tip {
+  margin-top: 6rpx;
+  font-size: 21rpx;
+  color: #8b8599;
+}
+.msheet__opt-arrow {
+  flex: none;
+  margin-left: 14rpx;
+  font-size: 30rpx;
+  color: #8b8599;
+}
+.msheet__btns {
+  display: flex;
+  margin-top: 8rpx;
+}
+.msheet__btn {
+  flex: 1;
+  height: 84rpx;
+  line-height: 84rpx;
+  text-align: center;
+  border-radius: 16rpx;
+  border: 1rpx solid #3a3350;
+  color: #a49eb6;
+  font-size: 28rpx;
+}
+.msheet__note {
+  display: block;
+  margin-top: 18rpx;
+  font-size: 20rpx;
+  color: #6f6982;
+  line-height: 1.6;
 }
 
 .modebar {
