@@ -29,4 +29,22 @@ public class ReportVO {
     private Long replyId;
     /** 9-07：仅 type=2 回复时填，用于 targetTitle 摘要。 */
     private Integer replyFloor;
+
+    /**
+     * 2026-09-26：举报目标的归属（帖子/回复所在帖子的 game/board）。
+     *
+     * 为什么补这四个字段 —— 端内「举报处理」页需要回答版主最关心的那个问题：
+     * **这条举报归不归我管**。v1 的列表只给 `targetTitle`，版主看到一堆理由
+     * 却不知道是哪个游戏下的，只能靠点进去猜。
+     *
+     * ⚠️ type=3（举报用户）没有归属，四个字段全为 null —— 这类举报**只有管理员**
+     *    能处理（版主的 `covers(userId, null, null)` 恒 false）。端内据此把
+     *    处理按钮置灰，而不是让版主点了吃 403。
+     * ⚠️ 目标帖子已被物理删除时也全为 null（`EXISTS` 查不到），文案退化成
+     *    `(帖子已删除)`，同样不给处理按钮。
+     */
+    private Long gameId;
+    private String gameName;
+    private Long boardId;
+    private String boardName;
 }

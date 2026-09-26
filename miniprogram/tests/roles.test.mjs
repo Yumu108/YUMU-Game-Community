@@ -29,6 +29,9 @@ import {
   canSeeManageEntry,
   shouldShowManageEntry,
   canManageUsers,
+  canManageReports,
+  canHandleReport,
+  reportBlockReason,
   selfRoleChangeBlocked,
   roleLabel,
   roleTone,
@@ -358,6 +361,7 @@ const userCtrlPath = fileURLToPath(
 /** 端内页面与路由清单 —— J 组用来核对「矩阵说端内已接」是否真的接了 */
 const pagesJsonPath = fileURLToPath(new URL('../src/pages.json', import.meta.url))
 const adminUsersPagePath = fileURLToPath(new URL('../src/pages/admin/users.vue', import.meta.url))
+const adminReportsPagePath = fileURLToPath(new URL('../src/pages/admin/reports.vue', import.meta.url))
 
 {
   // F1: actionsFor 可能产出的 key 全集，必须与 api/admin.js 的 runManageAction 分发表**完全一致**。
@@ -694,7 +698,15 @@ if (!fs.existsSync(ctrlPath)) {
     hide: { src: 'admin', paths: ['/posts/{id}/hide', '/posts/{id}/restore'] },
     pin: { src: 'admin', paths: ['/posts/{id}/pin'] },
     // 2026-09-26 第三轮：端内新增「用户权限管理」页 ⇒ 这一项从主站搬进端内
-    user: { src: 'user', paths: ['/admin/users', '/{id}/roles', '/{id}/moderator-boards'] }
+    user: { src: 'user', paths: ['/admin/users', '/{id}/roles', '/{id}/moderator-boards'] },
+    /*
+     * 2026-09-26 第四轮：端内新增「举报处理」页 ⇒ 这一项也从主站搬进端内。
+     * 🚨 第一个 path 写成 `GetMapping("/reports")` 而不是光秃秃的 `/reports` ——
+     *    因为 `/reports` 是 `/reports/{id}/handle` 的**子串**，只用 `/reports` 的话
+     *    即便列表端点被删掉（只剩 handle），`includes` 照样为真 ⇒ 断言**空转**。
+     *    带上注解名才能钉住「列表端点真的存在」。
+     */
+    report: { src: 'admin', paths: ['GetMapping("/reports")', '/reports/{id}/handle'] }
   }
 
   const mpKeys = mAdmin.filter((c) => c.mp).map((c) => c.key).sort()
@@ -706,7 +718,7 @@ if (!fs.existsSync(ctrlPath)) {
   })
   ok(
     'I10 矩阵里标「端内可操作」的每一项，后端都有真实端点（防臆造接口）',
-    missing.length === 0 && mpKeys.join(',') === 'essence,hide,pin,review,user',
+    missing.length === 0 && mpKeys.join(',') === 'essence,hide,pin,report,review,user',
     missing.length
       ? `缺端点：${missing.join(',')}`
       : `端内项=[${mpKeys.join(',')}]（共 ${mpKeys.length} 项，其中 ${mpKeys.filter((k) => MP_ENDPOINTS[k] && MP_ENDPOINTS[k].src === 'user').length} 项属用户管理）`
@@ -764,23 +776,26 @@ console.log('===== J. capabilityGroups / 端内入口 / selfRoleChangeBlocked ==
   )
   ok('J3 组内每项的 place/placeLabel 与所在组一致', badPlace.length === 0, badPlace.join(','))
 
-  // ④ 管理员视野下两组的项数（这就是折叠摘要那一行「端内 5 / 5 · 主站 6 / 6」的数据源）
+  // ④ 管理员视野下两组的项数（这就是折叠摘要那一行「端内 6 / 6 · 主站 5 / 5」的数据源）
+  //    🚨 第四轮把「处理举报」从主站搬到端内 ⇒ 端内 5→6、主站 6→5。
+  //       这两个数字变了必须同步改这里，否则「矩阵与实现对不上」就没人发现了。
   const sAdmin = capabilityGroupStats(['USER', 'ADMIN'])
   ok(
-    'J4 管理员：端内 5 项（全可用）+ 主站 6 项（全可用）',
-    sAdmin.mp === 5 && sAdmin.allowedMp === 5 && sAdmin.site === 6 && sAdmin.allowedSite === 6,
+    'J4 管理员：端内 6 项（全可用）+ 主站 5 项（全可用）',
+    sAdmin.mp === 6 && sAdmin.allowedMp === 6 && sAdmin.site === 5 && sAdmin.allowedSite === 5,
     `端内 ${sAdmin.allowedMp}/${sAdmin.mp} · 主站 ${sAdmin.allowedSite}/${sAdmin.site}`
   )
 
-  // ⑤ 版主：端内仍是 5 项（**分母不变**），但只有 3 项可用 —— 这组数字就是「区别很大」的量化表达
+  // ⑤ 版主：端内分母仍是 6（**全局常数**），可用 4 项；主站 5 项里只剩「隐藏/恢复回复」可用。
+  //    —— 这组数字就是「管理员与版主区别很大」的量化表达（6/6+5/5 vs 4/6+1/5）。
   const sMod = capabilityGroupStats(['MODERATOR'])
   ok(
-    'J5 版主：端内 3/5 可用、主站 2/6 可用（分母与管理员相同，分子差 2）',
-    sMod.mp === 5 && sMod.allowedMp === 3 && sMod.site === 6 && sMod.allowedSite === 2,
+    'J5 版主：端内 4/6 可用、主站 1/5 可用（分母与管理员相同，分子差 2 与 4）',
+    sMod.mp === 6 && sMod.allowedMp === 4 && sMod.site === 5 && sMod.allowedSite === 1,
     `端内 ${sMod.allowedMp}/${sMod.mp} · 主站 ${sMod.allowedSite}/${sMod.site}`
   )
 
-  // ⑥ 用户与角色管理**确实**搬进了端内（这是本轮功能的核心声明）
+  // ⑥ 用户与角色管理**确实**搬进了端内（第三轮功能的核心声明）
   const userCap = mAdminJ.find((c) => c.key === 'user')
   ok(
     'J6 「用户与角色管理」已标为端内可操作（mp=true），且归入「小程序内」组',
@@ -796,6 +811,34 @@ console.log('===== J. capabilityGroups / 端内入口 / selfRoleChangeBlocked ==
     'J7 端内页真实存在且已在 pages.json 注册（防「矩阵说端内已接、其实页面没写」）',
     hasPage && pagesJson.includes('"pages/admin/users"'),
     hasPage ? '文件+路由均就位' : `缺文件：${adminUsersPagePath}`
+  )
+
+  /*
+   * ⑧ 处理举报（第四轮）—— 与 J6/J7 同构：**先验矩阵声明，再验页面真的存在**。
+   *
+   * 🚨 这条断言的「防空转」检查点：故意把 `report.mp` 改成 false 再跑，
+   *    这一条必须变红。如果只断言「页面存在」而不看 `mp`，
+   *    就会出现「矩阵说主站有、页面却已经做好」的自相矛盾而无人发现。
+   */
+  const reportCap = mAdminJ.find((c) => c.key === 'report')
+  const hasReportPage = fs.existsSync(adminReportsPagePath)
+  ok(
+    'J14 「处理举报」已标为端内可操作（mp=true），页面存在且已注册路由',
+    !!reportCap && reportCap.mp === true && reportCap.place === 'mp' &&
+      groups.find((g) => g.key === 'mp').items.some((c) => c.key === 'report') &&
+      hasReportPage && pagesJson.includes('"pages/admin/reports"'),
+    reportCap
+      ? `place=${reportCap.place} 页面=${hasReportPage ? '有' : '缺'}`
+      : '未找到 report 能力'
+  )
+
+  // ⑨ 举报页真的在调后端那两个端点（别只写了个页面、接口名拼错）
+  const adminApiSrc = fs.existsSync(adminApiPath) ? fs.readFileSync(adminApiPath, 'utf8') : ''
+  ok(
+    'J15 端内举报页调用的是后端真实端点 /admin/reports 与 /admin/reports/{id}/handle',
+    /['"`]\/admin\/reports['"`]/.test(adminApiSrc) &&
+      /\/admin\/reports\/\$\{id\}\/handle/.test(adminApiSrc),
+    adminApiSrc ? '端点已核对' : `缺文件：${adminApiPath}`
   )
 }
 
@@ -863,6 +906,85 @@ console.log('===== J. capabilityGroups / 端内入口 / selfRoleChangeBlocked ==
       canManageUsers([]) === false &&
       canSeeManageEntry(['MODERATOR']) === true,
     'ADMIN→true / MODERATOR→false（而 canSeeManageEntry(MODERATOR)→true）'
+  )
+}
+
+{
+  /*
+   * 举报入口闸门 —— **必须包含版主**（第四轮最容易写错的一格）。
+   *
+   * 🚨 两个入口的注解长得很像、后果却相反：
+   *      · `/admin/reports` → 类级 hasAnyRole(ADMIN,MODERATOR) ⇒ 版主能进（这条要 true）
+   *      · `/admin/users`   → 类级 hasRole(ADMIN)             ⇒ 版主必 403（J13 要 false）
+   *    写反的代价：一边是版主点进去白吃 403，一边是把版主最常用的功能藏起来 ——
+   *    两种都不会报错，只会「功能看起来怪怪的」。
+   */
+  ok(
+    'J16 canManageReports 含版主（与 canManageUsers 刻意不同），普通用户/游客为 false',
+    canManageReports(['ADMIN']) === true &&
+      canManageReports(['USER', 'ADMIN']) === true &&
+      canManageReports(['MODERATOR']) === true &&
+      canManageReports(['USER', 'MODERATOR']) === true &&
+      canManageReports(['USER']) === false &&
+      canManageReports([]) === false &&
+      // 与 canManageUsers 的分歧点：这一格必须一个 true 一个 false
+      canManageReports(['MODERATOR']) !== canManageUsers(['MODERATOR']),
+    'ADMIN→true / MODERATOR→true / USER→false'
+  )
+}
+
+{
+  /*
+   * 单条举报能不能处理 —— 对应后端 `canModerateReportTarget`。
+   *
+   * 三个必须为 false 的关键格（都是**点了必然 403** 的情形，端内要提前置灰）：
+   *   ① 版主 × 用户举报（targetType=3）：没有帖子归属 ⇒ 后端 `if (boardId == null) return false`
+   *   ② 版主 × 目标已删除（gameId 为 null）：同上
+   *   ③ 版主 × 不在自己负责的游戏（越权方向）
+   * 以及管理员**全都能处理**（后端第一行就是 `if (isAdmin(details)) return true`）。
+   */
+  const modUser = { roles: ['USER', 'MODERATOR'], moderatorGameIds: [7], moderatorGameNames: ['三角洲行动'] }
+  const adminUser = { roles: ['USER', 'ADMIN'] }
+
+  ok(
+    'J17 管理员可处理任意举报（含用户举报与目标已删除的）',
+    canHandleReport(adminUser, { targetType: 3, gameId: null }) === true &&
+      canHandleReport(adminUser, { targetType: 1, gameId: 99 }) === true
+  )
+
+  ok(
+    'J18 版主：辖区内的帖子举报可处理；不在辖区 / 用户举报 / 目标已删 → false',
+    canHandleReport(modUser, { targetType: 1, gameId: 7 }) === true &&
+      canHandleReport(modUser, { targetType: 2, gameId: 7 }) === true &&
+      canHandleReport(modUser, { targetType: 1, gameId: 8 }) === false &&
+      canHandleReport(modUser, { targetType: 3, gameId: null }) === false &&
+      canHandleReport(modUser, { targetType: 1, gameId: null }) === false
+  )
+
+  ok(
+    'J19 普通用户 / 游客一律 false（端内不会给出任何处理按钮）',
+    canHandleReport({ roles: ['USER'] }, { targetType: 1, gameId: 7 }) === false &&
+      canHandleReport({}, { targetType: 1, gameId: 7 }) === false &&
+      canHandleReport({ roles: [] }, {}) === false
+  )
+
+  /*
+   * 不能处理时给一句**具体**的原因 —— 三种情形文案必须互不相同。
+   * 🚨 这条防的是「所有情况都返回同一句话」：那样断言 `!== ''` 也照样绿，
+   *    但用户看到的是一句没有信息量的废话。所以这里比对三者的**去重后数量**。
+   */
+  const reasons = [
+    reportBlockReason(modUser, { targetType: 3, gameId: null }),
+    reportBlockReason(modUser, { targetType: 1, gameId: null }),
+    reportBlockReason(modUser, { targetType: 1, gameId: 8 })
+  ]
+  ok(
+    'J20 三种「不能处理」各给不同原因（不是一句万金油），且可处理时为空串',
+    reasons.every((r) => typeof r === 'string' && r.length > 0) &&
+      new Set(reasons).size === 3 &&
+      reportBlockReason(adminUser, { targetType: 1, gameId: 7 }) === '' &&
+      reportBlockReason(modUser, { targetType: 1, gameId: 7 }) === '',
+    reasons.join(' | ')
   )
 }
 

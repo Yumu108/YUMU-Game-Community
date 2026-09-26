@@ -72,8 +72,8 @@
         🚨 两个维度别混：
              · 能不能用 → 行首 ✓ / ⊘（`allowed`，来自后端 AdminController 的真实注解）
              · 在哪做   → 分组标题 + 组徽标（`place`，端内已接按钮 / 仅主站后台）
-           四种组合都真实存在：端内·可用（置顶）、端内·不可用（版主看置顶）、
-           主站·可用（版主打理举报）、主站·不可用（版主打理游戏库）。
+           四种组合都真实存在：端内·可用（置顶、举报处理）、端内·不可用（版主看置顶）、
+           主站·可用（版主隐藏回复）、主站·不可用（版主管理游戏库）。
         🚨 默认**折叠**：11 行平铺会把「我的」页撑成一屏半，用户真正想先看的是
            收藏/点赞列表。折叠态只留一行摘要（端内几项 / 主站几项），点标题栏展开。
         🚨 用 `v-if` 而不是 `v-show`：折叠时这些节点**必须真的不在 DOM 里** ——
@@ -127,6 +127,24 @@
       </view>
 
       <!--
+        举报处理入口（2026-09-26 新增，**管理员 + 版主**都可见）。
+        —— 这是矩阵里「处理举报」那一格的落地按钮（它本轮从「主站」搬到了「端内」）。
+        🚨 判据 `canManageReports` = ADMIN **或** MODERATOR —— 与下面「用户权限管理」
+           的 `canManageUsers`（只认 ADMIN）**故意不同**：
+             · `/admin/reports` 挂在 `hasAnyRole('ADMIN','MODERATOR')` 的类下 ⇒ 版主能进
+             · `/admin/users`   挂在 `hasRole('ADMIN')` 的类下            ⇒ 版主必 403
+           两个都是 `/admin/**` 前缀，最容易看走眼；互换的后果一边是挖坑（点进去报错）、
+           一边是把版主的主要工作藏起来。
+      -->
+      <view v-if="canManageReportsFlag" class="aentry aentry--reports" @click="goAdminReports">
+        <view class="aentry__body">
+          <text class="aentry__title">举报处理</text>
+          <text class="aentry__sub">{{ reportEntrySub }}</text>
+        </view>
+        <text class="aentry__arrow">›</text>
+      </view>
+
+      <!--
         用户权限管理入口（2026-09-26 新增，**仅管理员**）。
         —— 这是上面矩阵里「搜索用户 · 修改角色 / 分配版主」那一格的落地按钮，
            让「端内可操作」这句声明有处可点。
@@ -134,7 +152,7 @@
            后端 `AdminUserController` 是**类级** `hasRole('ADMIN')`，
            版主点进去调 `GET /admin/users` 必得 403，入口给了就是挖坑。
       -->
-      <view v-if="canManageUsersFlag" class="aentry" @click="goAdminUsers">
+      <view v-if="canManageUsersFlag" class="aentry aentry--users" @click="goAdminUsers">
         <view class="aentry__body">
           <text class="aentry__title">用户权限管理</text>
           <text class="aentry__sub">搜索用户 · 修改角色 · 分配版主（仅管理员）</text>
@@ -254,7 +272,7 @@ import { logout, fetchMe } from '../../api/auth'
 import { clearSession } from '../../api/request'
 import { ensureIndex, clearIndexCache } from '../../utils/guideIndex'
 import { formatTime } from '../../utils/format'
-import { permissionSummary, badgeMeta, canSeeManageEntry, actionsFor, capabilityGroups, capabilityGroupStats, canManageUsers } from '../../utils/roles'
+import { permissionSummary, badgeMeta, canSeeManageEntry, actionsFor, capabilityGroups, capabilityGroupStats, canManageUsers, canManageReports } from '../../utils/roles'
 import Skeleton from '../../components/Skeleton.vue'
 import EmptyState from '../../components/EmptyState.vue'
 import ErrorState from '../../components/ErrorState.vue'
@@ -334,9 +352,35 @@ const mxSum = computed(() => {
  */
 const canManageUsersFlag = computed(() => canManageUsers((user.value && user.value.roles) || []))
 
+/**
+ * 是否显示「举报处理」入口 —— **管理员与版主都显示**。
+ * 🚨 与上面的 `canManageUsersFlag` 是**两个不同谓词**，别合并：
+ *    举报接口在 `hasAnyRole('ADMIN','MODERATOR')` 的类下（版主能进），
+ *    用户管理接口在 `hasRole('ADMIN')` 的类下（版主 403）。见 utils/roles.js 注释。
+ */
+const canManageReportsFlag = computed(() => canManageReports((user.value && user.value.roles) || []))
+
+/**
+ * 举报入口的副标题 —— 说清「我会看到的范围」，因为管理员与版主进的是同一个页面、
+ * 拿到的却是不同集合（后端按游戏切分）。让版主误以为是全站队列是最容易犯的错。
+ */
+const reportEntrySub = computed(() => {
+  const roles = (user.value && user.value.roles) || []
+  if (roles.includes('ADMIN')) return '全站举报队列 · 标记违规 / 驳回'
+  const games = (user.value && user.value.moderatorGameNames) || []
+  return games.length
+    ? `只看《${games.join('、')}》的举报 · 标记违规 / 驳回`
+    : '举报处理 · 暂未分配负责游戏'
+})
+
 /** 进入用户权限管理页（ADMIN only，见上方注释） */
 function goAdminUsers() {
   uni.navigateTo({ url: '/pages/admin/users' })
+}
+
+/** 进入举报处理页（ADMIN + MODERATOR，见上方注释） */
+function goAdminReports() {
+  uni.navigateTo({ url: '/pages/admin/reports' })
 }
 
 /**
@@ -841,6 +885,18 @@ function onClear() {
   margin-left: 12rpx;
   font-size: 30rpx;
   color: #8f7bff;
+}
+/*
+ * 举报处理入口换个色系（青绿）—— 两个入口会同时出现在管理员眼前，
+ * 全紫会看成「一件事分了两块」。配色也给语义：青绿=日常审核队列，紫=后台配置。
+ * 只换色不改结构，`.aentry` 的布局规则完全复用。
+ */
+.aentry--reports {
+  background: rgba(93, 202, 165, 0.1);
+  border-color: rgba(93, 202, 165, 0.28);
+}
+.aentry--reports .aentry__arrow {
+  color: #5dcaa5;
 }
 .perm__row {
   display: flex;

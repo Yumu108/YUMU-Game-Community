@@ -64,6 +64,12 @@
       "style": {
         "navigationBarTitleText": "用户权限管理"
       }
+    },
+    {
+      "path": "pages/admin/reports",
+      "style": {
+        "navigationBarTitleText": "举报处理"
+      }
     }
   ],
   "globalStyle": {

@@ -6,10 +6,14 @@ import com.yumu.community.common.BusinessException;
 import com.yumu.community.common.PageResult;
 import com.yumu.community.dto.HandleReportRequest;
 import com.yumu.community.dto.SubmitReportRequest;
+import com.yumu.community.entity.Board;
+import com.yumu.community.entity.Game;
 import com.yumu.community.entity.Post;
 import com.yumu.community.entity.Report;
 import com.yumu.community.entity.Reply;
 import com.yumu.community.entity.User;
+import com.yumu.community.mapper.BoardMapper;
+import com.yumu.community.mapper.GameMapper;
 import com.yumu.community.mapper.PostMapper;
 import com.yumu.community.mapper.ReportMapper;
 import com.yumu.community.mapper.ReplyMapper;
@@ -35,6 +39,8 @@ public class ReportServiceImpl implements ReportService {
     private final UserMapper userMapper;
     private final PostMapper postMapper;
     private final ReplyMapper replyMapper;
+    private final GameMapper gameMapper;
+    private final BoardMapper boardMapper;
     private final PostService postService;
     private final ReplyService replyService;
 
@@ -72,14 +78,16 @@ public class ReportServiceImpl implements ReportService {
     }
 
     @Override
-    public PageResult<ReportVO> list(Integer status, long current, long size, List<Long> allowedBoardIds) {
+    public PageResult<ReportVO> list(Integer status, long current, long size, List<Long> allowedGameIds) {
         current = Math.max(1, current);
         size = Math.min(100, Math.max(1, size));
         Page<Report> page = new Page<>(current, size);
-        if (allowedBoardIds != null && allowedBoardIds.isEmpty()) {
+        // 空列表 ⇒ 该版主没被分配任何游戏，正确结果是「一条都不给看」。
+        // ⚠️ 这个短路必须留着：若直接放行到 SQL，`gameIds` 为空时 `<if>` 不成立 ⇒ 变成不过滤 ⇒ **越权看到全站举报**。
+        if (allowedGameIds != null && allowedGameIds.isEmpty()) {
             return PageResult.of(0, 0, current, size, List.of());
         }
-        Page<Report> res = (Page<Report>) reportMapper.selectReportPage(page, status, allowedBoardIds);
+        Page<Report> res = (Page<Report>) reportMapper.selectReportPage(page, status, allowedGameIds);
 
         List<ReportVO> vos = toVOs(res.getRecords());
         return PageResult.of(res.getTotal(), res.getPages(), res.getCurrent(), res.getSize(), vos);
@@ -98,18 +106,12 @@ public class ReportServiceImpl implements ReportService {
         return PageResult.of(res.getTotal(), res.getPages(), res.getCurrent(), res.getSize(), vos);
     }
 
-    /** 组装举报 VO（昵称 / 目标标题摘要 / 跳转 id）。list 与 listMine 共用。 */
+    /** 组装举报 VO（昵称 / 目标标题摘要 / 跳转 id / 目标归属游戏与板块）。list 与 listMine 共用。 */
     private List<ReportVO> toVOs(List<Report> records) {
         Set<Long> reporterIds = records.stream().map(Report::getReporterId).collect(Collectors.toSet());
         Map<Long, User> userMap = reporterIds.isEmpty() ? Map.of()
                 : userMapper.selectBatchIds(reporterIds).stream()
                     .collect(Collectors.toMap(User::getId, u -> u, (a, b) -> a));
-        Set<Long> postIds = records.stream()
-                .filter(r -> r.getTargetType() == TARGET_POST)
-                .map(Report::getTargetId).collect(Collectors.toSet());
-        Map<Long, Post> postMap = postIds.isEmpty() ? Map.of()
-                : postMapper.selectBatchIds(postIds).stream()
-                    .collect(Collectors.toMap(Post::getId, p -> p, (a, b) -> a));
 
         // 9-07：批量取回复（举报回复类型），用于填 targetTitle 摘要 + postId（回复所在帖子 id）
         Set<Long> replyIds = records.stream()
@@ -127,6 +129,51 @@ public class ReportServiceImpl implements ReportService {
                 : userMapper.selectBatchIds(reportedUserIds).stream()
                     .collect(Collectors.toMap(User::getId, u -> u, (a, b) -> a));
 
+        /*
+         * 2026-09-26：定位每条举报「落在哪个游戏 / 板块」。
+         *
+         * 帖子类（type=1）目标就是帖子本身；回复类（type=2）要经 `reply.postId` 再查一次帖子。
+         * ⇒ 所以先把两类目标的**帖子 id 并成一个集合**统一批量取，避免 N+1。
+         *   （回复的 postId 来自上面的 replyMap；回复已被物理删除时拿不到，自然落进 null 分支。）
+         */
+        Set<Long> postIds = records.stream()
+                .filter(r -> r.getTargetType() != null && r.getTargetType() == TARGET_POST)
+                .map(Report::getTargetId).collect(Collectors.toCollection(java.util.HashSet::new));
+        records.stream()
+                .filter(r -> r.getTargetType() != null && r.getTargetType() == 2)
+                .map(r -> replyMap.get(r.getTargetId()))
+                .filter(java.util.Objects::nonNull)
+                .map(Reply::getPostId)
+                .filter(java.util.Objects::nonNull)
+                .forEach(postIds::add);
+
+        Map<Long, Post> postMap = postIds.isEmpty() ? Map.of()
+                : postMapper.selectBatchIds(postIds).stream()
+                    .collect(Collectors.toMap(Post::getId, p -> p, (a, b) -> a));
+
+        // 游戏 / 板块名（只为「已定位到帖子」的那些 id 查，通常一两批就够）
+        Set<Long> gameIds = postMap.values().stream()
+                .map(Post::getGameId).filter(java.util.Objects::nonNull).collect(Collectors.toSet());
+        Map<Long, String> gameNameMap = gameIds.isEmpty() ? Map.of()
+                : gameMapper.selectBatchIds(gameIds).stream()
+                    .collect(Collectors.toMap(Game::getId, Game::getName, (a, b) -> a));
+        Set<Long> boardIds = postMap.values().stream()
+                .map(Post::getBoardId).filter(java.util.Objects::nonNull).collect(Collectors.toSet());
+        Map<Long, String> boardNameMap = boardIds.isEmpty() ? Map.of()
+                : boardMapper.selectBatchIds(boardIds).stream()
+                    .collect(Collectors.toMap(Board::getId, Board::getName, (a, b) -> a));
+
+        /** 举报目标归属的帖子：type=1 是自身，type=2 是回复所在帖；其余（用户举报/已删除）= null。 */
+        java.util.function.Function<Report, Post> owningPost = r -> {
+            if (r.getTargetType() == null) return null;
+            if (r.getTargetType() == TARGET_POST) return postMap.get(r.getTargetId());
+            if (r.getTargetType() == 2) {
+                Reply reply = replyMap.get(r.getTargetId());
+                return reply == null || reply.getPostId() == null ? null : postMap.get(reply.getPostId());
+            }
+            return null;
+        };
+
         List<ReportVO> vos = records.stream().map(r -> {
             ReportVO vo = new ReportVO();
             vo.setId(r.getId());
@@ -140,6 +187,16 @@ public class ReportServiceImpl implements ReportService {
             vo.setHandleNote(r.getHandleNote());
             vo.setHandlerId(r.getHandlerId());
             vo.setCreatedAt(r.getCreatedAt());
+
+            // 目标归属（可能为 null：用户举报、或目标已被物理删除）
+            Post owning = owningPost.apply(r);
+            if (owning != null) {
+                vo.setGameId(owning.getGameId());
+                vo.setBoardId(owning.getBoardId());
+                vo.setGameName(owning.getGameId() == null ? null : gameNameMap.get(owning.getGameId()));
+                vo.setBoardName(owning.getBoardId() == null ? null : boardNameMap.get(owning.getBoardId()));
+            }
+
             if (r.getTargetType() != null && r.getTargetType() == TARGET_POST) {
                 Post p = postMap.get(r.getTargetId());
                 vo.setTargetTitle(p != null ? p.getTitle() : "(帖子已删除)");

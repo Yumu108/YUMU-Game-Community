@@ -32,8 +32,8 @@
  * | 游戏库管理 / 审计日志 / 公告  | ✅    | ❌             | 各自 Controller 类级 ADMIN |
  *
  * ── 「端内已接 / 只在主站」是**另一个维度**（`PLACE`，见下） ──
- *   管理员 11 项里 **5 项端内有入口**（审核 / 加精 / 隐藏恢复 / 置顶 / 用户与角色管理），
- *   其余 **6 项只在主站**（隐藏回复 / 处理举报 / 转待审 / 游戏库 / 审计日志 / 公告）。
+ *   管理员 11 项里 **6 项端内有入口**（审核 / 加精 / 隐藏恢复 / 置顶 / 处理举报 / 用户与角色管理），
+ *   其余 **5 项只在主站**（隐藏回复 / 转待审 / 游戏库 / 审计日志 / 公告）。
  *   详见 `CAPABILITIES[].mp` —— 那里是唯一事实来源，`capabilityGroups()` 按它分组。
  *
  * ── 三个维度上 ADMIN 与 MODERATOR 的真实差异（不是只差一个置顶） ──
@@ -93,7 +93,7 @@ export const SCOPE = {
  *    两者组合出四种情况，全部是真实存在的：
  *      · 端内 + 可用 → 置顶（管理员在帖子详情页直接点）
  *      · 端内 + 不可用 → 置顶（版主看到的是「⊘ 仅管理员」）
- *      · 主站 + 可用 → 处理举报（版主有权限，但端内没做这个界面）
+ *      · 主站 + 可用 → 隐藏 / 恢复回复（版主有权限，但端内没做回复管理列表）
  *      · 主站 + 不可用 → 游戏库管理（版主既没权限、端内也没有）
  *
  * | 取值    | 含义                     | UI 徽标      |
@@ -410,8 +410,8 @@ export function actionsFor(roles, ctx = {}) {
  *    核对（`tests/roles.test.mjs` F 组）—— 别在这里写不存在的接口。
  *
  * `mp` 字段说明这项能力**在小程序端是否也接了按钮**：
- *   · true  → 端内有入口（审核 / 加精 / 隐藏 / 恢复 / 置顶 / **用户与角色管理**）
- *   · false → 只在主站管理后台提供（游戏库、审计日志、公告、举报列表、隐藏回复、转待审）
+ *   · true  → 端内有入口（审核 / 加精 / 隐藏 / 恢复 / 置顶 / **处理举报** / **用户与角色管理**）
+ *   · false → 只在主站管理后台提供（游戏库、审计日志、公告、隐藏回复、转待审）
  *             端内不做的原因：这些是重后台操作，硬塞进手机端既难用也不划算。
  *   如实标注「主站」比假装都有更经得起追问。
  */
@@ -462,9 +462,19 @@ export const CAPABILITIES = [
     admin: true,
     mod: true,
     scoped: true,
-    mp: false,
-    api: 'POST /admin/reports/{id}/handle',
-    note: '要先看举报列表与证据，适合宽屏处理'
+    /**
+     * 🚨 2026-09-26 第四轮：由 false 改为 true —— 端内**新增了举报队列页**
+     * （`pages/admin/reports.vue`，从「我的」页进入，管理员与版主都可见）。
+     *
+     * 上一轮这里写的是「要先看举报列表与证据，适合宽屏处理」—— 那条理由
+     * 现在只对**一半**成立：列表页在手机上确实挤，但「待处理 N 条 → 点开看理由
+     * → 标记违规 / 驳回」这条主链路在手机上完全跑得通，而且版主**恰恰是**
+     * 碎片时间拿手机巡版的人。为了一条「宽屏更舒服」把整项能力排除在端外，
+     * 是拿体验当借口砍功能 —— 所以搬进来，重的一屏仍留给主站。
+     */
+    mp: true,
+    api: 'GET /admin/reports · POST /admin/reports/{id}/handle',
+    note: '管理员看全站 · 版主只看自己负责的游戏'
   },
   {
     key: 'pin',
@@ -640,6 +650,76 @@ export function capabilityStats(roles) {
  */
 export function canManageUsers(roles) {
   return hasRole(roles, ROLE.ADMIN)
+}
+
+/**
+ * 是否有「举报处理」的端内入口 —— **管理员 + 版主都可以**。
+ *
+ * 🚨 与 `canManageUsers` 的差别是本项设计里最容易写错的一格，务必分清：
+ *    · `/admin/users/**` → `AdminUserController` **类级** `hasRole('ADMIN')` ⇒ 只有管理员
+ *    · `/admin/reports`  → `AdminController` **类级** `hasAnyRole('ADMIN','MODERATOR')` ⇒ 含版主
+ *    两者都在 `/admin/**` 前缀下，但注解不同。给版主显示「用户权限管理」= 点进去必 403；
+ *    反之不给版主显示「举报处理」= 把版主的主要工作藏起来。
+ *
+ * 谓词与 `canSeeManageEntry` **刻意相同**（都是 `hasAnyRole(ADMIN,MODERATOR)`），
+ * 这里单独命名是为了让调用点的意图自解释 —— 将来任一端的注解变了，
+ * 改的是一个有名字的函数，而不是散落的 `||` 表达式。
+ */
+export function canManageReports(roles) {
+  return hasRole(roles, ROLE.ADMIN) || hasRole(roles, ROLE.MODERATOR)
+}
+
+/**
+ * 这一条举报，**当前用户能不能处理**。
+ *
+ * 对应后端 `AdminController#canModerateReportTarget` —— 它先 `isAdmin` 直通，
+ * 否则要求能解析出目标所属的 `(gameId, boardId)` 且 `covers(...)` 为真。
+ *
+ * ⇒ 两类举报**只有管理员**能动，端内必须据此把按钮禁用（否则版主点了必吃 403）：
+ *   ① `targetType === 3`（举报用户）：没有帖子归属，`boardId` 恒 null
+ *      ⇒ `canModerateReportTarget` 里 `if (boardId == null) return false;` 直接拦掉。
+ *      ⚠️ 注意 `covers(userId, null, null)` 也是 false（方法第一行 `if (gameId == null) return false`），
+ *        连历史「全游戏」授权的老版主也不例外。
+ *   ② 目标帖子 / 回复已被物理删除：`EXISTS` 查不到 ⇒ VO 里 `gameId` 为 null，同理处理不了。
+ *
+ * ⚠️ 列表接口本身已按角色切好作用域（管理员全站 / 版主只看所辖游戏），
+ *    所以这里**不是**用来做越权防护的第二道墙，只是把「点了必然失败」的按钮提前置灰。
+ *    真正的边界始终在后端。
+ *
+ * @param {object} user 后端 `UserInfoVO`（取 `roles` 与 `moderatorGameIds`）
+ * @param {object} report `ReportVO`（需要 `gameId`）
+ * @returns {boolean}
+ */
+export function canHandleReport(user = {}, report = {}) {
+  const id = identityOf(user)
+  if (id.roles.includes(ROLE.ADMIN)) return true
+  if (!id.roles.includes(ROLE.MODERATOR)) return false
+
+  const rep = report || {}
+  const gid = rep.gameId == null ? null : Number(rep.gameId)
+  if (gid == null || !Number.isFinite(gid)) return false
+
+  // 有明确的负责游戏列表时再卡一次；列表缺失（老 session）时不卡 —— 交给后端判，
+  // 宁可多显示一个按钮，也不要把版主的正常工作误判成无权（误判的代价是「功能像坏了」）。
+  return id.moderatorGameIds.length ? id.moderatorGameIds.includes(gid) : true
+}
+
+/**
+ * 不能处理时，给用户一句人话原因（能处理则返回 ''）。
+ *
+ * 为什么要单独抽一个函数：同一段文案要在**列表行**和**处理面板**两处出现，
+ * 各写一份必然漂移（改了一处忘了另一处，用户看到两种说法）。
+ */
+export function reportBlockReason(user = {}, report = {}) {
+  if (canHandleReport(user, report)) return ''
+  const id = identityOf(user)
+  if (!id.roles.length || (!id.roles.includes(ROLE.ADMIN) && !id.roles.includes(ROLE.MODERATOR))) {
+    return '你没有处理举报的权限'
+  }
+  const rep = report || {}
+  if (rep.targetType === 3) return '「举报用户」仅管理员可处理'
+  if (rep.gameId == null) return '目标内容已不存在，无法处理'
+  return '该举报不在你负责的游戏范围内'
 }
 
 /**

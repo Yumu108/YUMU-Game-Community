@@ -171,3 +171,75 @@ export const setModeratorBoards = (id, gameIds = []) =>
  *     而且重置密码会返回**口令明文**，在手机端展示风险更高，留给主站。
  *   判断依据很简单：**改权限 = 改这个人能做什么**，其余都属于资料/账号管控。
  */
+
+/* ══════════════════ 举报队列（2026-09-26 新增，ADMIN + MODERATOR） ══════════════════
+ *
+ * 对应 `AdminController` 上的 `/admin/reports` 两个端点。类级注解是
+ * `hasAnyRole('ADMIN','MODERATOR')` ⇒ **版主也能进**（与 `/admin/users` 不同！）。
+ *
+ * ── 作用域由**后端**按游戏切分，前端不能自己过滤 ──
+ *   · ADMIN     → `gameIds` 传 null ⇒ 列表是全站举报
+ *   · MODERATOR → 后端解析他负责的游戏，只回该游戏下的帖子/回复举报
+ *   ⇒ 所以端内**同一套 UI、同一个请求**，管理员和版主拿到的就是各自该看的集合。
+ *     前端**不要**再按 `gameId` 二次筛（那会变成「两处各判一次，改一处就漂移」），
+ *     也不要给版主显示「共 N 条全站举报」这种管理员口径的文案。
+ *
+ * ── 三个状态值（与后端 `ReportServiceImpl` 的常量一一对应）──
+ *   0 待处理 / 1 已处理(违规) / 2 已驳回；不传 = 全部
+ *
+ * ── 版主看得到但**处理不了**的两类举报（端内要据此禁用按钮）──
+ *   ① `targetType=3`（举报用户）：`covers(userId, null, null)` 恒 false ⇒ 版主必 403
+ *   ② 目标帖子已被物理删除：定位不到 gameId，同样过不了 `canModerateReportTarget`
+ *   ⇒ 判据就是 VO 里的 `gameId` 是否为 null（后端已按「管理员/版主」回填），
+ *     详见 `utils/roles.js#canHandleReport`。
+ */
+
+/** 举报状态（后端 `Report.status`）—— 端内筛选与文案的唯一来源 */
+export const REPORT_STATUS = {
+  PENDING: 0,
+  RESOLVED: 1,
+  REJECTED: 2
+}
+
+/** 状态 → 展示文案（`statusText` 兜底用，别在页面里再写一套） */
+export const REPORT_STATUS_LABEL = {
+  0: '待处理',
+  1: '已处理（违规）',
+  2: '已驳回'
+}
+
+/** 举报对象类型 → 展示文案（后端 `Report.targetType`：1帖子 2回复 3用户） */
+export const REPORT_TYPE_LABEL = { 1: '帖子', 2: '回复', 3: '用户' }
+
+/**
+ * 举报列表（管理员 = 全站；版主 = 自己负责的游戏）。
+ *
+ * @param {{status?:number|null, current?:number, size?:number}} [opt]
+ *        `status` 为 null/undefined = 不筛状态；`size` 后端钳制在 1..100（默认 20）
+ * @returns {Promise<{total:number,pages:number,current:number,size:number,records:Array}>}
+ *          记录含 `reporterName` / `reason` / `targetType` / `targetTitle` /
+ *          `gameId` / `gameName` / `boardName` / `status` / `createdAt`
+ */
+export const fetchAdminReports = ({ status = null, current = 1, size = 20 } = {}) =>
+  get('/admin/reports', {
+    status: status == null ? undefined : status,
+    current,
+    size
+  })
+
+/**
+ * 处理一条举报。
+ *
+ * 🚨 两种结果的**副作用不一样**，UI 上的文案必须说清（别只写「确定」）：
+ *   · `status=1`（违规）→ 后端会**顺带隐藏**被举报的帖子 / 回复
+ *     （`PostService#setHidden` / `ReplyService#setHidden`，会同步板块计数与热门榜缓存）
+ *   · `status=2`（驳回）→ 只改举报状态，**目标内容保持原样**
+ * 🚨 幂等性：已处理的举报再处理会 400「该举报已处理，不能重复处理」——
+ *    所以端内在 `status !== 0` 的条目上不给处理按钮（而不是点完再弹错）。
+ *
+ * @param {number} id 举报 id
+ * @param {1|2} status 1=标记违规并隐藏目标，2=驳回
+ * @param {string} [handleNote] 处理备注（可选，会写进 `report.handle_note`）
+ */
+export const handleAdminReport = (id, status, handleNote = '') =>
+  post(`/admin/reports/${id}/handle`, { status, handleNote: handleNote || null })

@@ -182,9 +182,36 @@ public class AdminController {
             @RequestParam(defaultValue = "1") long current,
             @RequestParam(defaultValue = "20") long size,
             @AuthenticationPrincipal CustomUserDetails details) {
-        // 举报列表：版主按所负责板块（跨游戏）查看；具体处理时由 canModerateReportTarget 精确校验 (游戏, 板块)
-        List<Long> boardIds = isAdmin(details) ? null : moderatorBoardService.listBoardIdsByUserId(details.getUserId());
-        return Result.success(reportService.list(status, current, size, boardIds));
+        /*
+         * 举报列表：ADMIN 看全站；MODERATOR 只看自己负责**游戏**下的举报。
+         *
+         * 🚨 2026-09-26 修正：这里原先是 `listBoardIdsByUserId(...)`，但授权模型早已
+         *    改成游戏级（`moderator_board.board_id` 恒 NULL）—— 那个方法对 board_id 列做
+         *    `distinct().sorted()`，全 NULL 时返回 `[null]`（单元素，不抛异常），
+         *    于是 SQL 生成 `p.board_id IN (null)`，**恒不命中** ⇒ 版主举报队列永远是空的。
+         *    改为按 game_id 过滤后与 `covers(userId, gameId, boardId)` 的判据一致。
+         *
+         * ⚠️ 三种取值的语义（下游 `ReportService#list` 依赖它）：
+         *      · null      → 不过滤 = 看全部（ADMIN，或历史「全游戏」授权的版主）
+         *      · 空列表    → 一条都不给看（版主未分配任何游戏）
+         *      · 非空列表  → 只看这些游戏
+         *    把「空列表」写成 null 就是越权（版主看到全站举报），这个区分不能省。
+         */
+        List<Long> gameIds = null;
+        if (!isAdmin(details)) {
+            List<com.yumu.community.entity.ModeratorBoard> assignments =
+                    moderatorBoardService.listAssignments(details.getUserId());
+            // 历史「全游戏」授权（game_id IS NULL）在 covers() 里是「覆盖所有游戏」，
+            // 列表这边同步放宽成不过滤，避免出现「能处理某条举报却在列表里看不到它」。
+            boolean allGames = assignments.stream().anyMatch(a -> a.getGameId() == null);
+            gameIds = allGames ? null
+                    : assignments.stream()
+                        .map(com.yumu.community.entity.ModeratorBoard::getGameId)
+                        .filter(java.util.Objects::nonNull)
+                        .distinct()
+                        .toList();
+        }
+        return Result.success(reportService.list(status, current, size, gameIds));
     }
 
     @PostMapping("/reports/{id}/handle")

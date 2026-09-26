@@ -2030,8 +2030,8 @@ const OFFICIAL_UID = 20142
 
     const modSum = await text('.mx__sum')
     assert(
-      'PM28 折叠摘要摊开「端内 x/5 · 主站 y/6」：不展开也能看出分布',
-      /小程序内\s*3\s*\/\s*5/.test(modSum) && /主站\s*2\s*\/\s*6/.test(modSum),
+      'PM28 折叠摘要摊开「端内 x/6 · 主站 y/5」：不展开也能看出分布',
+      /小程序内\s*4\s*\/\s*6/.test(modSum) && /主站\s*1\s*\/\s*5/.test(modSum),
       modSum
     )
 
@@ -2088,26 +2088,29 @@ const OFFICIAL_UID = 20142
 
     /*
      * 「用户权限管理」入口 —— 仅管理员。
-     * 🚨 这条要和下面的 PM44（版主**看不到**该入口）成对看：
+     * 🚨 这条要和下面的 PM61（版主**看不到**该入口、却**看得到**举报入口）成对看：
      *    判据是 `canManageUsers`（只认 ADMIN），不是详情页那句用的
      *    `canSeeManageEntry`（hasAnyRole，含版主）。两者互换 ⇒ 版主点进去必 403。
+     * 🚨 选择器带 `--users` 后缀：9-26 第四轮起「我的」页有**两个** `.aentry`
+     *    （举报处理 + 用户权限管理），光数 `.aentry` 会两边互相污染 ——
+     *    管理员这里数到 2、版主那里数到 1，断言的意思就变了。
      */
     assert(
       'PM35 管理员：「我的」页出现「用户权限管理」入口',
-      (await count('.aentry')) === 1,
-      `aentry=${await count('.aentry')}`
+      (await count('.aentry--users')) === 1,
+      `aentry--users=${await count('.aentry--users')}`
     )
     assert(
       'PM36 入口文案说明能做什么（搜索用户 / 修改角色 / 分配版主）',
-      /搜索用户/.test(await text('.aentry__sub')) &&
-        /版主/.test(await text('.aentry__sub')),
-      await text('.aentry__sub')
+      /搜索用户/.test(await text('.aentry--users .aentry__sub')) &&
+        /版主/.test(await text('.aentry--users .aentry__sub')),
+      await text('.aentry--users .aentry__sub')
     )
 
     const adminSum = await text('.mx__sum')
     assert(
-      'PM37 管理员折叠摘要「端内 5/5 全可用」（对比版主的 3/5）',
-      /小程序内\s*5\s*\/\s*5/.test(adminSum),
+      'PM37 管理员折叠摘要「端内 6/6 全可用 · 主站 5/5」（对比版主的 4/6 与 1/5）',
+      /小程序内\s*6\s*\/\s*6/.test(adminSum) && /主站\s*5\s*\/\s*5/.test(adminSum),
       adminSum
     )
 
@@ -2399,10 +2402,321 @@ const OFFICIAL_UID = 20142
     // 「我的」页也不该给版主看到入口
     await goto('/pages/my/my')
     assert(
-      'PM61 版主「我的」页**没有**用户权限管理入口（口径与详情页那句不同）',
-      (await count('.aentry')) === 0 && (await count('.perm')) === 1,
-      `aentry=${await count('.aentry')} perm=${await count('.perm')}`
+      'PM61 版主「我的」页**没有**用户权限管理入口，但**有**举报处理入口',
+      (await count('.aentry--users')) === 0 &&
+        (await count('.aentry--reports')) === 1 &&
+        (await count('.perm')) === 1,
+      `users=${await count('.aentry--users')} reports=${await count('.aentry--reports')}`
     )
+
+    /* ==========================================================================
+     * PM62 起 —— 举报处理页（2026-09-26 第四轮新增）
+     *
+     * 这一段的**核心主张**是用户明确给的两条作用域规则：
+     *   · 管理员 → 看到**所有**举报并处理
+     *   · 版主   → 只看到**自己负责游戏**的举报并处理
+     * 两条都由**后端**实现（`AdminController#listReports` + `canModerateReportTarget`），
+     * 端内同一个页面共用同一套 UI —— 所以这里要验的是「端内把该给的按钮给对了」，
+     * 而不是「端内自己过滤得对不对」（前端再筛一遍才是错的，见 pages/admin/reports.vue 注释）。
+     *
+     * 🚨 桩数据刻意造了三类，每一类都对应一个**必须置灰**的真实场景：
+     *     ① 帖子举报（有 gameId）           → 管理员/辖区版主可处理
+     *     ② **用户举报**（gameId 为 null）  → 只有管理员能处理（版主点了必 403）
+     *     ③ 已结案的举报                     → 谁都不能再处理（后端会回 400 幂等错误）
+     *   ② 在真实后端下通常不会出现在版主的队列里（列表已按游戏过滤），
+     *   但**历史「全游戏」授权的版主**会拿到（此时后端传 gameIds=null 不过滤）——
+     *   所以这条桩不是臆造，是那条兼容分支的守门测试。
+     *
+     * ⚠️ 关键词过滤与状态过滤都做成**真实过滤**：只有桩真的按 status 分页，
+     *    「切到已处理 → 只剩 1 条」才是在验筛选；否则不管点哪个页签都返回同一份数据，
+     *    断言在「status 根本没发出去」时也照样绿（典型空转）。
+     * ======================================================================== */
+    const U_REPORTS = [
+      {
+        id: 9101,
+        reporterId: 9001,
+        reporterName: '举报人甲',
+        targetType: 1,
+        targetId: 5001,
+        targetTitle: '被举报的攻略帖标题',
+        reason: '内容含广告推广',
+        status: 0,
+        handleNote: null,
+        handlerId: null,
+        createdAt: '2026-09-26T10:00:00',
+        postId: 5001,
+        gameId: 77,
+        gameName: '测试用游戏',
+        boardId: 3,
+        boardName: '攻略心得'
+      },
+      {
+        id: 9102,
+        reporterId: 9002,
+        reporterName: '举报人乙',
+        targetType: 3,
+        targetId: 8888,
+        targetTitle: '用户 @某人',
+        reason: '恶意辱骂他人',
+        status: 0,
+        handleNote: null,
+        handlerId: null,
+        createdAt: '2026-09-26T09:30:00',
+        postId: null,
+        gameId: null,
+        gameName: null,
+        boardId: null,
+        boardName: null
+      },
+      {
+        id: 9103,
+        reporterId: 9003,
+        reporterName: '举报人丙',
+        targetType: 2,
+        targetId: 6001,
+        targetTitle: '💬 回复 #3「纯灌水」',
+        reason: '灌水刷屏',
+        status: 1,
+        handleNote: '已隐藏',
+        handlerId: 102,
+        createdAt: '2026-09-25T20:00:00',
+        postId: 5001,
+        gameId: 77,
+        gameName: '测试用游戏',
+        boardId: 3,
+        boardName: '攻略心得'
+      }
+    ]
+    let reportsGetUrl = ''
+    let reportsGetCount = 0
+    const reportsPostCalls = []
+    // ⚠️ 必须用 RegExp 而不是 glob（glob 末尾的双星号只等价于 `[^/]*`，
+    //    匹配不到 `/api/admin/reports/9101/handle` —— 这是本文件 9-26 踩过的坑，
+    //    详见上面 USERS_API 的注释）
+    const REPORTS_API = /\/api\/admin\/reports(\?|\/|$)/
+    await page.route(REPORTS_API, (route) => {
+      const req = route.request()
+      if (req.method() === 'POST') {
+        reportsPostCalls.push({ url: req.url(), body: req.postDataJSON() })
+        return route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({ code: 200, message: 'ok', data: null })
+        })
+      }
+      reportsGetUrl = req.url()
+      reportsGetCount += 1
+      const st = new URL(req.url()).searchParams.get('status')
+      const recs = st == null ? U_REPORTS : U_REPORTS.filter((r) => String(r.status) === st)
+      return route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          code: 200,
+          message: 'ok',
+          data: { total: recs.length, pages: 1, current: 1, size: 20, records: recs }
+        })
+      })
+    })
+
+    /* ---------- ① 普通用户：进不去，且一个请求都不发 ---------- */
+    reportsGetUrl = ''
+    reportsGetCount = 0
+    await injectIdentity(['USER'])
+    await goto('/pages/admin/reports')
+    await sleep(1000)
+    assert(
+      'PM62 普通用户直接进举报页 → 只显示「仅管理员与版主可访问」，不渲染筛选栏',
+      (await count('.rpt-deny')) === 1 && (await count('.rpt-tabs')) === 0 && (await count('.rpt-item')) === 0,
+      `deny=${await count('.rpt-deny')} tabs=${await count('.rpt-tabs')}`
+    )
+    assert(
+      'PM63 普通用户进入时**一个 /admin/reports 请求都不发**（本地闸门，不白挨 403）',
+      reportsGetCount === 0 && reportsPostCalls.length === 0,
+      `GET=${reportsGetCount} POST=${reportsPostCalls.length}`
+    )
+
+    /* ---------- ② 管理员：全站队列 ---------- */
+    await injectIdentity(['USER', 'ADMIN'])
+    await goto('/pages/admin/reports')
+    await waitFor('.rpt-item', 10000)
+    assert(
+      'PM64 管理员：默认停在「待处理」—— 请求带 status=0，列表拿到 2 条',
+      /status=0/.test(reportsGetUrl) && (await count('.rpt-item')) === 2,
+      `${reportsGetUrl.replace(/^.*\/api/, '')} items=${await count('.rpt-item')}`
+    )
+    assert(
+      'PM65 管理员页头写明范围是「全站举报队列」（与版主的说法必须不同）',
+      /全站/.test(await text('.rpt-tip__t')),
+      await text('.rpt-tip__t')
+    )
+    assert(
+      'PM66 四个状态页签（待处理 / 已处理 / 已驳回 / 全部）',
+      (await count('.rpt-tab')) === 4,
+      `tabs=${await count('.rpt-tab')}`
+    )
+    assert(
+      'PM67 条目渲染了「归属游戏 · 板块」，版主据此判断归不归自己管',
+      /测试用游戏/.test(await text('.rpt-item .rpt-scope')),
+      await text('.rpt-item .rpt-scope')
+    )
+    assert(
+      'PM68 用户举报（无游戏归属）如实标成「无法定位目标归属」而不是空白',
+      /无法定位/.test(await text('.rpt-item:nth-child(2) .rpt-scope')),
+      await text('.rpt-item:nth-child(2) .rpt-scope')
+    )
+
+    /* ---------- ③ 筛选：切页签要真的换 status ---------- */
+    await page.locator('.rpt-tab').nth(1).click() // 已处理
+    await sleep(900)
+    assert(
+      'PM69 切到「已处理」→ 请求带 status=1，且列表被真实筛成 1 条（桩不是固定返回）',
+      /status=1/.test(reportsGetUrl) && (await count('.rpt-item')) === 1,
+      `${reportsGetUrl.replace(/^.*\/api/, '')} items=${await count('.rpt-item')}`
+    )
+    await page.locator('.rpt-tab').nth(3).click() // 全部
+    await sleep(900)
+    assert(
+      'PM70 切到「全部」→ **不带** status 参数（后端不加过滤条件），拿到 3 条',
+      !/status=/.test(reportsGetUrl) && (await count('.rpt-item')) === 3,
+      `${reportsGetUrl.replace(/^.*\/api/, '')} items=${await count('.rpt-item')}`
+    )
+
+    /* ---------- ④ 处理链路：确认 → POST → 重新拉取 ---------- */
+    reportsPostCalls.length = 0
+    const getBeforeSubmit = reportsGetCount
+    await page.locator('.rpt-item').nth(0).click() // 帖子举报，待处理
+    await sleep(700)
+    assert(
+      'PM71 点条目打开处理面板，展示举报理由 / 被举报内容 / 举报人（审核要看证据）',
+      (await count('.rpt-sh')) === 1 &&
+        /内容含广告推广/.test(await text('.rpt-sh')) &&
+        /被举报的攻略帖标题/.test(await text('.rpt-sh')) &&
+        /举报人甲/.test(await text('.rpt-sh')),
+      `sheet=${await count('.rpt-sh')}`
+    )
+    assert(
+      'PM72 待处理条目的面板给出「标记违规」与「驳回」两个动作',
+      (await count('.rpt-btn--danger')) === 1 && /驳回/.test(await text('.rpt-sh__btns')),
+      await text('.rpt-sh__btns')
+    )
+
+    // 填备注再驳回 —— 顺带验「备注真的进了请求体」（只断言「发了 POST」的话，备注丢了也照样绿）
+    //
+    // ⚠️ 选择器要兼容两种渲染：uni-app H5 的 `<textarea>` 会编译成
+    //    `<uni-textarea class="rpt-note"><textarea …/></uni-textarea>`，
+    //    我们写的 class 落在**外层自定义元素**上，而 `page.fill()` 只认真正的
+    //    `<textarea>` / `<input>`。所以先探一下内层有没有 textarea，有就填内层。
+    //    （直接填外层会报「元素不是 input/textarea」——报错信息完全看不出跟组件封装有关。）
+    const noteSel = (await count('.rpt-note textarea')) ? '.rpt-note textarea' : '.rpt-note'
+    await page.fill(noteSel, '测试备注：已核实为灌水')
+    await page.locator('.rpt-sh__btns .rpt-btn').nth(0).click() // 驳回
+    await sleep(500)
+
+    /*
+     * 二次确认必须是**面板内就地渲染**，不能是 `uni.showModal`。
+     *
+     * 🚨 这条是本轮真实踩出来的：最初用 uni.showModal，确认框被压在底部面板下面
+     *    （uni-app H5 的 modal 层 z-index 只有 999，本面板 1500）——
+     *    Playwright 卡在 `click('.uni-modal__btn_primary')` 30s 超时，报
+     *    「element is visible…but 被 .rpt-detail__label 拦截指针事件」。
+     *    报错指向「被页面元素挡住」，很容易误判成选择器写错，真因是**层级**；
+     *    而在真机上用户看到的是「点了驳回毫无反应」。
+     *    ⇒ 所以这里既要断言「确认框出现」，也要断言「此时**还没发 POST**」（防直接提交）。
+     */
+    assert(
+      'PM73 点「驳回」先就地二次确认（不直接提交），文案说清「内容保持原样」',
+      reportsPostCalls.length === 0 &&
+        (await count('.rpt-sh__btns')) === 0 &&
+        (await count('.rpt-confirm')) === 1 &&
+        /保持原样/.test(await text('.rpt-confirm__t')),
+      `confirm=${await count('.rpt-confirm')} POST=${reportsPostCalls.length}`
+    )
+
+    await page.click('.rpt-confirm__go')
+    await sleep(1200)
+    assert(
+      'PM74 确认后才发 POST /admin/reports/{id}/handle，body 为 {status:2, handleNote:"…"}',
+      reportsPostCalls.length === 1 &&
+        /\/api\/admin\/reports\/9101\/handle$/.test(reportsPostCalls[0].url) &&
+        reportsPostCalls[0].body.status === 2 &&
+        reportsPostCalls[0].body.handleNote === '测试备注：已核实为灌水',
+      reportsPostCalls.length ? JSON.stringify(reportsPostCalls[0].body) : '（一个 POST 都没发）'
+    )
+    assert(
+      'PM75 处理成功后面板关闭，并**重新拉取列表**（不做乐观更新，以服务端为准）',
+      (await count('.rpt-sh')) === 0 && reportsGetCount > getBeforeSubmit,
+      `sheet=${await count('.rpt-sh')} GET ${getBeforeSubmit}→${reportsGetCount}`
+    )
+
+    /* ---------- ⑤ 版主：作用域说明 + 不能处理的必须置灰 ---------- */
+    await injectIdentity(['USER', 'MODERATOR'], { gameIds: [77], gameNames: ['测试用游戏'] })
+    await goto('/pages/admin/reports')
+    await waitFor('.rpt-item', 10000)
+    assert(
+      'PM76 版主页头写明**只看自己负责的游戏**（同页面、不同数据集合，必须说清）',
+      /仅你负责的/.test(await text('.rpt-tip__t')) && /测试用游戏/.test(await text('.rpt-tip__t')),
+      await text('.rpt-tip__t')
+    )
+    assert(
+      'PM77 版主也能进这个页面（与 /admin/users 不同：举报接口是 hasAnyRole）',
+      (await count('.rpt-deny')) === 0 && (await count('.rpt-item')) > 0,
+      `deny=${await count('.rpt-deny')} items=${await count('.rpt-item')}`
+    )
+
+    // 辖区内帖子举报 → 可处理；顺带验**另一种动作的确认文案不同**（不能两种结果说同一句话）
+    await page.locator('.rpt-item').nth(0).click()
+    await sleep(600)
+    assert(
+      'PM78 版主辖区内（gameId=77）的帖子举报 → 给出处理按钮',
+      (await count('.rpt-btn--danger')) === 1,
+      `danger=${await count('.rpt-btn--danger')}`
+    )
+    await page.locator('.rpt-sh__btns .rpt-btn--danger').click() // 标记违规
+    await sleep(500)
+    assert(
+      'PM79 「标记违规」的确认文案与「驳回」**不同**，明确提示会隐藏内容且不可撤销',
+      /隐藏/.test(await text('.rpt-confirm__t')) &&
+        /不可撤销/.test(await text('.rpt-confirm__t')) &&
+        !/保持原样/.test(await text('.rpt-confirm__t')),
+      await text('.rpt-confirm__t')
+    )
+    await page.click('.rpt-sh__close')
+    await sleep(400)
+
+    // 用户举报（targetType=3、无游戏归属）→ 必须置灰并说明原因
+    reportsPostCalls.length = 0
+    await page.locator('.rpt-item').nth(1).click()
+    await sleep(600)
+    const modWhy = await text('.rpt-sh__why')
+    assert(
+      'PM80 版主点「举报用户」→ **不给处理按钮**，并说明「仅管理员可处理」',
+      (await count('.rpt-btn--danger')) === 0 && /仅管理员可处理/.test(modWhy),
+      `danger=${await count('.rpt-btn--danger')} why=${modWhy}`
+    )
+    await page.click('.rpt-sh__close')
+    await sleep(400)
+
+    // 已结案 → 也不能处理
+    await page.locator('.rpt-tab').nth(1).click() // 已处理
+    await sleep(900)
+    await page.locator('.rpt-item').nth(0).click()
+    await sleep(600)
+    assert(
+      'PM81 已结案的举报 → 无处理按钮，提示「该举报已结案」（防重复处理被后端回 400）',
+      (await count('.rpt-btn--danger')) === 0 && /已结案/.test(await text('.rpt-sh__why')),
+      await text('.rpt-sh__why')
+    )
+    await page.click('.rpt-sh__close')
+    await sleep(400)
+
+    assert(
+      'PM82 版主全程**没有发出任何处理请求**（置灰是有效的，不是「点了才报错」）',
+      reportsPostCalls.length === 0,
+      reportsPostCalls.length ? JSON.stringify(reportsPostCalls.map((c) => c.body)) : '（0 个 POST ✅）'
+    )
+
+    await page.unroute(REPORTS_API)
 
     await page.unroute('**/api/admin/**')
     await page.unroute('**/api/auth/me')
