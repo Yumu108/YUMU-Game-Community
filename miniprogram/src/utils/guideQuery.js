@@ -113,6 +113,37 @@ export function countByPlatform(items) {
   return out
 }
 
+/**
+ * 每款游戏各有几篇（键 = `gameId`）。
+ *
+ * ── 为什么需要它（2026-09-26，用户实报）────────────────────────────
+ * 游戏库卡片右下角那个「N 帖」原来直接用了游戏接口的 `postCount`，
+ * 而它是**主站口径**：`game.post_count` 数的是该游戏在**全部 6 个板块**的可见帖
+ * （`016-v12-content-reset.sql` 里那条 `UPDATE game g SET post_count = (...)` 没带 board 条件）。
+ * 本端只聚合 **攻略心得(board 1) + 资讯速递(board 4)** ⇒ 数字必然虚高。
+ * 用户实报的「白夜极光」最典型：卡片写 1 帖，点进去两个 Tab 全空 ——
+ * 那唯一 1 帖发在 board 2「游戏吐槽」。线上 81 款里 **63 款**对不上，**全部虚高**。
+ *
+ * 这里改成在**端内索引**上累计 —— 索引的内容池就是 `GUIDE_BOARDS`(board 1 + 4)，
+ * 于是「卡片上写几」与「点进去能看几」在**构造上**是同一个集合，
+ * 口径的**唯一真源**变成 `api/config.js#GUIDE_BOARDS`：将来增减板块，两边一起变，不会再漂移。
+ *
+ * ⚠️ 没有 `gameId` 的帖子（未关联游戏的杂谈）不计数 —— 它们在游戏详情页里本来也不出现。
+ *
+ * @param {Array} items 索引记录
+ * @returns {Record<string, number>} `{ [gameId]: 篇数 }`
+ */
+export function countByGame(items) {
+  const list = Array.isArray(items) ? items : []
+  const out = {}
+  list.forEach((it) => {
+    const gid = Number(it.gameId)
+    if (!gid) return
+    out[gid] = (out[gid] || 0) + 1
+  })
+  return out
+}
+
 /** 索引概览（首页统计条用）：总篇数 / 覆盖游戏数 / 有内容的平台数 */
 export function indexStats(items) {
   const list = Array.isArray(items) ? items : []

@@ -162,7 +162,16 @@
       🚨 层级铁律：页面内浮层 z-index 必须 > 998（uni-app H5 底栏就是 998），
         这里用 1200（公告浮层同款），否则点选会被底栏拦截。
     -->
-    <view v-if="reportSheet" class="rsheet" @click.self="reportSheet = false">
+    <view v-if="reportSheet" class="rsheet">
+      <!--
+        🚨 遮罩必须是**独立兄弟节点**，绝不能用 `@click.self` 挂在容器上 ——
+        小程序端 uni-app 会**静默丢弃** `.self` 修饰符：编译产物里只剩 `bindtap`，
+        完全没有 `e.target !== e.currentTarget` 那层判断（H5 产物里是有的）。
+        而 `bindtap` 会冒泡 ⇒ 点任意一个举报理由都会冒到容器上，弹层**当场关掉**
+        （2026-09-26 用户实报）。H5 端反而是好的，所以 140 项 H5 回归一条都抓不到：
+        **这类「修饰符跨端不一致」只能两端都验。**
+      -->
+      <view class="rsheet__mask" @click="reportSheet = false"></view>
       <view class="rsheet__panel">
         <text class="rsheet__title">举报这篇内容</text>
         <text class="rsheet__sub">举报后将由社区管理员 / 版主审核处理</text>
@@ -602,12 +611,19 @@ onShareAppMessage(() => ({
   position: fixed;
   inset: 0;
   z-index: 1200;
-  background: rgba(10, 8, 18, 0.7);
   display: flex;
   align-items: flex-end;
   justify-content: center;
 }
+/* 遮罩单独一层（**不要**改回 `@click.self`，见模板注释）：点遮罩能关，点面板不会误关 */
+.rsheet__mask {
+  position: absolute;
+  inset: 0;
+  background: rgba(10, 8, 18, 0.7);
+}
 .rsheet__panel {
+  position: relative;
+  z-index: 1;
   width: 100%;
   max-width: 760px;
   box-sizing: border-box;
@@ -803,10 +819,14 @@ onShareAppMessage(() => ({
   background: rgba(143, 189, 240, 0.18);
   color: #a9cdf5;
 }
-/* 🚨 uni-text 自带 white-space: pre-line，长游戏名会把 meta 行撑成两行，必须逐个命中 */
+/* 🚨 uni-text 自带 white-space: pre-line，长游戏名会把 meta 行撑成两行，必须逐个命中。
+   ⚠️ `*` 只有 H5 认，微信 WXSS 不支持通配符（wcsc 报 error at token '*' ⇒ 小程序编译失败），
+   故用条件编译只给 H5。别去掉 #ifdef。 */
+/* #ifdef H5 */
 .meta > * {
   white-space: nowrap;
 }
+/* #endif */
 
 /* 底部操作条 */
 .fab {

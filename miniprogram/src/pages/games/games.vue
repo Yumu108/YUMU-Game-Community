@@ -27,13 +27,14 @@
     </view>
 
     <!--
-      🚨 元数据（各平台款数 + 类型清单）加载失败时必须**明说**。
+      🚨 元数据（各平台款数 + 类型清单）与**帖数**加载失败时必须**明说**。
       2026-09-20 真机事故里，这块数据取回来后是「空的」，
       页面却只是安静地把「全部」渲染成 0 —— 看起来像「库里本来就没游戏」，
       完全没有失败的样子，用户只能看出「统计不对」。宁可不显示数字，也不要显示假的 0。
+      （帖数是 2026-09-26 加进来的第二类统计，同一条纪律：取不到就整块不显示。）
     -->
-    <view v-if="metaFailed" class="warn" @click="loadMeta">
-      <text class="warn__text">⚠️ 平台统计加载失败，点此重试（不影响下面列表浏览）</text>
+    <view v-if="statFailed" class="warn" @click="retryStats">
+      <text class="warn__text">{{ warnText }}</text>
     </view>
 
     <!--
@@ -54,8 +55,18 @@
           <view class="gitem__tags">
             <text v-if="g.platform" class="mp-tag mp-tag--purple">{{ platName(g.platform) }}</text>
             <text v-if="g.genre" class="mp-tag">{{ g.genre }}</text>
-            <text class="gitem__count">
-              <text class="mp-num">{{ g.postCount || 0 }}</text> 帖
+            <!--
+              🚨 帖数**必须**用端内索引算出来的「攻略 + 资讯」数，不能用 `g.postCount`：
+                 `game.post_count` 是**主站口径**（该游戏在全部 6 个板块的帖子），
+                 而本端只展示攻略心得(board 1) + 资讯速递(board 4)。
+                 用错就会出现「卡片写着 1 帖、点进去两个 Tab 都空」——
+                 2026-09-26 用户实报的「白夜极光」就是：那唯一 1 帖发在 board 2「游戏吐槽」。
+                 线上 81 款里 63 款都对不上（全部虚高）。
+              `gameCounts === null` = 索引还没同步好 ⇒ **不渲染数字**，绝不显示假 0
+              （同 `metaFailed` 的纪律：宁可不显示，也不要显示错的）。
+            -->
+            <text v-if="gameCounts" class="gitem__count">
+              <text class="mp-num">{{ gameCounts[g.id] || 0 }}</text> 帖
             </text>
           </view>
         </view>
@@ -91,14 +102,15 @@
  *   · 这里的平台筛选走**后端**（`/games?platform=`）⇒ 真·服务端分页；
  *     类型名搜索最终也落到后端的 `genre=` 精确筛选；
  *   · 首页的文章平台筛选只能走**端内索引**（`/posts` 没有 platform 参数）。
- *   数量都取自同一份游戏元数据缓存，口径一致。
+ *   平台档位的「款数」取自同一份游戏元数据缓存，口径一致；
+ *   卡片上的「N 帖」则取自**端内索引**（= 攻略 + 资讯，见 `gameCounts` 注释）。
  */
 import { ref, computed, watch, onUnmounted } from 'vue'
 import { onLoad, onReachBottom, onPullDownRefresh } from '@dcloudio/uni-app'
 import { fetchGames } from '../../api/community'
 import { PLATFORM_TABS, PLATFORM_HINT } from '../../api/config'
 import { platformLabel } from '../../utils/format'
-import { ensureGameMeta } from '../../utils/guideIndex'
+import { ensureGameMeta, ensureIndex, countByGame } from '../../utils/guideIndex'
 import { matchGenre } from '../../utils/keywordFilter'
 import { usePagedList } from '../../utils/usePagedList'
 import PlatformFilter from '../../components/PlatformFilter.vue'
@@ -113,6 +125,31 @@ const genres = ref([])
 const platCount = ref({})
 /** 元数据（平台档位数 + 类型清单）是否加载失败 —— 失败时页面必须明说，不能静默显示 0 */
 const metaFailed = ref(false)
+
+/**
+ * `gameId → 该游戏的「攻略 + 资讯」帖数`（卡片右下角那个数字）。
+ *
+ * 🚨 **不要换回 `g.postCount`**：那是主站口径 —— `game.post_count` 数的是该游戏在
+ *   **全部 6 个板块**的可见帖，而本端只聚合攻略心得(board 1) + 资讯速递(board 4)。
+ *   2026-09-26 用户实报：「白夜极光」卡片写 1 帖，点进去两个 Tab 都空 ——
+ *   那唯一 1 帖其实发在 board 2「游戏吐槽」。线上 81 款里 **63 款**对不上（全部虚高）。
+ *
+ * 数字由**端内索引**（`ensureIndex`，内容池 = `GUIDE_BOARDS` = board 1 + 4）逐条累计得到，
+ * 所以「卡片上写几」与「点进去能看几」在**构造上**就是同一个集合，不可能再漂移 ——
+ * 口径的唯一真源是 `api/config.js#GUIDE_BOARDS`，将来增减板块两边一起变。
+ *
+ * `null` = 索引尚未同步好 ⇒ **不渲染数字**，绝不显示假 0。
+ */
+const gameCounts = ref(null)
+/** 端内索引同步失败（帖数取不到）—— 与 metaFailed 同一条纪律：必须明说 */
+const countFailed = ref(false)
+
+const statFailed = computed(() => metaFailed.value || countFailed.value)
+const warnText = computed(() => {
+  const what =
+    metaFailed.value && countFailed.value ? '平台统计与帖子数' : countFailed.value ? '帖子数' : '平台统计'
+  return `⚠️ ${what}加载失败，点此重试（不影响下面列表浏览）`
+})
 
 const platTabs = computed(() =>
   PLATFORM_TABS.map((t) => ({ ...t, count: platCount.value[t.value] }))
@@ -178,8 +215,9 @@ function clearKeyword() {
  * 与首页的端内索引共用同一份缓存（`utils/guideIndex.js#ensureGameMeta`）。
  *
  * 失败时**清空数字并置 metaFailed**（而不是留 0）—— 0 是会被当真的假数据。
+ * 帖数（`ensureIndex`）同理，失败置 `gameCounts = null` 并置 `countFailed`。
  */
-async function loadMeta() {
+async function loadMeta({ force = false } = {}) {
   metaFailed.value = false
   try {
     const meta = await ensureGameMeta()
@@ -190,17 +228,38 @@ async function loadMeta() {
     platCount.value = {}
     metaFailed.value = true
   }
+
+  /**
+   * 帖数同样来自端内索引（与首页共用同一份缓存，命中时零请求）。
+   * 失败时置 `null` —— **整块不显示数字**，而不是显示 0（假 0 比不显示更坏）。
+   */
+  countFailed.value = false
+  try {
+    const { items } = await ensureIndex({ force })
+    gameCounts.value = countByGame(items)
+  } catch (e) {
+    gameCounts.value = null
+    countFailed.value = true
+  }
 }
 
-onLoad(async () => {
-  await loadMeta()
+/** 提示条的「点此重试」：强制重新同步（别拿过期缓存糊弄一次显式点击） */
+function retryStats() {
+  loadMeta({ force: true })
+}
+
+onLoad(() => {
+  // 列表先走（1 个请求），统计数字在后台补齐 —— 数字不该阻塞首屏内容。
+  // （串在前面会让冷启动多等约 5 个请求；首页默认就会同步索引，正常路径下这里几乎瞬时。）
   reload()
+  loadMeta()
 })
 
 onReachBottom(loadMore)
 
 onPullDownRefresh(async () => {
-  await reload()
+  // 下拉是用户**明确要求刷新** ⇒ 统计也强制重算，否则帖数要等 TTL(10min) 才更新
+  await Promise.all([reload(), loadMeta({ force: true })])
   uni.stopPullDownRefresh()
 })
 
@@ -272,10 +331,14 @@ function goGame(g) {
   overflow: hidden;
   margin-top: 14rpx;
 }
-/* uni-text 默认 white-space: pre-line，不显式置回 nowrap 会被拆行 */
+/* uni-text 默认 white-space: pre-line，不显式置回 nowrap 会被拆行。
+   ⚠️ `*` 只有 H5 认，微信 WXSS 不支持通配符（wcsc 报 error at token '*' ⇒ 小程序编译失败），
+   故用条件编译只给 H5。别去掉 #ifdef。 */
+/* #ifdef H5 */
 .gitem__tags > * {
   white-space: nowrap;
 }
+/* #endif */
 .gitem__tags .mp-tag {
   margin-right: 12rpx;
 }

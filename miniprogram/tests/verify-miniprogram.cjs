@@ -273,6 +273,34 @@ const OFFICIAL_UID = 20142
       if (officialGame) break
     }
 
+    // ③-c 游戏库卡片的「N 帖」真值（2026-09-26 新增）——
+    //      卡片必须显示「该游戏在**攻略 + 资讯**两个板块的帖数」，
+    //      而不是游戏接口的 `postCount`（= `game.post_count`，**全部 6 个板块**的主站口径）。
+    //      这里从已经拉下来的 boardRecs[1] / boardRecs[4] 独立累计，**不复用页面逻辑**。
+    const guideByGame = {}
+    for (const b of [1, 4]) {
+      ;(boardRecs[b] || []).forEach((p) => {
+        const gid = Number(p.gameId)
+        if (gid) guideByGame[gid] = (guideByGame[gid] || 0) + 1
+      })
+    }
+    // 🚨 样本必须挑「两个口径本来就不相等」的游戏 —— 否则拿一个碰巧相等的游戏去比，
+    //    把修复删掉照样绿（空转断言）。这里挑两个：
+    //      countCase：两口径不等、且攻略+资讯 > 0 ⇒ 断言卡片数字 == guide；
+    //      zeroCase ：全站口径 > 0 但攻略+资讯 = 0 ⇒ 用户实报的「白夜极光」型
+    //                 （卡片曾写 1 帖，点进去两个 Tab 全空，那帖发在 board 2）。
+    let countCase = null
+    let zeroCase = null
+    for (const g of games) {
+      const gid = Number(g.id)
+      const all = Number(g.postCount) || 0
+      const guide = guideByGame[gid] || 0
+      if (all === guide) continue
+      if (guide > 0 && !countCase) countCase = { id: gid, name: String(g.name || ''), all, guide }
+      if (guide === 0 && all > 0 && !zeroCase) zeroCase = { id: gid, name: String(g.name || ''), all, guide }
+      if (countCase && zeroCase) break
+    }
+
     return {
       counts,
       total: homeTotal,
@@ -285,6 +313,8 @@ const OFFICIAL_UID = 20142
       head12Titles,
       detail,
       officialGame,
+      countCase,
+      zeroCase,
       games: games.length,
       genres: genreCounts
     }
@@ -748,6 +778,65 @@ const OFFICIAL_UID = 20142
   const after = await count('.gitem')
   assert('C9 上拉加载生效（current 参数正确）', after > before, `before=${before} after=${after}`)
   assert('C10 底部状态文案存在', (await text('.footer')).length > 0, await text('.footer'))
+
+  /* ---- C11-C12：游戏库卡片的「N 帖」必须是「攻略 + 资讯」口径（2026-09-26 新增）----
+   * 用户实报：「白夜极光」卡片写着 1 帖，点进去攻略/资讯两个 Tab 都是空。
+   * 根因：卡片用的是 `g.postCount`（= `game.post_count`，**全部 6 个板块**的主站口径），
+   *      而本端只展示 board 1 + board 4。线上 81 款里 63 款对不上（全部虚高，原神 51 vs 19）。
+   * 🚨 样本由 truth 独立挑「两个口径本来就不相等」的游戏 —— 保证**删掉修复这条就红**，
+   *    而不是拿一款碰巧相等的游戏比一次、看着绿其实空转。
+   */
+  console.log('\n--- C11. 游戏库帖数口径（攻略+资讯，而非全站）---')
+  await goto('/pages/games/games')
+  const cntReady = await waitFor('.gitem__count', 20000)
+  assert(
+    'C11a 卡片渲染出帖数（端内索引同步完成后才有）',
+    cntReady,
+    cntReady ? 'ok' : '20s 内没等到 .gitem__count（索引同步失败？）'
+  )
+
+  /** 按游戏名搜出卡片，返回 [{name, count}]；count = 卡片上的帖数，取不到为 null */
+  async function cardsOf(name) {
+    await goto('/pages/games/games')
+    await page.fill('input.uni-input-input', name).catch(() => {})
+    await sleep(2400)
+    return page.$$eval('.gitem', (els) =>
+      els.map((e) => {
+        const n = e.querySelector('.gitem__name')
+        const c = e.querySelector('.gitem__count')
+        const m = c ? c.innerText.match(/\d+/) : null
+        return { name: n ? n.innerText.trim() : '', count: m ? Number(m[0]) : null }
+      })
+    )
+  }
+
+  if (truth.countCase) {
+    const cc = truth.countCase
+    const rows = await cardsOf(cc.name)
+    const row = rows.find((r) => r.name === cc.name)
+    assert(
+      `C11b 「${cc.name}」卡片帖数 = 攻略+资讯真值（不是全站的 ${cc.all}）`,
+      !!row && row.count === cc.guide,
+      row
+        ? `卡片=${row.count} 攻略+资讯=${cc.guide} 全站=${cc.all}`
+        : `未搜到卡片，返回：${rows.map((r) => r.name).join('|') || '空'}`
+    )
+  } else {
+    assert('C11b 卡片帖数 = 攻略+资讯真值', false, 'truth 没挑出「两口径不等」的游戏样本（数据分布变了？）')
+  }
+
+  if (truth.zeroCase) {
+    const zc = truth.zeroCase
+    const rows = await cardsOf(zc.name)
+    const row = rows.find((r) => r.name === zc.name)
+    assert(
+      `C12 「${zc.name}」攻略/资讯为 0 ⇒ 卡片写 0 帖（旧口径会写 ${zc.all}）`,
+      !!row && row.count === 0,
+      row ? `卡片=${row.count} 全站=${zc.all}` : '未搜到卡片'
+    )
+  } else {
+    assert('C12 攻略/资讯为 0 的游戏卡片写 0 帖', false, 'truth 没挑出「全站有帖但攻略/资讯为 0」的样本')
+  }
 
   /* ================= D. 资讯 ================= */
   console.log('\n--- D. 资讯（资讯速递频道 = board 4 全量）---')

@@ -9,7 +9,8 @@
     "build:h5": "uni build",
     "build:mp-weixin": "uni build -p mp-weixin",
     "appid:inject": "node tools/inject-appid.mjs",
-    "appid:restore": "node tools/inject-appid.mjs --restore"
+    "appid:restore": "node tools/inject-appid.mjs --restore",
+    "lint:mp": "node tests/lint-mp-modifiers.mjs"
   },
   "dependencies": {
     "@dcloudio/uni-app": "3.0.0-5020420260813003",

@@ -1,5 +1,5 @@
 /**
- * 分类展示纯逻辑单元测试（40 项）。
+ * 分类展示纯逻辑单元测试（45 项）。
  *
  * 运行：
  *   cd miniprogram
@@ -17,6 +17,7 @@
 import {
   queryIndex,
   countByPlatform,
+  countByGame,
   indexStats,
   relatedOf,
   hotScore,
@@ -151,6 +152,33 @@ ok(
 ok('H6 不改动入参（纯函数）', JSON.stringify(SCOPED) === SCOPED_SNAPSHOT)
 ok('H7 scopedTopUid 传 0/不传时等同', ids(queryIndex(SCOPED, { scopedTopUid: 0 })) === '101,102,103')
 ok('H8 通用比较器 cmpLatest 不受影响（相关推荐仍置顶优先）', cmpLatest(SCOPED[0], SCOPED[2]) < 0)
+
+/* ---------- I. countByGame（游戏库卡片的「N 帖」） ---------- */
+console.log('\n===== I. countByGame（游戏库卡片「N 帖」= 攻略 + 资讯）=====')
+// 夹具刻意覆盖四种情况：同游戏跨两板块 / gameId 为字符串（存储往返）/ 无 gameId / 空
+const BY_GAME = [
+  { id: 1, gameId: 20053, boardId: 1 },
+  { id: 2, gameId: 20053, boardId: 4 },
+  { id: 3, gameId: 10001, boardId: 1 },
+  { id: 4, gameId: '10001', boardId: 4 },
+  { id: 5, gameId: null, boardId: 1 },
+  { id: 6, boardId: 4 }
+]
+const gcounts = countByGame(BY_GAME)
+// 2026-09-26 那条 bug 的直接回归：卡片数字必须来自「攻略 + 资讯」这个内容池
+ok(
+  'I1 同一款游戏跨两个板块累加（正确口径）',
+  gcounts[20053] === 2,
+  JSON.stringify(gcounts)
+)
+ok(
+  'I2 gameId 为字符串时归到同一键（防静默漏计）',
+  gcounts[10001] === 2,
+  JSON.stringify(gcounts)
+)
+ok('I3 无 gameId 的帖子不计入任何游戏', Object.keys(gcounts).length === 2, JSON.stringify(gcounts))
+ok('I4 没有帖子的游戏不出现（调用方用 `|| 0` 兜底显示 0）', gcounts[99999] === undefined)
+ok('I5 空数组不炸', JSON.stringify(countByGame([])) === '{}', JSON.stringify(countByGame([])))
 
 console.log(`\n=== 结果：${pass}/${pass + fail} 通过 ===`)
 process.exit(fail === 0 ? 0 : 1)

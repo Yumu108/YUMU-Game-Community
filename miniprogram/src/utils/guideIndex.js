@@ -329,4 +329,4 @@ export async function ensureIndex({ force = false } = {}) {
  * 那个文件**零 import**，因此可以在 Node 里直接跑单测（tests/guideQuery.test.mjs）；
  * 这里统一转出，让页面只认 `utils/guideIndex` 一个入口。
  */
-export { queryIndex, countByPlatform, indexStats, relatedOf, hotScore, cmpLatest } from './guideQuery'
+export { queryIndex, countByPlatform, countByGame, indexStats, relatedOf, hotScore, cmpLatest } from './guideQuery'
