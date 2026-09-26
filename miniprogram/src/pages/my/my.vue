@@ -60,11 +60,6 @@
         <text class="scope__full">{{ perm.scope }}</text>
       </view>
 
-      <view v-for="(c, i) in perm.can" :key="i" class="perm__row">
-        <text class="perm__dot">·</text>
-        <text class="perm__txt">{{ c }}</text>
-      </view>
-
       <!--
         权限矩阵（2026-09-26 新增；同日第 3 轮改为 **可折叠 + 按操作位置分组**）。
         —— 「权限方案」最标准的呈现方式：把后端每一项权力摊平，逐条标出
@@ -165,9 +160,6 @@
           帖子详情页会出现「管理」入口（{{ manageHint }}）——只有你负责的范围才会真正放行。
         </text>
       </view>
-      <text class="perm__note">
-        权限由后端 RBAC 判定（role / user_role / moderator_board 三张表 + 接口上的 @PreAuthorize）；端内只按角色决定显示什么。
-      </text>
     </view>
 
     <!--
@@ -898,24 +890,6 @@ function onClear() {
 .aentry--reports .aentry__arrow {
   color: #5dcaa5;
 }
-.perm__row {
-  display: flex;
-  align-items: flex-start;
-  margin-bottom: 8rpx;
-}
-.perm__dot {
-  flex: none;
-  margin-right: 10rpx;
-  font-size: 23rpx;
-  color: #7c5cff;
-}
-.perm__txt {
-  flex: 1;
-  min-width: 0;
-  font-size: 23rpx;
-  color: #9c96ad;
-  line-height: 1.6;
-}
 .perm__hint {
   margin-top: 16rpx;
   padding: 14rpx 18rpx;
@@ -928,14 +902,6 @@ function onClear() {
   color: #cbbdff;
   line-height: 1.6;
 }
-.perm__note {
-  display: block;
-  margin-top: 16rpx;
-  font-size: 20rpx;
-  color: #6f6982;
-  line-height: 1.6;
-}
-
 /* 同步提示（stale）—— 与普通说明区分开，别让它淹没在灰字里 */
 .hint {
   padding: 14rpx 18rpx;

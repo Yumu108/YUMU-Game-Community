@@ -733,8 +733,15 @@ export function reportBlockReason(user = {}, report = {}) {
  *    ⇒ `listBoardNamesByUserId` 返回空 ⇒ 版主被显示成「暂未分配负责板块」，
  *    即使他明明管着一个游戏。这是纯逻辑 bug，`tests/roles.test.mjs` C/D 组有断言。
  *
+ * 🚨 2026-09-26 第四轮收尾：**删掉了原来的 `can`（「能做哪些事」项目符号列表）**。
+ *    它是按角色硬编码的 3~4 条摘要，与「我的」页下方**可展开的权限矩阵**语义重叠
+ *    （矩阵逐条给出真实接口 + 能否执行 + 在哪执行），并排渲染只会把页面撑长，
+ *    且两套文案各维护一份必然漂移。⇒ **角色能力一律以 `capabilityGroups` 为单一事实来源**，
+ *    本函数只负责「我是谁 / 管多大范围」（label / color / scope）。
+ *    （唯一消费者 `my.vue` 的列表已删；`tests/roles.test.mjs` D1 的 `can.length` 判据同步移除。）
+ *
  * @param {object} user 后端 `UserInfoVO`
- * @returns {{code:string,label:string,color:string,scope:string,scopeShort:string,can:string[]}}
+ * @returns {{code:string,label:string,color:string,scope:string,scopeShort:string}}
  */
 export function permissionSummary(user = {}) {
   const u = user || {}
@@ -746,13 +753,7 @@ export function permissionSummary(user = {}) {
       label: '管理员',
       color: TONE.ADMIN,
       scope: '全站范围 · 所有游戏与板块',
-      scopeShort: '全站',
-      can: [
-        '管理全部游戏的帖子与回复（含置顶、转待审）',
-        '审核（通过 / 驳回）、加精、隐藏 / 恢复',
-        '处理全站举报，分配版主，管理用户与公告',
-        '查看全站操作审计日志'
-      ]
+      scopeShort: '全站'
     }
   }
 
@@ -765,13 +766,7 @@ export function permissionSummary(user = {}) {
       label: '版主',
       color: TONE.MODERATOR,
       scope: label ? `仅限《${label}》` : '暂未分配负责游戏',
-      scopeShort: label || '未分配',
-      can: [
-        '审核（通过 / 驳回）负责游戏下的帖子',
-        '加精 / 隐藏 / 恢复负责游戏下的帖子',
-        '处理负责游戏下的举报',
-        '（置顶与全站管理属管理员权限）'
-      ]
+      scopeShort: label || '未分配'
     }
   }
 
@@ -780,12 +775,7 @@ export function permissionSummary(user = {}) {
     label: '普通用户',
     color: TONE.USER,
     scope: '仅本人内容',
-    scopeShort: '仅本人',
-    can: [
-      '浏览攻略 / 资讯 / 游戏库',
-      '点赞、收藏、举报，查看浏览历史',
-      '（发帖与回帖在主站进行）'
-    ]
+    scopeShort: '仅本人'
   }
 }
 

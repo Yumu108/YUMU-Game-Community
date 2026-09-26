@@ -279,9 +279,18 @@ console.log('===== D. permissionSummary（「我的权限」卡片）=====')
     s.label === '管理员' &&
       s.color === TONE.ADMIN &&
       s.scope === '全站范围 · 所有游戏与板块' &&
-      s.scopeShort === '全站' &&
-      s.can.length >= 3,
+      s.scopeShort === '全站',
     `${s.label} / ${s.color} / ${s.scope}`
+  )
+  /* 🚨 2026-09-26：原来这里还有一条 `s.can.length >= 3`。
+   *    `can`（按角色硬编码的「能做哪些事」摘要）已随「我的」页列表一起删除 ——
+   *    能力清单的唯一事实来源是 `capabilityGroups`（可展开的权限矩阵）。
+   *    改成正向锁形状：**画像只许有这 5 个字段**，谁再往回调 `can` 立刻红。
+   */
+  ok(
+    'D1b 画像只含「我是谁 / 管多大范围」5 个字段 —— `can` 摘要已删（能力统一看权限矩阵）',
+    Object.keys(s).join(',') === 'code,label,color,scope,scopeShort',
+    Object.keys(s).join(',')
   )
 }
 
