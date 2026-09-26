@@ -7,6 +7,19 @@
     </view>
 
     <!--
+      AI 智能助手入口（2026-09-26 新增）：放在搜索栏下方、定位横幅上方，
+      游客登录都能进。复用后端 SSE 接口，无需登录。
+    -->
+    <view class="ai-entry" @click="goAi">
+      <text class="ai-entry__icon">✨</text>
+      <view class="ai-entry__body">
+        <text class="ai-entry__title">AI 智能助手</text>
+        <text class="ai-entry__sub">问社区玩法 · 推荐攻略与游戏</text>
+      </view>
+      <text class="ai-entry__arrow">›</text>
+    </view>
+
+    <!--
       定位横幅 —— 一句话说清「这是什么」。
       产品口径：多平台游戏知识的聚合与分类展示端（只收干货攻略/情报，不做闲聊讨论）。
     -->
@@ -276,6 +289,11 @@ onPullDownRefresh(async () => {
 function goSearch() {
   uni.navigateTo({ url: '/pages/search/search' })
 }
+
+/** 进入 AI 智能助手页（独立页面，复用后端 SSE 接口） */
+function goAi() {
+  uni.navigateTo({ url: '/pages/ai/ai' })
+}
 </script>
 
 <style scoped>
@@ -295,6 +313,44 @@ function goSearch() {
 .search__ph {
   font-size: 25rpx;
   color: #8b8599;
+}
+
+/* AI 智能助手入口卡片 */
+.ai-entry {
+  display: flex;
+  align-items: center;
+  background: linear-gradient(135deg, #221d33, #1a1725);
+  border: 1rpx solid #332c4a;
+  border-radius: 20rpx;
+  padding: 22rpx 24rpx;
+  margin-top: 18rpx;
+}
+.ai-entry__icon {
+  font-size: 34rpx;
+  margin-right: 18rpx;
+  flex: none;
+}
+.ai-entry__body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.ai-entry__title {
+  font-size: 28rpx;
+  color: #e9e7f2;
+  font-weight: 600;
+}
+.ai-entry__sub {
+  margin-top: 6rpx;
+  font-size: 22rpx;
+  color: #8b8599;
+}
+.ai-entry__arrow {
+  font-size: 30rpx;
+  color: #8b8599;
+  margin-left: 14rpx;
+  flex: none;
 }
 
 /* 定位横幅 */

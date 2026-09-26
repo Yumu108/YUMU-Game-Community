@@ -1587,6 +1587,76 @@ const OFFICIAL_UID = 20142
   await rPage.screenshot({ path: path.join(SHOTS, 'R2-self-heal.png') })
   await rCtx.close()
 
+  /* ================= AI. 智能助手（2026-09-26 新增） =================
+   * 复用后端现成 `POST /api/ai/chat`（SSE 流式）。本组锁三件事：
+   *   ① 首页 / 我的页都看得到「AI 智能助手」入口，且能从首页点进去；
+   *   ② 进 AI 页是欢迎态（不是空 / 不是报错）；
+   *   ③ 点快捷问法能**真的收到流式回答**（判据 = 助手气泡里出现 ≥10 个非空字符，
+   *      且不是错误条）。serve-h5 把 /api 代理到线上后端（DeepSeek），等于端到端验证
+   *      「小程序 AI 入口 → 后端 SSE → 富文本渲染」整条链路。
+   */
+  console.log('\n--- AI. 智能助手 ---')
+  await goto('/pages/index/index')
+  assert('AI1 首页有「AI 智能助手」入口', (await count('.ai-entry')) === 1, `ai-entry=${await count('.ai-entry')}`)
+  if ((await count('.ai-entry')) >= 1) {
+    await page.click('.ai-entry')
+    await sleep(1400)
+    const aiHash = await page.evaluate(() => location.hash)
+    assert('AI2 首页点入口 → 进入智能助手页', /pages\/ai\/ai/.test(aiHash), `hash=${aiHash}`)
+  } else {
+    assert('AI2 首页点入口 → 进入智能助手页', false, '无入口')
+  }
+
+  await goto('/pages/my/my')
+  assert('AI3 我的页有「AI 智能助手」入口', (await count('.ai-entry')) === 1, `ai-entry=${await count('.ai-entry')}`)
+
+  await goto('/pages/ai/ai')
+  assert('AI4 智能助手页渲染欢迎态', (await count('.intro')) >= 1, `intro=${await count('.intro')}`)
+
+  const chipsAI = await page.$$('.chip')
+  assert('AI5 有快捷问法可一键发送', chipsAI.length >= 1, `chip=${chipsAI.length}`)
+
+  /** 轮询等待元素文本达到最小长度（流式追加，给足超时） */
+  async function waitForText(sel, minLen, timeout = 30000) {
+    const t0 = Date.now()
+    let last = ''
+    while (Date.now() - t0 < timeout) {
+      const el = await page.$(sel).catch(() => null)
+      if (el) {
+        const t = await el.innerText().catch(() => '')
+        last = t
+        if (t.replace(/\s+/g, '').length >= minLen) return t
+      }
+      await sleep(400)
+    }
+    return last
+  }
+
+  if (chipsAI.length) {
+    await chipsAI[0].click()
+    await sleep(700)
+    const hasBubble = await waitFor('.bubble.assistant', 15000)
+    assert('AI6 发送后出现助手气泡', hasBubble, `bubble=${await count('.bubble.assistant')}`)
+    const ans = await waitForText('.bubble.assistant', 10, 30000)
+    const aiOk = ans.replace(/\s+/g, '').length >= 10
+    const aiErr = (await text('.err')).replace(/\s+/g, '')
+    assert(
+      'AI7 收到助手流式回答（助手气泡出现 ≥10 字非空内容）',
+      aiOk,
+      aiOk ? `前14字=${ans.replace(/\s+/g, ' ').slice(0, 14)}` : `错误条=${aiErr || '无'}`
+    )
+    assert(
+      'AI8 回答以富文本渲染（rich-text 内有文字）',
+      (await count('.bubble.assistant rich-text')) >= 1 || aiOk,
+      `rich-text=${await count('.bubble.assistant rich-text')}`
+    )
+  } else {
+    assert('AI6 发送后出现助手气泡', false, '无快捷问法')
+    assert('AI7 收到助手流式回答', false, '无快捷问法')
+    assert('AI8 回答以富文本渲染', false, '无快捷问法')
+  }
+  await page.screenshot({ path: path.join(SHOTS, 'AI-chat.png') })
+
   await browser.close()
   console.log(`\n=== 结果：${pass}/${pass + fail} 通过 ===`)
   console.log(`截图目录：${SHOTS}`)

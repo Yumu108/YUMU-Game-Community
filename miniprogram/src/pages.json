@@ -52,6 +52,12 @@
       "style": {
         "navigationBarTitleText": "登录 / 注册"
       }
+    },
+    {
+      "path": "pages/ai/ai",
+      "style": {
+        "navigationBarTitleText": "智能助手"
+      }
     }
   ],
   "globalStyle": {
