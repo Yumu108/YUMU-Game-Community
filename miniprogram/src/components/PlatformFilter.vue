@@ -90,11 +90,15 @@ function pick(v) {
   border: 2rpx solid transparent;
   box-sizing: border-box;
 }
-/* 🚨 uni-text 自带 white-space: pre-line，会把按钮里的文字挤到两行 */
+/* 🚨 uni-text 自带 white-space: pre-line，会把按钮里的文字挤到两行。
+   ⚠️ `*` 只有 H5 认，微信 WXSS 不支持通配符（wcsc 报 error at token '*' ⇒ 小程序编译失败），
+   故用条件编译只给 H5（小程序端 <text> 是原生标签，无此问题）。别去掉 #ifdef。 */
+/* #ifdef H5 */
 .pf__btn > * {
   white-space: nowrap;
   line-height: 76rpx;
 }
+/* #endif */
 .pf__label {
   font-size: 28rpx;
   font-weight: 500;

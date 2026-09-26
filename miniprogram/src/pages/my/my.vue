@@ -369,10 +369,14 @@ function onClear() {
   align-items: center;
   margin-top: 10rpx;
 }
-/* uni-text 自带 white-space: pre-line，不逐个命中会被长游戏名拆行 */
+/* uni-text 自带 white-space: pre-line，不逐个命中会被长游戏名拆行。
+   ⚠️ `*` 只有 H5 认，微信 WXSS 不支持通配符（wcsc 报 error at token '*' ⇒ 小程序编译失败），
+   故用条件编译只给 H5。别去掉 #ifdef。 */
+/* #ifdef H5 */
 .item__meta > * {
   white-space: nowrap;
 }
+/* #endif */
 .item__board {
   font-size: 22rpx;
   color: #8b8599;

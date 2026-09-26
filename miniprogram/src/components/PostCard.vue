@@ -232,10 +232,18 @@ function onTap() {
  * 🚨 必须逐个直接命中：uni-app 的 `<text>` 在 H5 渲染成 `uni-text`，
  *   其基础样式带了 `white-space: pre-line` —— **会覆盖从父级继承的 nowrap**，
  *   只写父级 nowrap 是没用的，实测「资讯速递」照样被拆成两行。
+ *
+ * ⚠️ 2026-09-25：通配符 `*` **只有 H5 能用**。微信 WXSS 编译器（wcsc）不支持 `*`，
+ *   会直接报 `error at token '*'` 导致整个小程序**编译失败**（H5 却完全正常）。
+ *   而小程序端 `<text>` 是原生标签、根本没有 `pre-line` 这个问题，
+ *   所以本规则用条件编译**只保留给 H5**。
+ *   🚨 千万别去掉 #ifdef —— 去掉后小程序端就编译不过了。
  */
+/* #ifdef H5 */
 .pc__meta > * {
   white-space: nowrap;
 }
+/* #endif */
 .pc__meta .mp-tag {
   flex: none;
   max-width: 160rpx;
