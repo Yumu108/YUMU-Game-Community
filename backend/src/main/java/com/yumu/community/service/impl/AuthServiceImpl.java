@@ -323,6 +323,8 @@ public class AuthServiceImpl implements AuthService {
         // 角色负责的板块（个人中心展示用）
         vo.setModeratorBoardIds(boardIds);
         vo.setModeratorBoardNames(moderatorBoardService.listBoardNamesByUserId(user.getId()));
+        // 角色负责的游戏 id（前端做「作用域」判定的依据：帖子 gameId 是否在此列表内）
+        vo.setModeratorGameIds(moderatorBoardService.listGameIdsByUserId(user.getId()));
         // 角色负责的游戏名（徽章显示用：「版主 · 三角洲行动」之类）
         vo.setModeratorGameNames(moderatorBoardService.listGameNamesByUserId(user.getId()));
         // 账号修改窗口（从未修改过 或 距上次修改满一年 才可改）

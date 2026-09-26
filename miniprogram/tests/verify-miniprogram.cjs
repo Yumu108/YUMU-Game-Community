@@ -1678,18 +1678,27 @@ const OFFICIAL_UID = 20142
   })
 
   // 取一篇真实公开帖（列表接口 GET /posts 无需登录）
-  const pmPostId = await page.evaluate(async () => {
+  // 🚨 同时取 `gameId` —— 「作用域」断言必须知道这篇帖子属于哪个游戏，
+  //    才能构造「版主负责 A 游戏、帖子在 B 游戏」的越权场景（PM17-19）。
+  const pmPost = await page.evaluate(async () => {
     try {
       const r = await fetch('/api/posts?current=1&size=1').then((x) => x.json())
-      return (((r || {}).data || {}).records || [])[0]?.id || 0
+      const p = (((r || {}).data || {}).records || [])[0] || {}
+      return { id: p.id || 0, gameId: p.gameId || 0, gameName: p.gameName || '' }
     } catch (e) {
-      return 0
+      return { id: 0, gameId: 0, gameName: '' }
     }
   })
+  const pmPostId = pmPost.id
 
   if (!pmPostId) {
     assert('PM0 前置：取到一篇真实帖子 id', false, '拿不到 postId')
   } else {
+    assert(
+      'PM0 前置：取到真实帖子 id 与所属游戏（作用域断言的基准）',
+      !!pmPost.gameId,
+      `post=${pmPostId} game=${pmPost.gameId}(${pmPost.gameName})`
+    )
     /* ---------- ① 游客：真实请求，验证闸门确实在本地 ---------- */
     await page.evaluate(() => localStorage.clear()).catch(() => {})
     const adminBefore = adminReqs.length
@@ -1736,8 +1745,14 @@ const OFFICIAL_UID = 20142
      *    uni-app H5 的 `setStorageSync` 对非字符串值会包一层类型信封，`getStorageSync` 按信封解包；
      *    裸对象读不出来（`getUser()` 直接返回 null ⇒ 页面仍是游客态，PM5 起全线飘红）。
      *    本文件别处操作 `yumu_game_platform_v2` 也是这个格式，可对照。
+     *
+     * @param {string[]} roles 角色 code
+     * @param {{boardNames?:string[], gameIds?:number[], gameNames?:string[]}} [opts]
+     *        `gameIds` / `gameNames` 是**作用域断言的关键**（`scopeOf` 的输入）。
+     *        ⚠️ 现行授权是游戏级（`moderator_board.board_id` 恒 NULL），
+     *        真实后端下发的 `moderatorBoardIds` 对版主是**空的** —— 别在这里填 boardIds 假装有。
      */
-    const injectIdentity = async (roles, boardNames = []) => {
+    const injectIdentity = async (roles, opts = {}) => {
       const isAdminRole = roles.includes('ADMIN')
       const isModRole = roles.includes('MODERATOR')
       stubIdentity = {
@@ -1750,7 +1765,9 @@ const OFFICIAL_UID = 20142
         badgeColor: isAdminRole ? 'danger' : isModRole ? 'warning' : '',
         badgeText: isAdminRole ? '管理员' : isModRole ? '版主' : '',
         moderatorBoardIds: [],
-        moderatorBoardNames: boardNames
+        moderatorBoardNames: opts.boardNames || [],
+        moderatorGameIds: opts.gameIds || [],
+        moderatorGameNames: opts.gameNames || []
       }
       await page.evaluate(
         (u) => localStorage.setItem('yumu_user', JSON.stringify({ type: 'object', data: u })),
@@ -1799,8 +1816,11 @@ const OFFICIAL_UID = 20142
       ;['PM6', 'PM7', 'PM8', 'PM9', 'PM10'].forEach((t) => assert(`${t} 管理员面板断言`, false, '无管理入口'))
     }
 
-    // —— 版主：动作清单必须**少于**管理员（不含置顶，后端 pin 仅 ADMIN）——
-    await injectIdentity(['USER', 'MODERATOR'], ['原神 攻略区'])
+    /* ---------- ③ 版主（**负责该帖所在游戏**）：动作少于管理员 ---------- */
+    await injectIdentity(['USER', 'MODERATOR'], {
+      gameIds: [pmPost.gameId],
+      gameNames: [pmPost.gameName]
+    })
     await goto(`/pages/post/detail?id=${pmPostId}`)
     await waitFor('.author__manage', 10000)
 
@@ -1809,32 +1829,226 @@ const OFFICIAL_UID = 20142
       await sleep(700)
       const modLabels = await page.$$eval('.msheet__opt-label', (els) => els.map((e) => e.innerText))
       assert(
-        'PM11 版主：面板 2 个动作（加精 / 隐藏），**不含置顶**',
+        'PM11 版主（负责该游戏）：面板 2 个动作（加精 / 隐藏），**不含置顶**',
         modLabels.length === 2 && !modLabels.some((t) => t.includes('置顶')),
         modLabels.join(' / ')
       )
       const sub = await text('.msheet__sub')
-      assert('PM12 面板副标题摊开「身份 · 权限范围」', /版主/.test(sub) && /原神/.test(sub), sub)
+      assert(
+        'PM12 面板副标题摊开「身份 · 权限范围」（版主 · 仅限《游戏名》）',
+        /版主/.test(sub) && /仅限《/.test(sub),
+        sub
+      )
       await page.mouse.click(200, 60)
       await sleep(300)
     } else {
-      assert('PM11 版主：面板动作清单', false, '无管理入口')
+      assert('PM11 版主（负责该游戏）：面板动作清单', false, '无管理入口')
       assert('PM12 面板副标题', false, '无管理入口')
     }
 
-    // —— 「我的」页：登录态必须渲染权限卡与徽章 ——
+    /* ---------- ④ 【核心】作用域闸门：版主负责**别的**游戏 ----------
+     * 这是「管理员 vs 版主 区别很大」最本质的一条：
+     * 同一篇帖子，管理员有管理入口、版主（不管这个游戏）连入口都看不到。
+     * 🚨 注意此时 `/admin/**` 的桩**仍然返回 canReview:true** ——
+     *    也就是说这条断言验证的是「本地作用域判定**压过**了后端的肯定答复」，
+     *    而不只是「后端说不行所以不行」。这是刻意做强的。
+     */
+    const canReviewReqs = () => adminReqs.filter((u) => u.includes('/can-review')).length
+    const beforeOut = canReviewReqs()
+    await injectIdentity(['USER', 'MODERATOR'], {
+      gameIds: [pmPost.gameId + 999999],
+      gameNames: ['不存在的游戏']
+    })
+    await goto(`/pages/post/detail?id=${pmPostId}`)
+    await waitFor('.author', 10000)
+    await sleep(900)
+    assert(
+      'PM13 【核心】版主负责别的游戏 → 详情页**没有**管理入口（作用域生效）',
+      (await count('.author__manage')) === 0,
+      `manage=${await count('.author__manage')}`
+    )
+    assert(
+      'PM14 越权时给出原因「不在你的管辖范围」（只藏不说会被当成功能坏了）',
+      (await count('.author__scope')) === 1,
+      `hint=${await count('.author__scope')}`
+    )
+    assert(
+      'PM15 越权时连 can-review 都不发（本地作用域直接判掉，0 请求）',
+      canReviewReqs() === beforeOut,
+      `新增 ${canReviewReqs() - beforeOut} 条`
+    )
+
+    /* ---------- ⑤ 审核闭环：待审帖的「审核通过 / 驳回」 ----------
+     * 版主的**本职工作**。线上不一定正好有 status=2 的帖子，
+     * 所以桩掉详情响应造一篇待审帖，专门验证 UI 接线。
+     * （「哪个角色该有哪些动作」的后端依据由 tests/roles.test.mjs C9-C15 核对注解。）
+     */
+    await injectIdentity(['USER', 'MODERATOR'], {
+      gameIds: [pmPost.gameId],
+      gameNames: [pmPost.gameName]
+    })
+    const detailRoute = /\/api\/posts\/\d+$/
+    await page.route(detailRoute, (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          code: 200,
+          message: 'ok',
+          data: {
+            id: pmPostId,
+            userId: 1,
+            gameId: pmPost.gameId,
+            gameName: pmPost.gameName,
+            boardId: 1,
+            boardName: '讨论区',
+            title: '待审帖（回归桩数据）',
+            content: '这是一条用于回归验证审核闭环的待审内容。',
+            status: 2,
+            viewCount: 0,
+            replyCount: 0,
+            likeCount: 0,
+            isTop: 0,
+            isEssence: 0,
+            createdAt: '2026-09-26T10:00:00',
+            authorName: '回归作者',
+            authorAvatar: '',
+            tags: []
+          }
+        })
+      })
+    )
+    await goto(`/pages/post/detail?id=${pmPostId}`)
+    await waitFor('.author__manage', 10000)
+
+    if ((await count('.author__manage')) === 1) {
+      await page.click('.author__manage')
+      await sleep(700)
+      const pendLabels = await page.$$eval('.msheet__opt-label', (els) => els.map((e) => e.innerText))
+      assert(
+        'PM16 【核心】版主 / 待审帖 → 出现「审核通过」与「驳回」（审核是版主本职）',
+        pendLabels.some((t) => t.includes('审核通过')) && pendLabels.some((t) => t.includes('驳回')),
+        pendLabels.join(' / ')
+      )
+      assert(
+        'PM17 待审帖面板仍**不含置顶**（管理员专属），也不含「恢复」（与通过语义重叠）',
+        !pendLabels.some((t) => t.includes('置顶')) && !pendLabels.some((t) => t.includes('恢复')),
+        pendLabels.join(' / ')
+      )
+      assert(
+        'PM18 待审帖：批准/驳回排在加精之前（先完成审核再看优化）',
+        pendLabels.findIndex((t) => t.includes('审核通过')) <
+          pendLabels.findIndex((t) => t.includes('加精')),
+        pendLabels.join(' / ')
+      )
+
+      // 点「驳回」→ 必须切到**理由输入面板**（后端 RejectPostRequest.reason 必填）
+      const opts = await page.$$('.msheet__opt')
+      const rejectIdx = pendLabels.findIndex((t) => t.includes('驳回'))
+      if (rejectIdx >= 0 && opts[rejectIdx]) {
+        await opts[rejectIdx].click()
+        await sleep(600)
+        assert(
+          'PM19 点「驳回」→ 切到理由输入面板（理由必填，不能直接提交）',
+          (await count('.msheet__reason-input')) === 1,
+          `input=${await count('.msheet__reason-input')}`
+        )
+        assert(
+          'PM20 理由为空时「确认驳回」呈禁用态（视觉 + 逻辑双重拦截）',
+          (await count('.msheet__btn--off')) === 1,
+          `off=${await count('.msheet__btn--off')}`
+        )
+        // 填入理由后应解除禁用（v-model 生效）；uni-app H5 的 textarea 外面包了一层 uni-textarea
+        const ta = (await count('.msheet__reason-input textarea'))
+          ? '.msheet__reason-input textarea'
+          : '.msheet__reason-input'
+        try {
+          await page.fill(ta, '内容与板块主题不符，请补充具体游戏版本后重新提交')
+          await sleep(400)
+          assert(
+            'PM21 填入理由后解除禁用（v-model 双向绑定生效）',
+            (await count('.msheet__btn--off')) === 0,
+            `off=${await count('.msheet__btn--off')}`
+          )
+        } catch (e) {
+          assert('PM21 填入理由后解除禁用（v-model 双向绑定生效）', false, `填写失败：${e.message}`)
+        }
+      } else {
+        assert('PM19 点「驳回」→ 切到理由输入面板', false, '找不到驳回项')
+        assert('PM20 理由为空时「确认驳回」呈禁用态', false, '找不到驳回项')
+        assert('PM21 填入理由后解除禁用', false, '找不到驳回项')
+      }
+    } else {
+      ;['PM16', 'PM17', 'PM18', 'PM19', 'PM20', 'PM21'].forEach((t) =>
+        assert(`${t} 待审帖审核闭环断言`, false, '无管理入口')
+      )
+    }
+    await page.unroute(detailRoute)
+
+    /* ---------- ⑥ 「我的」页：管辖范围 + 权限矩阵（版主） ---------- */
+    await injectIdentity(['USER', 'MODERATOR'], {
+      gameIds: [pmPost.gameId],
+      gameNames: [pmPost.gameName]
+    })
     await goto('/pages/my/my')
     assert(
-      'PM13 登录态：「我的」页渲染权限卡与角色徽章',
+      'PM22 登录态：「我的」页渲染权限卡与角色徽章',
       (await count('.perm')) === 1 && (await count('.user__badge')) === 1,
       `perm=${await count('.perm')} badge=${await count('.user__badge')}`
     )
-    const badgeTxt = (await text('.user__badge')).trim()
-    assert('PM14 徽章文案来自后端 badgeText（= 版主）', badgeTxt === '版主', badgeTxt)
-    const roleTxt = (await text('.perm__role')).trim()
-    assert('PM15 权限卡角色标签与后端 roles 一致（= 版主）', roleTxt === '版主', roleTxt)
-    const scopeTxt = await text('.perm__scope')
-    assert('PM16 权限范围摊开负责板块（来自 moderatorBoardNames）', /原神/.test(scopeTxt), scopeTxt)
+    assert('PM23 徽章文案来自后端 badgeText（= 版主）', (await text('.user__badge')).trim() === '版主', await text('.user__badge'))
+    assert('PM24 权限卡角色标签与后端 roles 一致（= 版主）', (await text('.perm__role')).trim() === '版主', await text('.perm__role'))
+
+    const modScopeVal = (await text('.scope__val')).trim()
+    const modScopeFull = await text('.scope__full')
+    assert(
+      'PM25 管辖范围块显示负责的**游戏**（游戏级授权；不是板块、更不是「暂未分配」）',
+      modScopeVal === pmPost.gameName && /仅限《/.test(modScopeFull),
+      `val=${modScopeVal} full=${modScopeFull}`
+    )
+    assert(
+      'PM26 回归：版主不再被误报「暂未分配负责范围」（原 bug 用错了 moderatorBoardNames）',
+      !/暂未分配/.test(modScopeFull),
+      modScopeFull
+    )
+
+    const modRows = await count('.mx__row')
+    const modOff = await count('.mx__row--off')
+    assert('PM27 版主「我的」页出现权限矩阵', modRows > 0, `rows=${modRows}`)
+    assert(
+      'PM28 版主矩阵：11 项能力中 6 项不可用（置顶/转待审/游戏库/用户角色/审计/公告）',
+      modRows === 11 && modOff === 6,
+      `rows=${modRows} off=${modOff}`
+    )
+    assert(
+      'PM29 矩阵计数「可执行 5 / 11 项」—— 「两个角色区别很大」的量化表达',
+      /5\s*\/\s*11/.test(await text('.mx__count')),
+      await text('.mx__count')
+    )
+    assert(
+      'PM30 不可用项标注「仅管理员可执行」',
+      /仅管理员可执行/.test(await page.$eval('.mx__row--off', (el) => el.innerText)),
+      (await page.$eval('.mx__row--off', (el) => el.innerText)).replace(/\s+/g, ' ')
+    )
+
+    /* ---------- ⑦ 「我的」页：管理员做对照（同一页面、不同数字） ---------- */
+    await injectIdentity(['USER', 'ADMIN'])
+    await goto('/pages/my/my')
+    assert(
+      'PM31 管理员矩阵：11 项全部可用（一行 ⊘ 都没有）',
+      (await count('.mx__row')) === 11 && (await count('.mx__row--off')) === 0,
+      `rows=${await count('.mx__row')} off=${await count('.mx__row--off')}`
+    )
+    assert(
+      'PM32 管理员计数「可执行 11 / 11 项」（对比版主的 5 / 11）',
+      /11\s*\/\s*11/.test(await text('.mx__count')),
+      await text('.mx__count')
+    )
+    assert(
+      'PM33 管理员管辖范围显示「全站」（对比版主的「仅限《某个游戏》」）',
+      (await text('.scope__val')).trim() === '全站',
+      await text('.scope__val')
+    )
 
     await page.screenshot({ path: path.join(SHOTS, 'PM-permission.png') })
     await page.unroute('**/api/admin/**')

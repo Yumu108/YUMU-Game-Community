@@ -20,13 +20,18 @@ import { fileURLToPath } from 'node:url'
 import {
   ROLE,
   TONE,
+  SCOPE,
   identityOf,
   hasRole,
+  scopeOf,
   canSeeManageEntry,
   shouldShowManageEntry,
   actionsFor,
   permissionSummary,
-  badgeMeta
+  badgeMeta,
+  CAPABILITIES,
+  capabilityMatrix,
+  capabilityStats
 } from '../src/utils/roles.js'
 
 let pass = 0
@@ -57,6 +62,8 @@ function vo(over = {}) {
     badgeText: null,
     moderatorBoardIds: [],
     moderatorBoardNames: [],
+    moderatorGameIds: [],
+    moderatorGameNames: [],
     ...over
   }
 }
@@ -198,30 +205,98 @@ const keys = (roles, nonPublic) => actionsFor(roles, { nonPublic }).map((a) => a
   ok('C8 每个动作都带 key/label/short/tip（UI 与弹层都能直接用）', miss.length === 0, JSON.stringify(miss))
 }
 
+{
+  /* ---- 审核闭环：待审帖（status=2）才出现的「批准 / 驳回」 ----
+   * 🚨 这一组的关键是**批准/驳回必须依赖 canReview**，而加精/隐藏不依赖 —— 因为
+   *    后端 `approve`/`reject` 走 `canReviewPost`（多一条「自己不能审自己」），
+   *    而 `essence`/`hide` 走 `assertCanModeratePost`（没这条）。
+   *    所以同一个帖子上，管理员看自己发的帖：有加精/隐藏、**没有**批准/驳回。
+   */
+  const pkeys = (roles, over = {}) =>
+    actionsFor(roles, { pending: true, ...over }).map((a) => a.key).join(',')
+
+  ok(
+    'C9 管理员 / 待审帖（可审）→ 置顶+通过+驳回+加精，且**不给恢复**（与「通过」语义重叠）',
+    pkeys(['ADMIN'], { canReview: true }) === 'pin,approve,reject,essence',
+    pkeys(['ADMIN'], { canReview: true })
+  )
+  ok(
+    'C10 版主 / 待审帖（可审）→ 通过+驳回+加精（**不含置顶**，审核是版主本职）',
+    pkeys(['MODERATOR'], { canReview: true }) === 'approve,reject,essence',
+    pkeys(['MODERATOR'], { canReview: true })
+  )
+  ok(
+    'C11 管理员 / 待审帖但 canReview=false（**就是自己发的**）→ 只剩置顶+加精，不给通过/驳回',
+    pkeys(['ADMIN'], { canReview: false }) === 'pin,essence',
+    pkeys(['ADMIN'], { canReview: false })
+  )
+  ok(
+    'C12 非待审帖绝不出现通过/驳回（pending 未传时）',
+    !actionsFor(['ADMIN'], { nonPublic: true }).some((a) => a.key === 'approve' || a.key === 'reject')
+  )
+  ok(
+    'C13 「驳回」标记 needsReason ⇒ 调用方据此弹理由输入框（后端 reason 必填）',
+    actionsFor(['ADMIN'], { pending: true, canReview: true }).find((a) => a.key === 'reject')
+      ?.needsReason === true
+  )
+  ok(
+    'C14 「置顶」标记 adminOnly ⇒ 矩阵 / 面板可标注「仅管理员」',
+    actionsFor(['ADMIN'], {}).find((a) => a.key === 'pin')?.adminOnly === true
+  )
+  ok(
+    'C15 待审帖 + 隐藏/恢复互斥不变量（含 pending 维度也成立）',
+    [
+      [['ADMIN'], { pending: true, canReview: true }],
+      [['MODERATOR'], { pending: true, canReview: true }],
+      [['ADMIN'], { pending: false, nonPublic: true }],
+      [['MODERATOR'], { nonPublic: false }]
+    ].every(([r, ctx]) => {
+      const k = actionsFor(r, ctx).map((a) => a.key)
+      return !(k.includes('hide') && k.includes('restore'))
+    })
+  )
+}
+
 /* ==================== D. permissionSummary：权限画像 ==================== */
 console.log('===== D. permissionSummary（「我的权限」卡片）=====')
 
 {
   const s = permissionSummary(vo({ roles: ['USER', 'ADMIN'] }))
   ok(
-    'D1 管理员画像（配色沿用后端 danger 词表）',
-    s.label === '管理员' && s.color === TONE.ADMIN && s.scope === '全站范围' && s.can.length >= 3,
+    'D1 管理员画像（配色沿用后端 danger 词表；范围是全站所有游戏与板块）',
+    s.label === '管理员' &&
+      s.color === TONE.ADMIN &&
+      s.scope === '全站范围 · 所有游戏与板块' &&
+      s.scopeShort === '全站' &&
+      s.can.length >= 3,
     `${s.label} / ${s.color} / ${s.scope}`
   )
 }
 
 {
-  const s = permissionSummary(vo({ roles: ['MODERATOR'], moderatorBoardNames: ['原神 攻略区'] }))
+  /* 🚨 这一条是 2026-09-26 修正的**真 bug**：
+   *    原来用 `moderatorBoardNames` 取范围，但现行授权是**游戏级**
+   *    （`setModeratorBoards` 把 `board_id` 统一置 NULL）⇒ `listBoardNamesByUserId`
+   *    查出来恒为空 ⇒ 明明是版主却被显示成「暂未分配负责范围」。
+   *    正确来源是 `moderatorGameNames`（游戏名）。
+   */
+  const s = permissionSummary(vo({ roles: ['MODERATOR'], moderatorGameNames: ['原神'] }))
   ok(
-    'D2 版主画像：把负责板块名摊开（这是最直观的「权限范围」证据）',
-    s.label === '版主' && s.color === TONE.MODERATOR && s.scope.includes('原神 攻略区'),
-    `${s.label} / ${s.scope}`
+    'D2 版主画像：用**负责游戏名**（游戏级授权）而非板块名 —— 修掉「版主显示成暂未分配」的 bug',
+    s.label === '版主' && s.color === TONE.MODERATOR && s.scope.includes('原神') && s.scopeShort === '原神',
+    `${s.label} / ${s.scope} / short=${s.scopeShort}`
   )
 }
 
 {
-  const s = permissionSummary(vo({ roles: ['MODERATOR'], moderatorBoardNames: [] }))
-  ok('D3 版主但无板块 → 如实说「暂未分配」，不假装有权限', s.scope === '暂未分配负责板块', s.scope)
+  // 老数据兼容：只有 boardNames 没有 gameNames 时，仍应展示板块名而不是「未分配」
+  const s = permissionSummary(vo({ roles: ['MODERATOR'], moderatorBoardNames: ['攻略区'] }))
+  ok('D2b 老数据（只有板块名）仍能展示范围，不误报「未分配」', s.scope.includes('攻略区'), s.scope)
+}
+
+{
+  const s = permissionSummary(vo({ roles: ['MODERATOR'] }))
+  ok('D3 版主但确实无授权 → 如实说「暂未分配」，不假装有权限', s.scope === '暂未分配负责游戏', s.scope)
 }
 
 {
@@ -267,6 +342,9 @@ const ctrlPath = fileURLToPath(
 {
   // F1: actionsFor 可能产出的 key 全集，必须与 api/admin.js 的 runManageAction 分发表**完全一致**。
   //     （防的是「UI 冒出个『恢复』按钮，而接口封装里根本没实现」）
+  // 🚨 扫的时候要把 pending / canReview 两个维度也扫上 —— 否则 approve / reject 只在
+  //    待审帖出现，用旧的「只扫 nonPublic」写法会漏掉它们，然后这条断言就**空转**了
+  //    （两边都是旧集合所以绿，删掉新动作也照样绿）。
   const src = fs.readFileSync(adminApiPath, 'utf8')
   const m = src.match(/const TABLE = \{([\s\S]*?)\}/)
   const declared = m ? [...m[1].matchAll(/(\w+)\s*:/g)].map((x) => x[1]).sort() : []
@@ -274,13 +352,17 @@ const ctrlPath = fileURLToPath(
   const union = new Set()
   ;[['USER'], ['MODERATOR'], ['ADMIN'], ['ADMIN', 'MODERATOR'], []].forEach((roles) => {
     ;[false, true].forEach((np) => {
-      actionsFor(roles, { nonPublic: np }).forEach((a) => union.add(a.key))
+      ;[false, true].forEach((pending) => {
+        ;[false, true].forEach((canReview) => {
+          actionsFor(roles, { nonPublic: np, pending, canReview }).forEach((a) => union.add(a.key))
+        })
+      })
     })
   })
   const produced = [...union].sort()
 
   ok(
-    'F1 动作 key 与 api/admin.js 分发表完全一致（不多不少）',
+    'F1 动作 key 与 api/admin.js 分发表完全一致（不多不少，含 approve/reject）',
     declared.length > 0 && produced.join(',') === declared.join(','),
     `UI 产出=[${produced.join(',')}]  接口表=[${declared.join(',')}]`
   )
@@ -379,14 +461,185 @@ console.log('===== G. shouldShowManageEntry（入口闸门）=====')
   // 不变量：**显示入口 ⟹ 本地角色闸门必已通过**。
   // 若有人把 shouldShowManageEntry 简化成「只看 canReview」，普通用户就会开始发 can-review
   // 并白挨 403 —— 这条会立刻报警。
+  // 🚨 scope 维度必须一起扫：只扫 canReview 的话，「版主跨游戏也被放行」这类回归抓不到。
   const combos = [['USER'], [], ['ADMIN'], ['MODERATOR'], ['USER', 'ADMIN'], ['USER', 'MODERATOR']]
-  const viol = combos.filter((r) =>
-    [true, false].some((cr) => shouldShowManageEntry(r, cr) && !canSeeManageEntry(r))
+  const scopes = [undefined, SCOPE.ALL, SCOPE.IN, SCOPE.OUT, SCOPE.UNKNOWN, SCOPE.NONE]
+  const viol = []
+  combos.forEach((r) => {
+    scopes.forEach((sc) => {
+      ;[true, false].forEach((cr) => {
+        if (shouldShowManageEntry(r, cr, sc) && !canSeeManageEntry(r)) viol.push([r, cr, sc])
+      })
+    })
+  })
+  ok(
+    'G7 不变量：显示入口 ⟹ 本地角色闸门已通过（6 角色 × 6 范围 × 2 探测 = 72 组合）',
+    viol.length === 0,
+    viol.length ? `违例：${JSON.stringify(viol)}` : '72 种组合全部满足'
+  )
+}
+
+{
+  /* ---- 作用域闸门（2026-09-26 第二轮新增） ----
+   * 这一组钉死「管理员 vs 版主」最本质的差异：**管辖范围**。
+   */
+  ok(
+    'G8 版主 + scope=out（非所辖游戏）→ **不显示入口**，哪怕探测说 true 也不显示（拒绝优先）',
+    shouldShowManageEntry(['MODERATOR'], true, SCOPE.OUT) === false
   )
   ok(
-    'G7 不变量：显示入口 ⟹ 本地角色闸门已通过（普通用户绝不会走到探测）',
-    viol.length === 0,
-    viol.length ? `违例：${JSON.stringify(viol)}` : '六种角色组合均满足'
+    'G9 版主 + scope=in（所辖游戏内的**自己的帖子**，canReview=false）→ 仍显示（加精/隐藏仍可做）',
+    shouldShowManageEntry(['MODERATOR'], false, SCOPE.IN) === true
+  )
+  ok(
+    'G10 版主 + scope=unknown（老接口没下发 gameIds）→ 回退到后端探测，不误杀',
+    shouldShowManageEntry(['MODERATOR'], true, SCOPE.UNKNOWN) === true &&
+      shouldShowManageEntry(['MODERATOR'], false, SCOPE.UNKNOWN) === false
+  )
+  ok('G11 管理员 + scope=out 不可能出现，但即便传入也显示（ADMIN 直通优先）', shouldShowManageEntry(['ADMIN'], false, SCOPE.OUT) === true)
+}
+
+/* ==================== H. scopeOf：管辖范围判定 ====================
+ * 🚨 本组对应后端 `ModeratorBoardService#covers(userId, gameId, boardId)`。
+ *    判定错的方向有两种，**危险程度不同**：
+ *      · 把 out 判成 in → 版主看到不该有的入口（点了 403，体验差但安全）；
+ *      · 把 in 判成 out  → 版主**丢入口**（看起来像功能坏了，实测时最容易误判成 bug）。
+ *    所以 UNKNOWN 必须回退探测，绝不能当成 out。
+ */
+console.log('===== H. scopeOf（管辖范围：ADMIN 全站 vs 版主单游戏）=====')
+
+{
+  ok(
+    'H1 管理员 → 全站（处处可管）',
+    scopeOf(vo({ roles: ['ADMIN'] }), { gameId: 999 }) === SCOPE.ALL
+  )
+  ok('H2 普通用户 → none', scopeOf(vo({ roles: ['USER'] }), { gameId: 2 }) === SCOPE.NONE)
+  ok('H3 未登录 → none', scopeOf({}, { gameId: 2 }) === SCOPE.NONE)
+}
+
+{
+  const mod = vo({ roles: ['MODERATOR'], moderatorGameIds: [19], moderatorGameNames: ['三角洲行动'] })
+  ok('H4 版主 + 帖子在同游戏 → in', scopeOf(mod, { gameId: 19 }) === SCOPE.IN)
+  ok(
+    'H5 版主 + 帖子在**别的**游戏 → out（这是「权限作用域」最核心的一条）',
+    scopeOf(mod, { gameId: 2 }) === SCOPE.OUT
+  )
+  ok(
+    'H6 gameId 类型归一化：后端给 "19"（字符串）也能命中',
+    scopeOf(mod, { gameId: '19' }) === SCOPE.IN
+  )
+  ok('H7 帖子没带 gameId → unknown（交给后端判，不能当 out）', scopeOf(mod, {}) === SCOPE.UNKNOWN)
+}
+
+{
+  // 老接口兜底：只有游戏名、没有 gameIds
+  const legacy = vo({ roles: ['MODERATOR'], moderatorGameNames: ['三角洲行动'] })
+  ok('H8 无 gameIds 时按游戏名兜底匹配', scopeOf(legacy, { gameName: '三角洲行动' }) === SCOPE.IN)
+  ok('H9 名字也对不上 → out', scopeOf(legacy, { gameName: '原神' }) === SCOPE.OUT)
+  ok(
+    'H10 既无 gameIds 也无 gameNames → unknown（宁可回退探测，不可误杀）',
+    scopeOf(vo({ roles: ['MODERATOR'] }), { gameId: 2 }) === SCOPE.UNKNOWN
+  )
+}
+
+{
+  // 与后端一致：ADMIN 即使被分配了 moderator_board 也按全站处理（covers 里 ADMIN 直通）
+  ok(
+    'H11 同时是 ADMIN 与 MODERATOR → 按 ADMIN 全站（与后端 isAdmin 直通一致）',
+    scopeOf(vo({ roles: ['ADMIN', 'MODERATOR'], moderatorGameIds: [19] }), { gameId: 2 }) === SCOPE.ALL
+  )
+}
+
+/* ==================== I. capabilityMatrix：权限矩阵 ====================
+ * 「我的权限」卡里那张逐条打勾的表 —— 管理员 11/11、版主 5/11，
+ * 这个**数字差**本身就是「两个角色区别很大」的最直接表达。
+ */
+console.log('===== I. capabilityMatrix（权限矩阵）=====')
+
+const mAdmin = capabilityMatrix(['USER', 'ADMIN'])
+const mMod = capabilityMatrix(['MODERATOR'])
+
+{
+  ok(
+    'I1 管理员 → 全部可用（allowed 全真）',
+    mAdmin.length > 0 && mAdmin.every((c) => c.allowed === true),
+    `${mAdmin.filter((c) => c.allowed).length}/${mAdmin.length}`
+  )
+  const st = capabilityStats(['ADMIN'])
+  ok('I2 管理员计数 = 全部项数', st.allowed === st.total && st.total === mAdmin.length, JSON.stringify(st))
+}
+
+{
+  const allowed = mMod.filter((c) => c.allowed).map((c) => c.key).sort()
+  const denied = mMod.filter((c) => !c.allowed).map((c) => c.key).sort()
+  ok(
+    'I3 版主只能做审核 / 加精 / 隐藏 / 回复 / 举报这 5 项',
+    allowed.join(',') === 'essence,hide,reply,report,review',
+    `allowed=[${allowed.join(',')}]`
+  )
+  ok(
+    'I4 版主做不了置顶 / 转待审 / 游戏库 / 用户角色 / 审计日志 / 公告（6 项仅管理员）',
+    denied.join(',') === 'audit,game,notice,pending,pin,user',
+    `denied=[${denied.join(',')}]`
+  )
+  ok(
+    'I5 管理员 11 项 vs 版主 5 项 —— 「区别很大」的量化表达',
+    mAdmin.length === 11 && allowed.length === 5,
+    `管理员 ${mAdmin.length} / 版主 ${allowed.length}`
+  )
+  ok(
+    'I6 版主每一项可用能力都带 scoped=true（版主没有任何「全站生效」的能力）',
+    mMod.filter((c) => c.allowed).every((c) => c.scoped === true)
+  )
+  ok(
+    'I7 adminOnly 标记只落在「管理员有、版主没有」的项上',
+    mMod.filter((c) => c.adminOnly && c.allowed).length === 0 &&
+      mAdmin.filter((c) => c.adminOnly).length === 6
+  )
+  ok(
+    'I8 普通用户 → 全部不可用（调用方据此不渲染整张表）',
+    capabilityMatrix(['USER']).every((c) => c.allowed === false)
+  )
+  ok(
+    'I9 每项都带 name/api/note，UI 不会渲染出 undefined',
+    mAdmin.every((c) => c.name && c.api && typeof c.note === 'string' && typeof c.mp === 'boolean')
+  )
+}
+
+if (!fs.existsSync(ctrlPath)) {
+  skipped('I10-I11 矩阵 ↔ 后端端点核对', '未找到 backend/ 源码（只解压了小程序）')
+} else {
+  const ctrl = fs.readFileSync(ctrlPath, 'utf8')
+
+  /**
+   * 端内**真的接了按钮**的能力 → 后端端点必须存在。
+   * 🚨 这张表是「I10 防臆造接口」的对照物：谁把矩阵里标成「端内可操作」却根本没写后端端点，
+   *    这条会立刻红。反向也查（表里的 key 若已不在 mp=true 集合里，说明表过期了）。
+   */
+  const MP_ENDPOINTS = {
+    review: ['/posts/{id}/approve', '/posts/{id}/reject'],
+    essence: ['/posts/{id}/essence'],
+    hide: ['/posts/{id}/hide', '/posts/{id}/restore'],
+    pin: ['/posts/{id}/pin']
+  }
+
+  const mpKeys = mAdmin.filter((c) => c.mp).map((c) => c.key).sort()
+  const missing = mpKeys.filter(
+    (k) => !MP_ENDPOINTS[k] || MP_ENDPOINTS[k].some((p) => !ctrl.includes(p))
+  )
+  ok(
+    'I10 矩阵里标「端内可操作」的每一项，后端都有真实端点（防臆造接口）',
+    missing.length === 0 && mpKeys.join(',') === 'essence,hide,pin,review',
+    missing.length ? `缺端点：${missing.join(',')}` : `端内项=[${mpKeys.join(',')}]`
+  )
+
+  const stale = Object.keys(MP_ENDPOINTS).filter((k) => !mpKeys.includes(k))
+  ok('I11 端点对照表不过期（没有「已从端内下线却还留着的 key」）', stale.length === 0, stale.join(','))
+
+  // 类级注解仍是 ADMIN/MODERATOR 双角色 —— 否则版主整条链路的前提就没了
+  ok(
+    'I12 类级注解仍是 hasAnyRole(ADMIN,MODERATOR)：版主能进 /admin/**',
+    /hasAnyRole\(\s*'ADMIN'\s*,\s*'MODERATOR'\s*\)/.test(ctrl)
   )
 }
 

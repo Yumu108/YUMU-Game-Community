@@ -33,9 +33,10 @@
     </view>
 
     <!--
-      我的权限（2026-09-26 新增）—— 作业要求 D 里「权限方案」在小程序端的**可见载体**。
+      我的权限（2026-09-26 新增，同日增强）—— 作业要求 D 里「权限方案」在小程序端的**可见载体**。
       🚨 数据全部来自后端（登录响应与 `GET /auth/me` 的 `UserInfoVO`），端内**不做任何权限推理**：
-        `roles` → 角色、`badgeText`/`badgeColor` → 徽章、`moderatorBoardNames` → 负责范围。
+        `roles` → 角色、`badgeText`/`badgeColor` → 徽章、
+        `moderatorGameNames`/`moderatorGameIds` → 负责范围（游戏级授权）。
         要加展示项，先确认后端 VO 真有那个字段，别在前端自己拼结论。
       ⚠️ 这张卡是「说明我有什么权限」，不是「我能不能做」的判据 ——
         真正的判定在后端（`@PreAuthorize` / `canModeratePost`），端内只在详情页按角色决定显示什么。
@@ -45,11 +46,55 @@
         <text class="perm__title">我的权限</text>
         <text class="perm__role" :class="'perm__role--' + perm.color">{{ perm.label }}</text>
       </view>
-      <text class="perm__scope">{{ perm.scope }}</text>
+
+      <!--
+        管辖范围（2026-09-26 增强）—— ADMIN 与 MODERATOR 差异**最直观**的一处：
+          管理员 = 全站所有游戏；版主 = 只有自己负责的那**一个**游戏
+          （后端 `ModeratorBoardServiceImpl#MAX_GAMES_PER_MOD = 1`）。
+        🚨 取值必须用 `moderatorGameNames`（游戏级授权），不是 `moderatorBoardNames` ——
+          后者在现行授权模型下恒为空，会把版主显示成「暂未分配负责范围」。
+      -->
+      <view class="scope" :class="'scope--' + perm.color">
+        <text class="scope__label">管辖范围</text>
+        <text class="scope__val">{{ perm.scopeShort }}</text>
+        <text class="scope__full">{{ perm.scope }}</text>
+      </view>
+
       <view v-for="(c, i) in perm.can" :key="i" class="perm__row">
         <text class="perm__dot">·</text>
         <text class="perm__txt">{{ c }}</text>
       </view>
+
+      <!--
+        权限矩阵（2026-09-26 新增）—— 「权限方案」最标准的呈现方式：把后端每一项权力摊平，
+        逐条标出**当前角色能不能用**。`✓` 可用 / `⊘` 无权限（灰显 + 标注「仅管理员」）。
+        🚨 表里的接口路径是后端**真实存在**的，单测会读 `AdminController.java` 源码核对
+          （`tests/roles.test.mjs` F 组）—— 别在这里写不存在的接口，一写就红。
+      -->
+      <view v-if="matrix.length" class="mx">
+        <view class="mx__head">
+          <text class="mx__title">权限矩阵</text>
+          <text class="mx__count">可执行 {{ capStats.allowed }} / {{ capStats.total }} 项</text>
+        </view>
+        <view
+          v-for="c in matrix"
+          :key="c.key"
+          class="mx__row"
+          :class="{ 'mx__row--off': !c.allowed }"
+        >
+          <text class="mx__mark" :class="c.allowed ? 'mx__mark--on' : 'mx__mark--off'">
+            {{ c.allowed ? '✓' : '⊘' }}
+          </text>
+          <view class="mx__body">
+            <text class="mx__name">{{ c.name }}</text>
+            <text class="mx__tag">{{ capTag(c) }}</text>
+          </view>
+        </view>
+        <text class="mx__note">
+          逐条对应后端真实接口（形如 POST /admin/posts/{id}/pin）。「限管辖范围」= 版主只能操作自己负责游戏下的内容；「主站操作」= 该项只在主站管理后台提供，端内未接按钮。
+        </text>
+      </view>
+
       <view v-if="canManageEntry" class="perm__hint">
         <text class="perm__hint-txt">
           帖子详情页会出现「管理」入口（{{ manageHint }}）——只有你负责的范围才会真正放行。
@@ -162,7 +207,7 @@ import { logout, fetchMe } from '../../api/auth'
 import { clearSession } from '../../api/request'
 import { ensureIndex, clearIndexCache } from '../../utils/guideIndex'
 import { formatTime } from '../../utils/format'
-import { permissionSummary, badgeMeta, canSeeManageEntry, actionsFor } from '../../utils/roles'
+import { permissionSummary, badgeMeta, canSeeManageEntry, actionsFor, capabilityMatrix } from '../../utils/roles'
 import Skeleton from '../../components/Skeleton.vue'
 import EmptyState from '../../components/EmptyState.vue'
 import ErrorState from '../../components/ErrorState.vue'
@@ -199,6 +244,35 @@ const manageHint = computed(() =>
     .map((a) => a.short)
     .join(' / ')
 )
+
+/**
+ * 权限矩阵：把后端每一项能力摊平，逐条标「当前角色能不能用」。
+ *
+ * ⚠️ 只有 ADMIN / MODERATOR 才渲染 —— 普通用户看一张 11 行全是 ⊘ 的表没有意义
+ *    （`capabilityStats` 也能算出 0/11，但那是噪音不是信息）。
+ */
+const matrix = computed(() => {
+  const roles = (user.value && user.value.roles) || []
+  return canSeeManageEntry(roles) ? capabilityMatrix(roles) : []
+})
+
+/** 「可执行 N / M 项」计数 —— 管理员 11 项 vs 版主 5 项，这个数字本身就是差异的直接表达 */
+const capStats = computed(() => {
+  const list = matrix.value
+  return { total: list.length, allowed: list.filter((c) => c.allowed).length }
+})
+
+/**
+ * 给矩阵每行拼一句说明。
+ * 三个维度都要说清：**能否用**（allowed）、**范围**（scoped）、**在哪操作**（mp）。
+ * 「主站操作」如实标注比假装端内都有更经得起追问 —— 举报列表、用户管理这些
+ * 重后台操作本来就该在主站做。
+ */
+function capTag(c) {
+  if (!c.allowed) return '仅管理员可执行'
+  const scopeTxt = c.scoped ? '限管辖范围' : '全站生效'
+  return `${scopeTxt} · ${c.mp ? '端内可操作' : '主站操作'}`
+}
 
 /**
  * 静默校正登录态 —— 主要用途是**给旧登录态补角色字段**。
@@ -482,11 +556,113 @@ function onClear() {
   background: rgba(124, 92, 255, 0.16);
   color: #cbbdff;
 }
-.perm__scope {
+/*
+  管辖范围块（2026-09-26 增强）—— 管理员「全站」vs 版主「仅限《XX》」，
+  两个账号并排看，差异一目了然。配色沿用徽章那套词（后端 BadgeService 口径）。
+  ⚠️ 这里已取代原来的单行 `.perm__scope`（那个太容易被当成一行普通说明略过）。
+*/
+.scope {
+  margin: 4rpx 0 16rpx;
+  padding: 16rpx 20rpx;
+  border-radius: 14rpx;
+  background: #201c2e;
+  border: 1rpx solid #2c2740;
+}
+.scope__label {
   display: block;
-  margin-bottom: 14rpx;
-  font-size: 22rpx;
-  color: #a49eb6;
+  font-size: 20rpx;
+  color: #8b8599;
+}
+.scope__val {
+  display: block;
+  margin-top: 6rpx;
+  font-size: 30rpx;
+  font-weight: 600;
+  color: #e9e7f2;
+}
+.scope__full {
+  display: block;
+  margin-top: 6rpx;
+  font-size: 21rpx;
+  color: #8b8599;
+}
+.scope--danger {
+  border-color: rgba(240, 90, 90, 0.35);
+}
+.scope--danger .scope__val {
+  color: #ff9a9a;
+}
+.scope--warning {
+  border-color: rgba(240, 159, 39, 0.35);
+}
+.scope--warning .scope__val {
+  color: #f0b45f;
+}
+
+/* ==================== 权限矩阵（✓ 可用 / ⊘ 仅管理员） ==================== */
+.mx {
+  margin-top: 18rpx;
+  padding-top: 16rpx;
+  border-top: 1rpx solid #2a2538;
+}
+.mx__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: 12rpx;
+}
+.mx__title {
+  font-size: 25rpx;
+  font-weight: 600;
+  color: #e9e7f2;
+}
+.mx__count {
+  flex: none;
+  font-size: 21rpx;
+  color: #cbbdff;
+}
+.mx__row {
+  display: flex;
+  align-items: flex-start;
+  padding: 10rpx 0;
+}
+/* 无权限的项整体降透明度 —— 与绿色 ✓ 形成对比，扫一眼就知道哪些做不了 */
+.mx__row--off {
+  opacity: 0.45;
+}
+.mx__mark {
+  flex: none;
+  width: 34rpx;
+  font-size: 24rpx;
+  line-height: 1.5;
+}
+.mx__mark--on {
+  color: #5dcaa5;
+}
+.mx__mark--off {
+  color: #6f6982;
+}
+.mx__body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.mx__name {
+  font-size: 23rpx;
+  color: #d9d6e6;
+}
+.mx__tag {
+  margin-top: 2rpx;
+  font-size: 19rpx;
+  color: #6f6982;
+}
+.mx__note {
+  display: block;
+  margin-top: 12rpx;
+  font-size: 19rpx;
+  line-height: 1.65;
+  color: #6f6982;
 }
 .perm__row {
   display: flex;

@@ -43,12 +43,19 @@
 
       <!--
         管理入口（2026-09-26 新增）—— 「权限方案」在本端**可操作**的体现。
-        🚨 显示条件看 `showManage`（两段式，见 script 注释）：
-           本地角色闸门（有 ADMIN/MODERATOR）→ 再问后端 can-review 精确到「这一篇」。
+        🚨 显示条件看 `showManage`（三段式，见 script 注释）：
+           本地角色闸门（有 ADMIN/MODERATOR）→ 本地作用域判定（版主是否管这个游戏）
+           → 判不出来才问后端 can-review 精确到「这一篇」。
            游客与普通用户**根本不发这个请求**，所以不会白挨 403。
-        面板里的动作清单同样是按角色生成的（置顶仅管理员；隐藏 / 恢复二选一）。
+        面板里的动作清单同样是按角色 + 帖子状态生成的（置顶仅管理员；批准/驳回只在待审帖出现）。
       -->
       <text v-if="showManage" class="author__manage" @click="openManage">管理</text>
+      <!--
+        越权方向：版主打开**非所辖游戏**的帖子 ⇒ 不给他入口，但必须说清原因。
+        只藏不说的后果是「同样一篇帖子，昨天有管理按钮今天没了」——看起来像 bug，
+        实测时也分不清是「权限生效」还是「功能坏了」。
+      -->
+      <text v-else-if="outOfScope" class="author__scope">不在你的管辖范围</text>
 
       <!-- 举报：未登录先去登录；已登录弹理由选择。提交到主站审核流程（/reports） -->
       <text class="author__report" :class="{ 'author__report--done': reported }" @click="onReportTap">
@@ -218,27 +225,55 @@
     <view v-if="manageSheet" class="msheet">
       <view class="msheet__mask" @click="manageSheet = false"></view>
       <view class="msheet__panel">
-        <text class="msheet__title">管理这篇内容</text>
-        <text class="msheet__sub">{{ manageSub }}</text>
-        <view
-          v-for="a in manageActions"
-          :key="a.key"
-          class="msheet__opt"
-          :class="{ 'msheet__opt--off': !!manageBusy }"
-          @click="onManage(a.key)"
-        >
-          <view class="msheet__opt-body">
-            <text class="msheet__opt-label">{{ manageBusy === a.key ? '处理中…' : a.label }}</text>
-            <text class="msheet__opt-tip">{{ a.tip }}</text>
-          </view>
-          <text class="msheet__opt-arrow">›</text>
-        </view>
-        <view class="msheet__btns">
-          <view class="msheet__btn" @click="manageSheet = false">关闭</view>
-        </view>
-        <text class="msheet__note">
-          每次操作都会写入后端审计日志；是否放行由服务端 @PreAuthorize 与板块归属判定，端内只决定「显示什么」。
+        <text class="msheet__title">{{ rejectOpen ? '驳回这篇内容' : '管理这篇内容' }}</text>
+        <text class="msheet__sub">
+          {{ rejectOpen ? '理由会推送给作者，请写清具体问题' : manageSub }}
         </text>
+
+        <!-- 驳回二级面板：理由必填（后端 RejectPostRequest.reason 有 @Valid 校验） -->
+        <view v-if="rejectOpen" class="msheet__reason">
+          <textarea
+            v-model="rejectReason"
+            class="msheet__reason-input"
+            placeholder="例：内容与板块主题不符，请补充具体游戏版本后重新提交"
+            placeholder-class="msheet__reason-ph"
+            :maxlength="200"
+            auto-height
+          />
+          <text class="msheet__reason-count">{{ rejectReason.length }}/200</text>
+          <view class="msheet__btns">
+            <view class="msheet__btn" @click="cancelReject">返回</view>
+            <view
+              class="msheet__btn msheet__btn--primary"
+              :class="{ 'msheet__btn--off': !rejectCanSubmit }"
+              @click="confirmReject"
+            >
+              {{ rejectBusy ? '提交中…' : '确认驳回' }}
+            </view>
+          </view>
+        </view>
+
+        <view v-else>
+          <view
+            v-for="a in manageActions"
+            :key="a.key"
+            class="msheet__opt"
+            :class="{ 'msheet__opt--off': !!manageBusy }"
+            @click="onManage(a.key)"
+          >
+            <view class="msheet__opt-body">
+              <text class="msheet__opt-label">{{ manageBusy === a.key ? '处理中…' : a.label }}</text>
+              <text class="msheet__opt-tip">{{ a.tip }}</text>
+            </view>
+            <text class="msheet__opt-arrow">›</text>
+          </view>
+          <view class="msheet__btns">
+            <view class="msheet__btn" @click="manageSheet = false">关闭</view>
+          </view>
+          <text class="msheet__note">
+            每次操作都会写入后端审计日志；是否放行由服务端 @PreAuthorize 与游戏归属判定，端内只决定「显示什么」。
+          </text>
+        </view>
       </view>
     </view>
   </view>
@@ -269,7 +304,9 @@ import {
   canSeeManageEntry,
   shouldShowManageEntry,
   actionsFor,
-  permissionSummary
+  permissionSummary,
+  scopeOf,
+  SCOPE
 } from '../../utils/roles'
 import { fetchCanReview, runManageAction } from '../../api/admin'
 import { ensureIndex, relatedOf, patchIndexFlag } from '../../utils/guideIndex'
@@ -391,29 +428,64 @@ const manageSheet = ref(false)
 const manageBusy = ref('')
 
 /**
+ * 当前用户对**这一篇**的管辖范围（纯本地计算，0 网络请求）。
+ * 见 `utils/roles.js#scopeOf`：ADMIN→all，版主按帖子 gameId 命中负责游戏→in / 未命中→out。
+ */
+const scope = computed(() => scopeOf(me.value || {}, post.value || {}))
+
+/**
+ * 越权方向：版主打开了不在自己负责游戏内的帖子。
+ * 入口要藏掉，但**必须给一句原因** —— 否则同样的帖子在不同账号下「有时有按钮有时没有」，
+ * 实测和答辩时都会被误判成功能坏了。
+ */
+const outOfScope = computed(() => scope.value === SCOPE.OUT)
+
+/** 是否待审帖（status=2）：决定要不要给「审核通过 / 驳回」—— 这是版主的本职工作 */
+const isPending = computed(() => {
+  const p = post.value
+  return !!p && p.status === 2
+})
+
+/**
  * 是否显示管理入口。**闸门逻辑在 `utils/roles.js#shouldShowManageEntry`（有单测）**，
- * 这里只做接线。两段式：
+ * 这里只做接线。三段式：
  *   ① 本地角色闸门 —— 没有 ADMIN/MODERATOR 就**根本不发** can-review 请求。
  *      为什么必须这样：`/admin/**` 类上挂了 `@PreAuthorize("hasAnyRole('ADMIN','MODERATOR')")`
  *      ⇒ 普通登录用户调**任意**一个（包括 can-review）都会拿到 `code=403`
  *      「无权限（需要管理员角色）」，白挨一次红字提示。
- *   ② 角色通过后再问后端 can-review，精确到「这一篇」。
+ *   ② 本地**作用域**闸门 —— 版主只在所辖游戏内有权限，跨游戏直接判 OUT（0 请求拦掉）。
+ *      这是「管理员 vs 版主」差异最直观的体现：同一个帖子，管理员有入口、版主没有。
+ *   ③ 前两道都判不出来（老 session 没 gameIds / 帖子缺 gameId）才问后端 can-review。
  *
  * 🚨 **不能只用 canReview 当闸门**：后端 `canReviewPost`（can-review 用的）里有
  *    「自己不能审自己」⇒ 管理员看**自己的帖子**（比如官方公告）时 can-review 恒为 false，
  *    但 `hide` / `essence` / `restore` 其实全都允许（它们走 `assertCanModeratePost`，
  *    ADMIN 直接 return）。只用 canReview 会造出「管理员在自己帖上没有管理入口」的怪现象。
  */
-const showManage = computed(() => shouldShowManageEntry(roles.value, canReview.value))
+const showManage = computed(() =>
+  shouldShowManageEntry(roles.value, canReview.value, scope.value)
+)
 
-/** 面板里列出的动作：按角色 + 帖子公开性生成（置顶仅管理员；隐藏 / 恢复互斥） */
-const manageActions = computed(() => actionsFor(roles.value, { nonPublic: isNonPublic.value }))
+/** 面板里列出的动作：按角色 + 帖子状态生成（置顶仅管理员；待审给批准/驳回；隐藏 / 恢复互斥） */
+const manageActions = computed(() =>
+  actionsFor(roles.value, {
+    nonPublic: isNonPublic.value,
+    pending: isPending.value,
+    canReview: canReview.value
+  })
+)
 
 /** 面板副标题：把「当前身份 + 权限范围」摊开 —— 答辩时一眼能看出不同账号的权限差异 */
 const manageSub = computed(() => {
   const p = permissionSummary(me.value || {})
   return `${p.label} · ${p.scope}`
 })
+
+/* ---- 驳回：二级面板（理由必填，后端会写驳回记录并推送作者） ---- */
+const rejectOpen = ref(false)
+const rejectReason = ref('')
+const rejectBusy = ref(false)
+const rejectCanSubmit = computed(() => rejectReason.value.trim().length > 0)
 
 /**
  * 拆解放在前端：后端零改动，现有内容零迁移成本。
@@ -506,13 +578,16 @@ async function load() {
 /**
  * 探测「这一篇我能不能管」。
  *
- * 前提：本地角色已确认是 ADMIN / MODERATOR —— 否则**不该发这个请求**
- * （普通用户调 `/admin/**` 必得 code 403，见 `showManage` 注释）。
+ * 前提：本地两道闸门都要过 —— 否则**不该发这个请求**：
+ *   ① 角色闸门：普通用户调 `/admin/**` 必得 code 403（见 `showManage` 注释）；
+ *   ② 作用域闸门：版主跨游戏（scope=OUT）本地已经能确定没权限，
+ *      再问一次后端纯属浪费 —— 而且后端也只会回 false。
  * 失败一律按「无权限」处理：探测不成功就不显示入口，绝不因此打扰用户。
  */
 async function probeManage() {
   canReview.value = false
   if (!canSeeManageEntry(roles.value)) return
+  if (scope.value === SCOPE.OUT) return
   try {
     const r = await fetchCanReview(postId.value)
     canReview.value = !!(r && r.canReview === true)
@@ -526,7 +601,29 @@ function openManage() {
   if (!manageActions.value.length) {
     return uni.showToast({ title: '当前身份没有可用的管理动作', icon: 'none' })
   }
+  rejectOpen.value = false
+  rejectReason.value = ''
   manageSheet.value = true
+}
+
+/** `uni.showModal` 的 Promise 包装：确认返回 true；取消 / 失败都返回 false（不阻塞主流程） */
+function confirmDialog(title, content) {
+  return new Promise((resolve) => {
+    uni.showModal({
+      title,
+      content,
+      confirmText: '确认',
+      cancelText: '再想想',
+      success: (r) => resolve(!!(r && r.confirm)),
+      fail: () => resolve(false)
+    })
+  })
+}
+
+/** 驳回面板 → 返回动作列表（顺手清空理由，避免下次打开残留上一条） */
+function cancelReject() {
+  rejectOpen.value = false
+  rejectReason.value = ''
 }
 
 /**
@@ -535,13 +632,30 @@ function openManage() {
  * 🚨 与点赞 / 收藏同一套铁律：**不做乐观更新** ——
  *   成功与否只看服务端响应，成功后**重新拉一次详情**（`load()`）让页面回到服务端事实。
  *   理由：这些接口都是 toggle 语义（置顶 / 加精），本地推演在连点下会漂；
- *      而隐藏 / 恢复会改 `status`，本地根本推不准（还会影响计数列）。
+ *      而隐藏 / 恢复 / 驳回会改 `status`，本地根本推不准（还会影响计数列）。
  *
  * ⚠️ 失败时**什么都不做**：请求层会把后端原文 toast 出来 ——
  *   越权时的「无权限审核该 (游戏, 板块) 帖子」正是「后端才是安全边界」的证据，别吞掉它。
  */
 async function onManage(key) {
   if (manageBusy.value) return
+
+  // 驳回：先切到二级面板收集理由（理由必填），不在这一层直接发请求
+  if (key === 'reject') {
+    rejectOpen.value = true
+    return
+  }
+  // 会改变可见性的动作加一道确认：手机上误触代价太高（隐藏后普通访客立刻看不到）
+  if (key === 'approve' || key === 'hide' || key === 'restore') {
+    const text =
+      key === 'approve'
+        ? '通过后该帖立即对所有访客可见。'
+        : key === 'hide'
+          ? '隐藏后仅作者与管理员可见。'
+          : '恢复后所有访客都能看到该帖。'
+    if (!(await confirmDialog('确认执行？', text))) return
+  }
+
   manageBusy.value = key
   try {
     const r = (await runManageAction(key, postId.value)) || {}
@@ -556,6 +670,29 @@ async function onManage(key) {
 }
 
 /**
+ * 提交驳回（理由必填）。
+ *
+ * 后端 `rejectPost` 会：status→1 + 写入驳回理由 + **推送通知作者**，
+ * 所以理由不能为空 —— 空理由既过不了 `@Valid`，对作者也毫无信息量。
+ */
+async function confirmReject() {
+  if (rejectBusy.value || !rejectCanSubmit.value) return
+  rejectBusy.value = true
+  try {
+    await runManageAction('reject', postId.value, { reason: rejectReason.value.trim() })
+    rejectOpen.value = false
+    rejectReason.value = ''
+    manageSheet.value = false
+    uni.showToast({ title: '已驳回，理由已通知作者', icon: 'none', duration: 1800 })
+    await load()
+  } catch (e) {
+    /* 失败文案已由请求层 toast 后端原文；停留在面板上让用户改理由后重试 */
+  } finally {
+    rejectBusy.value = false
+  }
+}
+
+/**
  * 用服务端回传的开关值说人话。
  * `setPin` → `isTop`、`setEssence` → `isEssence`（后端返回的是 1 / 0 数值，
  * 不是布尔 —— 0 是 falsy 所以直接用没问题，但别写成 `=== true`）。
@@ -565,6 +702,8 @@ function manageDoneText(key, r) {
   if (key === 'essence') return r.isEssence ? '已加精' : '已取消加精'
   if (key === 'hide') return '已隐藏，仅作者与管理员可见'
   if (key === 'restore') return '已恢复公开'
+  if (key === 'approve') return '已审核通过'
+  if (key === 'reject') return '已驳回'
   return '操作成功'
 }
 
@@ -788,6 +927,23 @@ onShareAppMessage(() => ({
   color: #5d5773;
 }
 
+/*
+  越权提示（版主打开非所辖游戏的帖子）
+  🚨 刻意做成**灰色低饱和**，与紫色的「管理」胶囊形成对比：
+     它是「你没有这个权限」的状态说明，不是可点操作 —— 别让用户以为能点。
+*/
+.author__scope {
+  flex-shrink: 0;
+  margin-left: 10rpx;
+  padding: 4rpx 16rpx;
+  border-radius: 999rpx;
+  border: 1rpx solid rgba(139, 133, 153, 0.35);
+  background: rgba(139, 133, 153, 0.12);
+  color: #8b8599;
+  font-size: 22rpx;
+  line-height: 1.7;
+}
+
 /* 举报弹层 —— 🚨 z-index 必须 > 998（uni-app H5 底栏层级），与公告浮层同用 1200 */
 .rsheet {
   position: fixed;
@@ -956,6 +1112,42 @@ onShareAppMessage(() => ({
   border: 1rpx solid #3a3350;
   color: #a49eb6;
   font-size: 28rpx;
+}
+/* 主按钮（确认驳回）：紫色描边 + 淡底，与「返回」拉开层级 */
+.msheet__btn--primary {
+  margin-left: 16rpx;
+  border-color: rgba(124, 92, 255, 0.6);
+  background: rgba(124, 92, 255, 0.2);
+  color: #cbbdff;
+}
+/* 理由为空时禁用主按钮视觉（逻辑上 confirmReject 也会再挡一次） */
+.msheet__btn--off {
+  opacity: 0.45;
+}
+
+/* 驳回二级面板：多行理由输入（后端 RejectPostRequest.reason 必填，最长 200 字） */
+.msheet__reason-input {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  min-height: 160rpx;
+  padding: 20rpx 22rpx;
+  border: 1rpx solid #2c2740;
+  border-radius: 14rpx;
+  background: #201c2e;
+  color: #f2f0f7;
+  font-size: 26rpx;
+  line-height: 1.6;
+}
+.msheet__reason-ph {
+  color: #6f6982;
+}
+.msheet__reason-count {
+  display: block;
+  margin: 8rpx 0 18rpx;
+  text-align: right;
+  font-size: 20rpx;
+  color: #6f6982;
 }
 .msheet__note {
   display: block;

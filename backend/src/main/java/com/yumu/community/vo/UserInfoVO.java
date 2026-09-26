@@ -45,6 +45,17 @@ public class UserInfoVO {
     /** 该用户负责的板块名列表（前端展示用） */
     private List<String> moderatorBoardNames;
     /**
+     * 该用户负责的**游戏 id** 列表（MODERATOR 才有，普通用户/管理员为空）。
+     *
+     * 🚨 为什么必须下发 id 而不只是名字：现行授权是**游戏级**的
+     *    （`setModeratorBoards` 把 `board_id` 统一置 NULL，一名版主只负责一个游戏），
+     *    所以 `moderatorBoardIds` 对现在的版主**恒为空列表**。
+     *    前端要判断「这篇帖子在不在我的管辖范围」，唯一可靠的依据就是帖子 `gameId`
+     *    是否落在本字段里（`ModeratorBoardService#covers` 的第 1 条分支）。
+     *    只用名字匹配会在游戏改名后失效。
+     */
+    private List<Long> moderatorGameIds;
+    /**
      * 该用户负责的游戏名列表（去重 + 按热度/sort 排序）。
      * 用于作者徽章展示：「版主 · 三角洲行动」之类。无负责游戏时为空列表。
      */

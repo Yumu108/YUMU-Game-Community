@@ -18,8 +18,15 @@
  *
  *  ③ `essence`（加精）/ `hide`（隐藏）/ `restore`（恢复）走服务端 `assertCanModeratePost`
  *     ⇒ 管理员全权；版主**仅限自己负责的 (游戏, 板块)**，越权抛 `BusinessException(403)`。
+ *     注意这里的校验器是 `assertCanModeratePost`，**没有**「不能操作自己的帖子」这条 ——
+ *     管理员 / 版主对自己辖区内的帖子照样能加精、隐藏。
  *
- *  ④ `can-review` 是**唯一不会对版主抛错**的接口：版主不负责该板块时返回
+ *  ④ `approve`（审核通过）/ `reject`（驳回）走的是**另一个**校验器 `canReviewPost`
+ *     ⇒ 它比 ③ 多一条「**自己不能审自己**」（`Post.getUserId().equals(viewerId) → false`）。
+ *     所以「批准 / 驳回」按钮必须额外拿 `can-review` 的结果来使能，不能只看角色 ——
+ *     否则管理员打开自己发的公告帖会看到一个点了必然 403 的按钮。
+ *
+ *  ⑤ `can-review` 是**唯一不会对版主抛错**的接口：版主不负责该游戏时返回
  *     `{canReview:false}`，正好当「按钮到底显不显示」的精确依据。
  *     后端注释原话：「单帖子审核权限预览：当前用户能否 review 这个帖子
  *     （前端『批准/驳回』按钮的使能依据）」。
@@ -53,17 +60,38 @@ export const hidePost = (id) => post(`/admin/posts/${id}/hide`)
 export const restorePost = (id) => post(`/admin/posts/${id}/restore`)
 
 /**
+ * 审核通过（status→0）。
+ *
+ * ⚠️ 走 `canReviewPost` ⇒ **比加精/隐藏多一条「自己不能审自己」**。
+ *    调用方必须先确认 `can-review` 为真，否则会拿到 403「无权审核该帖子」。
+ */
+export const approvePost = (id) => post(`/admin/posts/${id}/approve`)
+
+/**
+ * 驳回帖子（status→1 + 写驳回理由 + 通知发帖人）。
+ *
+ * @param {number} id
+ * @param {string} reason 驳回理由（后端 `RejectPostRequest.reason`，`@Valid` 校验非空）
+ * ⚠️ 同样走 `canReviewPost`（自己不能审自己）。
+ *    理由**必填**：后端会把它写进驳回记录并推送给作者，空理由会被参数校验挡下。
+ */
+export const rejectPost = (id, reason) => post(`/admin/posts/${id}/reject`, { reason })
+
+/**
  * 按动作 key 分发（供管理面板统一调用，避免页面里写一长串 if/else）。
  *
- * @param {'pin'|'essence'|'hide'|'restore'} key
+ * @param {'pin'|'essence'|'hide'|'restore'|'approve'|'reject'} key
  * @param {number} postId
+ * @param {{reason?:string}} [payload] `reject` 需要 `reason`，其余忽略
  */
-export function runManageAction(key, postId) {
+export function runManageAction(key, postId, payload = {}) {
   const TABLE = {
-    pin: pinPost,
-    essence: essencePost,
-    hide: hidePost,
-    restore: restorePost
+    pin: (id) => pinPost(id),
+    essence: (id) => essencePost(id),
+    hide: (id) => hidePost(id),
+    restore: (id) => restorePost(id),
+    approve: (id) => approvePost(id),
+    reject: (id) => rejectPost(id, payload.reason)
   }
   const fn = TABLE[key]
   if (!fn) return Promise.reject(new Error(`未知的管理动作：${key}`))
