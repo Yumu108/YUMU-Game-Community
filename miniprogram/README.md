@@ -291,9 +291,17 @@ python tools/gen-tabbar-icons.py     # → src/static/tabbar/*.png（81×81，�
   定位调整后回复区已按产品口径移除，该组断言随之变成「回复元素必须为 0」（`B16~B18`）。
 12. 🚨 **微信 AppID 不进 Git**（2026-09-18 GitHub 密钥扫描告警后清史重写）。
    仓库里 `src/manifest.json` 的 `mp-weixin.appid` **永远是 `""`**；真实 AppID 只存本机
-   `.env.local`（已被 `.gitignore` 覆盖）。要用微信开发者工具 / 出 mp-weixin 包时：
-   `npm run appid:inject` 注入 → 用完 `npm run appid:restore` 还原（**提交/发版前必须还原**，
-   否则工作区脏会被拒发）。别再手写 `"appid": "wx…"` 进任何被跟踪的文件。
+   `.env.local`（已被 `.gitignore` 覆盖）。**别再手写 `"appid": "wx…"` 进任何被跟踪的文件。**
+
+   **出 mp-weixin 包一律用 `npm run build:mp-weixin`** —— 2026-09-27 起它会在构建完成后
+   **自动**把 `.env.local` 的 AppID 写进**产物** `dist/build/mp-weixin/project.config.json`，
+   源码 manifest 全程不碰 ⇒ 既不会泄漏，也不会再出现「忘记 `appid:restore` 导致工作区脏、发版被拒」。
+
+   🚨 **别用 `build:mp-weixin:raw`**：那样产物 appid 是空值，微信开发者工具读到后会**自动降级成
+   `touristappid`（游客模式）** —— 工具栏「预览 / 真机调试 / 上传」**三个按钮全部变灰、点了没反应**。
+   迷惑点：**模拟器里一切正常**，也不报错，很容易误判成"工具坏了"（2026-09-27 实测踩过）。
+   一行自查：`grep '"appid"' dist/build/mp-weixin/project.config.json` 必须是 `wx` 开头。
+   `appid:inject` / `appid:restore` 仅保留给「需要单独调试 manifest」的场景。
 
 
 ## 视觉基调

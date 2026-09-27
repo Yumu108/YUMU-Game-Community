@@ -7,7 +7,8 @@
     "dev:h5": "uni",
     "dev:mp-weixin": "uni -p mp-weixin",
     "build:h5": "uni build",
-    "build:mp-weixin": "uni build -p mp-weixin",
+    "build:mp-weixin": "node tools/build-mp-weixin.mjs",
+    "build:mp-weixin:raw": "uni build -p mp-weixin",
     "appid:inject": "node tools/inject-appid.mjs",
     "appid:restore": "node tools/inject-appid.mjs --restore",
     "lint:mp": "node tests/lint-mp-modifiers.mjs"
