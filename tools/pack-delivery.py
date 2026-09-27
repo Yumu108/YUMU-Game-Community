@@ -50,8 +50,13 @@ FILE_SKIP_EXACT = {".env.local", ".DS_Store"}  # .env.local 含个人 AppID
 TOP_DIRS = ("backend", "miniprogram")
 
 # 交付说明以什么名字放进包根
-DOC_SRC = os.path.join(os.path.dirname(REPO), "YUMU小程序交付说明.md")
 DOC_ARC = "交付说明.md"
+# 源文件候选（2026-09-27：该文档已从「仓库上一级」移进 `miniprogram/docs/` 并纳入版本库。
+# 两个位置都试，免得搬家之后包里静默少一份交付说明。）
+DOC_CANDIDATES = [
+    os.path.join(REPO, "miniprogram", "docs", "YUMU小程序交付说明.md"),
+    os.path.join(os.path.dirname(REPO), "YUMU小程序交付说明.md"),
+]
 
 
 def keep(rel_path: str) -> bool:
@@ -108,12 +113,14 @@ def main() -> int:
             d = os.path.join(REPO, top)
             if os.path.isdir(d):
                 stats[top] = add_tree(zf, d, top)
-        if os.path.exists(DOC_SRC):
-            zf.write(DOC_SRC, DOC_ARC)
+        doc = next((p for p in DOC_CANDIDATES if os.path.exists(p)), None)
+        if doc:
+            zf.write(doc, DOC_ARC)
             stats[DOC_ARC] = 1
         else:
-            # 说明文档不在仓库里（在主目录），缺了就明确提示，别静默少一个文件
-            print(f"⚠️ 未找到交付说明：{DOC_SRC}（包里将不带 {DOC_ARC}）")
+            # 缺了就明确提示，别静默少一个文件
+            print("⚠️ 未找到交付说明，已查找：" + " / ".join(DOC_CANDIDATES))
+            print(f"   （包里将不带 {DOC_ARC}）")
 
     if os.path.exists(out):
         os.remove(out)
