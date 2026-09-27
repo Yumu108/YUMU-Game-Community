@@ -2030,8 +2030,8 @@ const OFFICIAL_UID = 20142
 
     const modSum = await text('.mx__sum')
     assert(
-      'PM28 折叠摘要摊开「端内 x/6 · 主站 y/5」：不展开也能看出分布',
-      /小程序内\s*4\s*\/\s*6/.test(modSum) && /主站\s*1\s*\/\s*5/.test(modSum),
+      'PM28 折叠摘要摊开「端内 3/5 · 主站 2/6」：不展开也能看出分布',
+      /小程序内\s*3\s*\/\s*5/.test(modSum) && /主站\s*2\s*\/\s*6/.test(modSum),
       modSum
     )
 
@@ -2109,8 +2109,8 @@ const OFFICIAL_UID = 20142
 
     const adminSum = await text('.mx__sum')
     assert(
-      'PM37 管理员折叠摘要「端内 6/6 全可用 · 主站 5/5」（对比版主的 4/6 与 1/5）',
-      /小程序内\s*6\s*\/\s*6/.test(adminSum) && /主站\s*5\s*\/\s*5/.test(adminSum),
+      'PM37 管理员折叠摘要「端内 5/5 全可用 · 主站 6/6」（对比版主的 3/5 与 2/6）',
+      /小程序内\s*5\s*\/\s*5/.test(adminSum) && /主站\s*6\s*\/\s*6/.test(adminSum),
       adminSum
     )
 

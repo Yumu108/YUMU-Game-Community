@@ -702,7 +702,12 @@ if (!fs.existsSync(ctrlPath)) {
    *    这条会立刻红。反向也查（表里的 key 若已不在 mp=true 集合里，说明表过期了）。
    */
   const MP_ENDPOINTS = {
-    review: { src: 'admin', paths: ['/posts/{id}/approve', '/posts/{id}/reject'] },
+    /*
+     * 🚨 2026-09-27：`review` 已从本表**移除** —— 矩阵把它改归「主站」（`mp=false`），
+     *    因为端内没有可达待审帖的入口（排查过程见 `src/utils/roles.js` 里 review 项的注释）。
+     *    后端 `approve` / `reject` 端点本身仍在，只是不再由「端内能力」这张表看管。
+     *    要把它搬回端内，正确顺序是：先做待审列表入口 → 再把这里加回来 + `mp` 改回 true。
+     */
     essence: { src: 'admin', paths: ['/posts/{id}/essence'] },
     hide: { src: 'admin', paths: ['/posts/{id}/hide', '/posts/{id}/restore'] },
     pin: { src: 'admin', paths: ['/posts/{id}/pin'] },
@@ -727,7 +732,7 @@ if (!fs.existsSync(ctrlPath)) {
   })
   ok(
     'I10 矩阵里标「端内可操作」的每一项，后端都有真实端点（防臆造接口）',
-    missing.length === 0 && mpKeys.join(',') === 'essence,hide,pin,report,review,user',
+    missing.length === 0 && mpKeys.join(',') === 'essence,hide,pin,report,user',
     missing.length
       ? `缺端点：${missing.join(',')}`
       : `端内项=[${mpKeys.join(',')}]（共 ${mpKeys.length} 项，其中 ${mpKeys.filter((k) => MP_ENDPOINTS[k] && MP_ENDPOINTS[k].src === 'user').length} 项属用户管理）`
@@ -785,22 +790,24 @@ console.log('===== J. capabilityGroups / 端内入口 / selfRoleChangeBlocked ==
   )
   ok('J3 组内每项的 place/placeLabel 与所在组一致', badPlace.length === 0, badPlace.join(','))
 
-  // ④ 管理员视野下两组的项数（这就是折叠摘要那一行「端内 6 / 6 · 主站 5 / 5」的数据源）
+  // ④ 管理员视野下两组的项数（这就是折叠摘要那一行「端内 5 / 5 · 主站 6 / 6」的数据源）
   //    🚨 第四轮把「处理举报」从主站搬到端内 ⇒ 端内 5→6、主站 6→5。
+  //    🚨 2026-09-27 把「审核」搬回主站（端内无可达入口）⇒ 端内 6→5、主站 5→6。
   //       这两个数字变了必须同步改这里，否则「矩阵与实现对不上」就没人发现了。
   const sAdmin = capabilityGroupStats(['USER', 'ADMIN'])
   ok(
-    'J4 管理员：端内 6 项（全可用）+ 主站 5 项（全可用）',
-    sAdmin.mp === 6 && sAdmin.allowedMp === 6 && sAdmin.site === 5 && sAdmin.allowedSite === 5,
+    'J4 管理员：端内 5 项（全可用）+ 主站 6 项（全可用）',
+    sAdmin.mp === 5 && sAdmin.allowedMp === 5 && sAdmin.site === 6 && sAdmin.allowedSite === 6,
     `端内 ${sAdmin.allowedMp}/${sAdmin.mp} · 主站 ${sAdmin.allowedSite}/${sAdmin.site}`
   )
 
-  // ⑤ 版主：端内分母仍是 6（**全局常数**），可用 4 项；主站 5 项里只剩「隐藏/恢复回复」可用。
-  //    —— 这组数字就是「管理员与版主区别很大」的量化表达（6/6+5/5 vs 4/6+1/5）。
+  // ⑤ 版主：端内分母 5（**全局常数**），可用 3 项（加精 / 隐藏 / 处理举报）；
+  //    主站 6 项里可用 2 项（审核 + 隐藏/恢复回复）。
+  //    —— 这组数字就是「管理员与版主区别很大」的量化表达（5/5+6/6 vs 3/5+2/6）。
   const sMod = capabilityGroupStats(['MODERATOR'])
   ok(
-    'J5 版主：端内 4/6 可用、主站 1/5 可用（分母与管理员相同，分子差 2 与 4）',
-    sMod.mp === 6 && sMod.allowedMp === 4 && sMod.site === 5 && sMod.allowedSite === 1,
+    'J5 版主：端内 3/5 可用、主站 2/6 可用（分母与管理员相同，分子各差 2 与 4）',
+    sMod.mp === 5 && sMod.allowedMp === 3 && sMod.site === 6 && sMod.allowedSite === 2,
     `端内 ${sMod.allowedMp}/${sMod.mp} · 主站 ${sMod.allowedSite}/${sMod.site}`
   )
 
@@ -843,11 +850,25 @@ console.log('===== J. capabilityGroups / 端内入口 / selfRoleChangeBlocked ==
 
   // ⑨ 举报页真的在调后端那两个端点（别只写了个页面、接口名拼错）
   const adminApiSrc = fs.existsSync(adminApiPath) ? fs.readFileSync(adminApiPath, 'utf8') : ''
+  /*
+   * ⑩ 审核（2026-09-27）—— 与 J6 / J14 **方向相反**：这次是**从端内搬出去**。
+   *
+   * 🚨 防空转检查点：把 `review.mp` 改回 true（或把 CAPABILITIES 里 review 那段
+   *    2026-09-27 的注释连同 mp:false 一起还原），这条必须变红。
+   *
+   * 为什么值得单钉一条：详情页里明明有「审核通过 / 驳回」的按钮代码，很容易让人
+   * 「顺手把 mp 改回 true」—— 那就又把矩阵变成一句空话了。
+   * **判据是「有没有可达入口」，不是「有没有写按钮」**，这条断言就是替这个判断站岗。
+   */
+  const reviewCap = mAdminJ.find((c) => c.key === 'review')
   ok(
-    'J15 端内举报页调用的是后端真实端点 /admin/reports 与 /admin/reports/{id}/handle',
-    /['"`]\/admin\/reports['"`]/.test(adminApiSrc) &&
-      /\/admin\/reports\/\$\{id\}\/handle/.test(adminApiSrc),
-    adminApiSrc ? '端点已核对' : `缺文件：${adminApiPath}`
+    'J21 「审核帖子」标为**主站**（端内无可达入口）：mp=false 且只出现在「主站」组',
+    !!reviewCap &&
+      reviewCap.mp === false &&
+      reviewCap.place === 'site' &&
+      groups.find((g) => g.key === 'site').items.some((c) => c.key === 'review') &&
+      !groups.find((g) => g.key === 'mp').items.some((c) => c.key === 'review'),
+    reviewCap ? `place=${reviewCap.place} placeLabel=${reviewCap.placeLabel}` : '未找到 review 能力'
   )
 }
 
