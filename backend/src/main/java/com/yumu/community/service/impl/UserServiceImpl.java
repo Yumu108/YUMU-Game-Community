@@ -49,6 +49,8 @@ public class UserServiceImpl implements UserService {
     private final PasswordEncoder passwordEncoder;
     /** A1：服务端 HTML 净化（Jsoup 白名单）—— 防存储型 XSS。 */
     private final HtmlSanitizer htmlSanitizer;
+    /** 9-27：账号id / 邮箱唯一键守门员（绕过逻辑删除查重，见 UserKeyGuard）。 */
+    private final UserKeyGuard userKeyGuard;
 
     @Override
     public UserProfileVO getProfile(Long userId, Long viewerId) {
@@ -183,12 +185,9 @@ public class UserServiceImpl implements UserService {
             throw new BusinessException(400, "新账号不能与当前账号相同");
         }
         // 唯一性（排除自己）
-        long dup = userMapper.selectCount(Wrappers.<User>lambdaQuery()
-                .eq(User::getUsername, newName)
-                .ne(User::getId, userId));
-        if (dup > 0) {
-            throw new BusinessException(409, "该账号已被占用");
-        }
+        // 🚨 9-27：不能再用 selectCount —— 它带 @TableLogic 的 deleted=0，看不见软删行，
+        //   但 uk_username 照样认；用户改成一个「已被删除账号」用过的 id 会直接 500。
+        userKeyGuard.assertUsernameAvailable(newName);
         // 每年一次限制
         UsernameChangeWindow win = computeUsernameChangeWindow(u);
         if (!win.canChange()) {

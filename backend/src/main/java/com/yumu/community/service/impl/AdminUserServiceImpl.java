@@ -42,6 +42,8 @@ public class AdminUserServiceImpl implements AdminUserService {
     private final ModeratorBoardMapper moderatorBoardMapper;
     private final ModeratorBoardService moderatorBoardService;
     private final PasswordEncoder passwordEncoder;
+    /** 9-27：账号id / 邮箱唯一键守门员（绕过逻辑删除查重 + 删号时回收唯一键）。 */
+    private final UserKeyGuard userKeyGuard;
 
     @Override
     public PageResult<AdminUserVO> listUsers(String keyword, Long gameId, long current, long size) {
@@ -172,11 +174,12 @@ public class AdminUserServiceImpl implements AdminUserService {
         if (req.getNickname() != null) u.setNickname(req.getNickname().trim());
         if (req.getBio() != null) u.setBio(req.getBio());
         if (req.getEmail() != null) {
-            // 邮箱唯一约束：若变更且与他人冲突则报错
+            // 邮箱唯一约束：若变更且与他人冲突则报错。
+            // 🚨 9-27：改走 UserKeyGuard —— selectCount 看不见软删行，
+            //   后台把邮箱改成一个「已删账号」用过的值时，这里会放行、落库才 Duplicate entry 炸成 500。
             String email = req.getEmail().trim();
-            if (!email.equals(u.getEmail()) && userMapper.selectCount(
-                    Wrappers.<User>lambdaQuery().eq(User::getEmail, email)) > 0) {
-                throw new BusinessException(409, "邮箱已被其他用户占用");
+            if (!email.equals(u.getEmail())) {
+                userKeyGuard.assertEmailAvailable(email, userId);
             }
             u.setEmail(email);
         }
@@ -217,6 +220,10 @@ public class AdminUserServiceImpl implements AdminUserService {
         moderatorBoardService.setModeratorBoards(userId, List.of());
         // 逻辑删除：物理删除会级联清掉其帖子/回复，风险较高，采用逻辑删除保留数据
         userMapper.deleteById(userId);
+        // 🚨 9-27：逻辑删除后必须**交还唯一键**（邮箱置空、账号id 改墓碑名）。
+        //   否则被删账号会永远占着 uk_email / uk_username：本人换不回自己的邮箱，
+        //   别人也用不了这个 id，而且只在下一个人撞上来时才暴露 —— 表现为 500。
+        userKeyGuard.releaseKeysOfDeletedUser(u);
     }
 
     private Map<Long, List<String>> batchRoles(List<Long> userIds) {

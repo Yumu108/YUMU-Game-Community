@@ -6,6 +6,7 @@ import com.yumu.community.vo.ActiveUserVO;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
 import org.apache.ibatis.annotations.Select;
+import org.apache.ibatis.annotations.Update;
 
 import java.util.List;
 
@@ -91,4 +92,51 @@ public interface UserMapper extends BaseMapper<User> {
             </script>
             """)
     List<User> selectMentionedByNicknameOrUsername(@Param("nicks") java.util.List<String> nicks);
+
+    /**
+     * 按账号id查用户（**故意忽略逻辑删除**）。
+     *
+     * 🚨 背景（2026-09-27 线上 500 事故）：user 表有唯一键 {@code uk_username} / {@code uk_email}，
+     * 而 BaseEntity 的 {@code @TableLogic} 会让 deleted=1 的行对 {@code selectCount} 完全不可见
+     * —— **但唯一索引照样生效**。于是「selectCount=0 → insert」的写法，一旦该账号id/邮箱
+     * 被一条**已逻辑删除**的用户占着，插入时就会 Duplicate entry → 未捕获异常 → 500「服务器开小差」。
+     * 症状特别隐蔽：用户明明已经把那个账号删掉了，却再也无法用同一账号id/邮箱注册。
+     *
+     * <p>凡「查重之后要写唯一键列」的路径，查重都必须走本方法与
+     * {@link #selectByEmailIgnoreDeleted}，再由 {@code UserKeyGuard} 决定是「报错」还是「回收」。</p>
+     */
+    @Select("""
+            SELECT id, username, nickname, email, deleted
+            FROM `user`
+            WHERE username = #{username}
+            LIMIT 1
+            """)
+    User selectByUsernameIgnoreDeleted(@Param("username") String username);
+
+    /** 按邮箱查用户（**故意忽略逻辑删除**）。语义与 {#selectByUsernameIgnoreDeleted} 相同。 */
+    @Select("""
+            SELECT id, username, nickname, email, deleted
+            FROM `user`
+            WHERE email = #{email}
+            LIMIT 1
+            """)
+    User selectByEmailIgnoreDeleted(@Param("email") String email);
+
+    /**
+     * 清空某用户的邮箱（**故意忽略逻辑删除**，只用于回收软删行占用的 {@code uk_email}）。
+     *
+     * <p>必须写原生 SQL：① {@code updateById} 默认跳过 null 字段（FieldStrategy.NOT_NULL），
+     * 根本写不进 NULL；② {@code LambdaUpdateWrapper} 会被自动追加 {@code AND deleted=0}，
+     * 恰好排除掉我们唯一想改的那批软删行。</p>
+     */
+    @Update("UPDATE `user` SET email = NULL, updated_at = NOW() WHERE id = #{id}")
+    int releaseEmailById(@Param("id") Long id);
+
+    /**
+     * 把某用户的账号id改成墓碑名（**故意忽略逻辑删除**），腾出 {@code uk_username}。
+     * 同 {@link #releaseEmailById}：只有原生 SQL 能绕开逻辑删除。理由见该类
+     * {@code selectByUsernameIgnoreDeleted} 的说明。
+     */
+    @Update("UPDATE `user` SET username = #{tombstone}, updated_at = NOW() WHERE id = #{id}")
+    int renameUsernameById(@Param("id") Long id, @Param("tombstone") String tombstone);
 }

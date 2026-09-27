@@ -6,6 +6,7 @@
 //   C 账号id 与邮箱双通道登录      D 忘记密码（含验证码一次性消费）
 //   E 换绑邮箱（双码校验 / 查重 / 换绑后旧邮箱失效）
 //   F 老账号（无邮箱）首次绑定
+//   G 软删账号占用的账号id / 邮箱可被回收（9-27 线上 500 回归，需 TEST_ADMIN_PASSWORD）
 //
 // ⚠️ 运行前必读
 //   1. 后端需运行于 http://localhost:8080/api
@@ -275,8 +276,73 @@ async function main() {
   const f4 = await jpost('/auth/login', { username: EMAIL_NOM, password: PW }, null, nextIp())
   assert(f4.code === 200 && !!f4.data?.token, `首次绑定后可用邮箱登录（code=${f4.code}）`)
 
+  // ═══ G. 软删账号不再永久占用唯一键（9-27 线上 500 事故回归） ═══
+  //
+  //  事故原貌：user 表走 MyBatis-Plus 逻辑删除（deleted=0/1），而 uk_username / uk_email
+  //  是**数据库级**唯一索引、不认逻辑删除。查重用的 selectCount 会自动加上 deleted=0，
+  //  于是「已被删除的账号」占着的账号id/邮箱查不出来 ⇒ INSERT 撞唯一索引 ⇒
+  //  Duplicate entry ⇒ 未捕获 ⇒ 前端「服务器开小差了」。
+  //  用户视角：我把那个测试账号删了，为什么同一邮箱再也注册不了？
+  //
+  //  本组断言两类行为：
+  //    · 占用者是**已删账号** ⇒ 回收后放行（G3 / G5）
+  //    · 占用者是**活账号**   ⇒ 仍必须 409，不能借「回收」之名把人家的键清掉（G4）
+  console.log('\n[G] 软删账号占用的唯一键应被回收（原 500 回归）')
+
+  const adminLogin = await jpost('/auth/login',
+    { username: 'admin', password: (process.env.TEST_ADMIN_PASSWORD || 'REPLACE-ME') }, null, nextIp())
+  if (adminLogin.code !== 200 || !adminLogin.data?.token) {
+    skipped(`拿不到 admin token（code=${adminLogin.code}）⇒ 跳过 G 组；需设 TEST_ADMIN_PASSWORD 且 admin 账号存在`)
+  } else {
+    const adminTok = adminLogin.data.token
+    const UNAME_DEL = 'emdel_' + S
+    const EMAIL_DEL = `emdel_${S}@qq.com`
+    const delUser = (id) => j('DELETE', '/admin/users/' + id, null, adminTok, nextIp())
+
+    // G1 先注册一个正常账号，作为待删对象
+    const g1a = await jpost('/auth/email-code', { email: EMAIL_DEL, scene: 'register' }, null, nextIp())
+    const g1 = await jpost('/auth/register',
+      { username: UNAME_DEL, password: PW, nickname: UNAME_DEL, email: EMAIL_DEL, emailCode: TEST_CODE }, null, nextIp())
+    assert(
+      g1a.code === 200 && g1.code === 200 && !!g1.data?.user?.id,
+      `G1 首次注册成功（发码 ${g1a.code} / 注册 ${g1.code} msg="${g1.msg}"）`
+    )
+    const delUid = g1.data?.user?.id
+
+    // G2 管理员**逻辑删除**该账号
+    const g2 = delUid ? await delUser(delUid) : { code: null, msg: '无 uid' }
+    assert(g2.code === 200, `G2 管理员逻辑删除该账号（code=${g2.code} msg="${g2.msg}"）`)
+
+    // G3 用**同一账号id + 同一邮箱**重新注册 —— 修复前这里必然 500
+    //    （发码那一步也会因「查重看不见软删行」而先放行，让用户以为一切正常）
+    //    ⚠️ G1 那次发码已经用掉冷却窗口，重发前必须等，否则拿到的是 429 而不是我们想验证的东西。
+    await waitCooldown('给 EMAIL_DEL 重新发码（注册 → 删除 → 再注册）')
+    const g3a = await jpost('/auth/email-code', { email: EMAIL_DEL, scene: 'register' }, null, nextIp())
+    assert(g3a.code === 200, `G3a 删除后同一邮箱仍可发码（未被软删行卡住）（code=${g3a.code} msg="${g3a.msg}"）`)
+    const g3 = await jpost('/auth/register',
+      { username: UNAME_DEL, password: PW, nickname: UNAME_DEL, email: EMAIL_DEL, emailCode: TEST_CODE }, null, nextIp())
+    assert(g3.code === 200 && !!g3.data?.token,
+      `G3b 删除后可用同一账号id+邮箱重新注册（原 500 → 200）（code=${g3.code} msg="${g3.msg}"）`)
+    const reUid = g3.data?.user?.id
+
+    // G4 活账号占用必须仍然 409（回收只针对已删行，绝不能伤及在用账号）
+    //    这一步在「查账号id」时就该被拦下，所以**不需要**带有效的验证码 ——
+    //    反过来说，如果它返回的是「验证码已过期」，说明账号id 查重放行了，属于回归。
+    const g4 = await jpost('/auth/register',
+      { username: UNAME_DEL, password: PW, nickname: UNAME_DEL, email: EMAIL_DEL, emailCode: TEST_CODE }, null, nextIp())
+    assert(g4.code === 409, `G4 活账号占用仍报 409（绝不放行）（code=${g4.code} msg="${g4.msg}"）`)
+
+    // G5 换绑路径同理：把 G3 的账号删掉后，该邮箱应能被别的账号换绑过去
+    //    （修复前这里是 duplicate → 500，且两枚验证码已被消费 ⇒ 重试只看到「验证码已过期」）
+    if (reUid) await delUser(reUid)
+    await waitCooldown('给 EMAIL_DEL 发换绑码（bind 场景）')
+    const g5 = await jpost('/user/email/code', { scene: 'new', email: EMAIL_DEL }, tokA, nextIp())
+    assert(g5.code === 200,
+      `G5 被删账号的邮箱可被他人换绑（发码 code=${g5.code} msg="${g5.msg}"）`)
+  }
+
   console.log(`\n═══ 结果：${pass} 通过 / ${fail} 失败${skip ? ` / ${skip} 跳过` : ''} ═══`)
-  if (fail) console.log(`（本次测试账号后缀 ${S}，可按此前缀清理：em_ / emb_ / emn_ / emw_ / emdup_ / embad_ ）`)
+  if (fail) console.log(`（本次测试账号后缀 ${S}，可按此前缀清理：em_ / emb_ / emn_ / emw_ / emdup_ / embad_ / emdel_ ）`)
   process.exit(fail ? 1 : 0)
 }
 

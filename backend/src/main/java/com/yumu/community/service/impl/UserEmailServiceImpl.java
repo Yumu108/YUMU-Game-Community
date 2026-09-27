@@ -1,6 +1,5 @@
 package com.yumu.community.service.impl;
 
-import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.yumu.community.common.BusinessException;
 import com.yumu.community.dto.EmailBindRequest;
 import com.yumu.community.dto.UserEmailCodeRequest;
@@ -42,6 +41,8 @@ public class UserEmailServiceImpl implements UserEmailService {
     private final UserMapper userMapper;
     private final EmailCodeService emailCodeService;
     private final AuthService authService;
+    /** 9-27：邮箱唯一键守门员（见 UserKeyGuard 的注释，绕开逻辑删除查重）。 */
+    private final UserKeyGuard userKeyGuard;
 
     @Override
     public void sendCode(Long userId, UserEmailCodeRequest req) {
@@ -65,12 +66,10 @@ public class UserEmailServiceImpl implements UserEmailService {
             if (email.equalsIgnoreCase(safe(user.getEmail()))) {
                 throw new BusinessException(400, "新邮箱与当前邮箱相同，无需更换");
             }
-            // 提前查重：让用户「点发送验证码」时就发现被占用，不必等填完码才被拒
-            if (userMapper.selectCount(Wrappers.<User>lambdaQuery()
-                    .eq(User::getEmail, email)
-                    .ne(User::getId, userId)) > 0) {
-                throw new BusinessException(409, "该邮箱已被其他账号绑定");
-            }
+            // 提前查重：让用户「点发送验证码」时就发现被占用，不必等填完码才被拒。
+            // 🚨 9-27：必须走 UserKeyGuard（绕过逻辑删除）—— 否则被软删账号占着的邮箱查不出来，
+            //   等到 bind 阶段才会以 Duplicate entry 炸成 500。
+            userKeyGuard.assertEmailAvailable(email, userId);
             emailCodeService.send(email, EmailScene.BIND);
             return;
         }
@@ -91,12 +90,10 @@ public class UserEmailServiceImpl implements UserEmailService {
         if (newEmail.equalsIgnoreCase(safe(user.getEmail()))) {
             throw new BusinessException(400, "新邮箱与当前邮箱相同，无需更换");
         }
-        // 查重必须排除自己，否则「把自己的邮箱再填一遍」会被误判成占用
-        if (userMapper.selectCount(Wrappers.<User>lambdaQuery()
-                .eq(User::getEmail, newEmail)
-                .ne(User::getId, userId)) > 0) {
-            throw new BusinessException(409, "该邮箱已被其他账号绑定");
-        }
+        // 查重必须排除自己，否则「把自己的邮箱再填一遍」会被误判成占用。
+        // 🚨 9-27：同样必须绕过逻辑删除 —— 这正是线上「换绑报 500 → 重试变验证码已过期」的元凶：
+        //   更新被 Duplicate entry 打断时两枚验证码已经消费掉了，用户再点一次只能看到过期提示。
+        userKeyGuard.assertEmailAvailable(newEmail, userId);
 
         // ① 先做「免费的」存在性检查：已绑定过的账号必须带原邮箱码。
         //   必须排在验证新码之前 —— 否则一个注定失败的请求会把新邮箱那枚码白白消费掉，

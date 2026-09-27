@@ -67,6 +67,8 @@ public class AuthServiceImpl implements AuthService {
     private final TokenBlacklistService tokenBlacklist;
     /** 9-15：邮箱验证码（注册 / 找回密码 / 换绑邮箱）。 */
     private final EmailCodeService emailCodeService;
+    /** 9-27：账号id / 邮箱唯一键守门员（绕过逻辑删除查重 + 回收软删账号占用的键）。 */
+    private final UserKeyGuard userKeyGuard;
 
     private static final String DEFAULT_ROLE_CODE = "USER";
 
@@ -94,11 +96,15 @@ public class AuthServiceImpl implements AuthService {
 
         // 查重排在「校验验证码」之前：否则用户填了个已被占用的账号id，
         // 验证码却已经被消费掉，得重新发一封邮件才敢重试。
-        if (userMapper.selectCount(Wrappers.<User>lambdaQuery().eq(User::getUsername, req.getUsername())) > 0) {
-            throw new BusinessException(409, "账号id 已被使用，请换一个");
-        }
-        if (email != null && userMapper.selectCount(Wrappers.<User>lambdaQuery().eq(User::getEmail, email)) > 0) {
-            throw new BusinessException(409, "该邮箱已被注册");
+        //
+        // 🚨 9-27：这里原来用 selectCount 查重 —— 它带 @TableLogic 的 deleted=0 条件，
+        //   看不见「已被逻辑删除的用户」，但数据库唯一索引 uk_username / uk_email 照样认。
+        //   结果：用户把测试账号删掉后，用同一账号id/邮箱重新注册 ⇒ 查重通过 ⇒ INSERT ⇒
+        //   Duplicate entry ⇒ 500「服务器开小差了」。改走 UserKeyGuard：
+        //   活账号 → 409 明确提示；已删账号 → 先回收它占的键再放行。
+        userKeyGuard.assertUsernameAvailable(req.getUsername());
+        if (email != null) {
+            userKeyGuard.assertEmailAvailable(email, null);
         }
 
         // 9-15：邮箱验证码是注册的前置条件 —— 校验通过即消费（同一个码不能重复使用）。
@@ -189,9 +195,10 @@ public class AuthServiceImpl implements AuthService {
         String email = emailCodeService.normalize(req.getEmail());
 
         if (scene == EmailScene.REGISTER) {
-            if (userMapper.selectCount(Wrappers.<User>lambdaQuery().eq(User::getEmail, email)) > 0) {
-                throw new BusinessException(409, "该邮箱已被注册");
-            }
+            // 9-27：走 UserKeyGuard，与真正落库的那次查重保持同一口径。
+            //   用 selectCount 会漏掉「被软删账号占着的邮箱」⇒ 这里放行、码也发了，
+            //   等提交注册时才以 Duplicate entry 炸成 500，用户完全不知道该改哪里。
+            userKeyGuard.assertEmailAvailable(email, null);
         } else {
             User exists = userMapper.selectOne(Wrappers.<User>lambdaQuery().eq(User::getEmail, email));
             if (exists == null) {

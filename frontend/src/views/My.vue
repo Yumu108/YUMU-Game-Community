@@ -875,7 +875,7 @@ async function sendBindCode(scene) {
     ElMessage.success(isOld ? '验证码已发送到当前绑定邮箱' : '验证码已发送到新邮箱（5 分钟内有效）')
     startCooling(cooling)
   } catch (e) {
-    // 拦截器已提示（如「该邮箱已被其他账号绑定」）
+    // 拦截器已提示（如「该邮箱已被注册」）
   } finally {
     sending.value = false
   }

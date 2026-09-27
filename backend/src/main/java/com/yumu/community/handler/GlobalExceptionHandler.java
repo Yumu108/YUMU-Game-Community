@@ -108,6 +108,23 @@ public class GlobalExceptionHandler {
      * 客户端只拿到与请求方法/路径绑定的「事件编号」，便于用户报障时和日志对上，
      * 但拿不到任何内部细节。
      */
+    /**
+     * 9-27：唯一键冲突兜底 —— 归 409，不再落进 500。
+     *
+     * <p>起因是线上真实事故：user 表走 MyBatis-Plus 逻辑删除，而 {@code uk_username} /
+     * {@code uk_email} 是<b>数据库级</b>唯一索引，软删行照样占键。查重看不见、
+     * 插入撞索引，就变成一句「服务器开小差了」，用户完全无法自救。</p>
+     *
+     * <p>业务层的 {@code UserKeyGuard} 已经在写之前把「活账号占用」判成 409、
+     * 把「已删账号占用」回收掉；这里兜的是<b>并发窗口</b>（两个请求同时通过检查）
+     * 以及任何将来新增、忘了走守门员的写路径。</p>
+     */
+    @ExceptionHandler(org.springframework.dao.DuplicateKeyException.class)
+    public Result<Void> handleDuplicateKey(org.springframework.dao.DuplicateKeyException e) {
+        log.warn("[409] 唯一键冲突（并发或漏检）：{}", e.getMostSpecificCause().getMessage());
+        return Result.error(409, "该账号id 或邮箱已被占用，请更换后重试");
+    }
+
     @ExceptionHandler(Exception.class)
     public Result<Void> handleOther(Exception e, HttpServletRequest request) {
         String traceId = Long.toHexString(System.nanoTime()).toUpperCase();
